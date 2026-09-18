@@ -8,7 +8,7 @@ const src = fs.readFileSync(process.env.APP_FILE ?? path.join(here, '..', 'App.j
 const a = src.indexOf('// ==== BEGIN pure logic'), b = src.indexOf('// ==== END pure logic');
 if (a < 0 || b < 0) throw new Error('markers not found in App.js');
 fs.mkdirSync(path.join(here, '.tmp'), { recursive: true });
-const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'levelBadges', 'googleRatingText', 'communityText', 'stars', 'safeUrl', 'validateAuth', 'validateReview', 'statusLine', 'friendlyError', 'loadStats', 'loadSchools', 'loadReviews', 'loadMyReview', 'submitReview', 'updateReview', 'deleteReview', 'reportReview', 'DEFAULT_FILTERS', 'PAGE_SIZE', 'monthYear'];
+const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'levelBadges', 'googleRatingText', 'communityText', 'stars', 'safeUrl', 'validateAuth', 'validateReview', 'statusLine', 'cleanName', 'friendlyError', 'loadStats', 'loadSchools', 'loadReviews', 'loadMyReview', 'submitReview', 'updateReview', 'deleteReview', 'reportReview', 'DEFAULT_FILTERS', 'PAGE_SIZE', 'monthYear'];
 fs.writeFileSync(path.join(here, '.tmp', 'logic.mjs'), src.slice(a, b) + `\nexport { ${names.join(', ')} };\n`);
 const L = await import(pathToFileURL(path.join(here, '.tmp', 'logic.mjs')).href);
 
@@ -35,18 +35,19 @@ check('spaces are tidied, length capped at 60, null is fine', L.sanitizeSearch('
 check('an attempt to smuggle in a second filter comes out as plain words', !/[,()]/.test(L.sanitizeSearch('x),id.eq.1,(name.ilike.*')), L.sanitizeSearch('x),id.eq.1,(name.ilike.*'));
 
 console.log('\n=== the parent\'s choices become database filters ===');
-check('default: never shows hidden places, A to Z, nothing else', eq(filtersOf({}), ['eq("is_hidden",false)', 'order("name",{"ascending":true})']), JSON.stringify(filtersOf({})));
+check('default: never shows hidden places, A to Z by the clean sort name, then id', eq(filtersOf({}), ['eq("is_hidden",false)', 'order("name_sort",{"ascending":true})', 'order("id",{"ascending":true})']), JSON.stringify(filtersOf({})));
+check('every sort ends with an id tie-break, so equal names or ratings never repeat or skip between pages', filtersOf({}).at(-1) === 'order("id",{"ascending":true})' && filtersOf({ sort: 'rating' }).at(-1) === 'order("id",{"ascending":true})');
 check('search looks in name AND address', filtersOf({ search: 'Bandra' }).includes('or("name.ilike.*Bandra*,address.ilike.*Bandra*")'), JSON.stringify(filtersOf({ search: 'Bandra' })));
 check('a search with commas and brackets cannot break the filter', filtersOf({ search: 'a,b)' }).includes('or("name.ilike.*a b*,address.ilike.*a b*")'));
 check('an empty or blank search adds no filter', !filtersOf({ search: '   ' }).some((x) => x.startsWith('or(')));
 check('level: primary -> levels overlap', filtersOf({ level: 'primary' }).includes('overlaps("levels",["primary"])'));
 check('level: not stated -> levels equal to the empty list', filtersOf({ level: 'none' }).includes('eq("levels","{}")'));
 check('daycare switch -> levels contain daycare', filtersOf({ daycare: true }).includes('contains("levels",["daycare"])'));
-check('level and daycare together are both applied', filtersOf({ level: 'preschool', daycare: true }).length === 4);
+check('level and daycare together are both applied', filtersOf({ level: 'preschool', daycare: true }).includes('overlaps("levels",["preschool"])') && filtersOf({ level: 'preschool', daycare: true }).includes('contains("levels",["daycare"])'));
 check('rating 4+ while keeping unrated schools -> rating >= 4 OR no rating', filtersOf({ minRating: 4 }).includes('or("google_rating.gte.4,google_rating.is.null")'));
 check('rating 4+ with unrated switched off -> rating >= 4 only', filtersOf({ minRating: 4, includeUnrated: false }).includes('gte("google_rating",4)') && !filtersOf({ minRating: 4, includeUnrated: false }).some((x) => x.startsWith('or(')));
 check('any rating with unrated switched off -> only rated schools', filtersOf({ includeUnrated: false }).includes('not("google_rating","is",null)'));
-check('best rated sorts by rating then review count, unrated last', filtersOf({ sort: 'rating' }).join('|').includes('order("google_rating",{"ascending":false,"nullsFirst":false})|order("google_review_count",{"ascending":false,"nullsFirst":false})'), filtersOf({ sort: 'rating' }).join('|'));
+check('best rated sorts by rating, then review count, unrated last, then id', filtersOf({ sort: 'rating' }).join('|').includes('order("google_rating",{"ascending":false,"nullsFirst":false})|order("google_review_count",{"ascending":false,"nullsFirst":false})|order("id",{"ascending":true})'), filtersOf({ sort: 'rating' }).join('|'));
 check('filter count for the button label', L.activeFilterCount(L.DEFAULT_FILTERS) === 0 && L.activeFilterCount({ ...L.DEFAULT_FILTERS, level: 'primary', daycare: true, minRating: 4, includeUnrated: false, sort: 'rating' }) === 5);
 
 console.log('\n=== wording ===');
@@ -56,6 +57,17 @@ check('parent rating text: nothing for no reviews, singular / plural otherwise',
 check('stars are clamped to 0-5', L.stars(4) === '★★★★☆' && L.stars(0) === '☆☆☆☆☆' && L.stars(9) === '★★★★★' && L.stars(undefined) === '☆☆☆☆☆');
 check('month and year', L.monthYear('2026-09-18T10:00:00Z') === 'Sep 2026' && L.monthYear('nonsense') === '');
 check('review status lines (the moderator note is shown when rejected)', /Waiting/.test(L.statusLine('pending')) && /without your name/.test(L.statusLine('published')) && /Not published: Please remove the name/.test(L.statusLine('rejected', 'Please remove the name')) && /removed/.test(L.statusLine('removed')));
+
+console.log('\n=== school names are tidied for display ===');
+const cn = L.cleanName;
+check('emoji are removed, and the gaps closed (real name from the app)', cn('\u{1F60A}Smiling Kids Pre-school \u{1F60A} and \u{1F4DA}Eon International School \u{1F4DA}') === 'Smiling Kids Pre-school and Eon International School', cn('\u{1F60A}Smiling Kids Pre-school \u{1F60A} and \u{1F4DA}Eon International School \u{1F4DA}'));
+check('search-engine text after a pipe is dropped (real name from the app)', cn('270 Degree Kids Preschool Kasarvadavali, Thane | Best Preschool In Kasarvadavali') === '270 Degree Kids Preschool Kasarvadavali, Thane');
+check('several pipes: only the first part is kept', cn('Iqra Creative | Best pencil pouches | wholesaler') === 'Iqra Creative');
+check('ordinary names are left exactly as they are, including dashes, commas, dots and brackets', ['Podar International School - Santacruz', "St. Xavier's High School, Fort", 'S.M.G Vidyamandir & Junior College', '(S.E.S) SITALDAS KHEMANI HIGH SCHOOL', 'NMMC School No.9'].every((x) => cn(x) === x));
+check('a trailing separator left behind is removed', cn('Sunrise School - \u{1F31F}') === 'Sunrise School' && cn('Sunrise School |') === 'Sunrise School', JSON.stringify([cn('Sunrise School - \u{1F31F}'), cn('Sunrise School |')]));
+check('a name that is only emoji, or empty, is never made blank', cn('\u{1F60A}\u{1F60A}') === '\u{1F60A}\u{1F60A}' && cn('') === '' && cn(null) === '');
+check('a name that starts with a pipe uses the first real part', cn('| Real Name | ad') === 'Real Name', cn('| Real Name | ad'));
+check('non-English names are untouched', cn('शारदा विद्यालय') === 'शारदा विद्यालय');
 
 console.log('\n=== links ===');
 check('website links are made safe', L.safeUrl('example.com') === 'https://example.com' && L.safeUrl('http://a.in/x') === 'http://a.in/x' && L.safeUrl('') === null && L.safeUrl(null) === null && L.safeUrl('javascript:alert(1)') === null && L.safeUrl('not a url') === null);

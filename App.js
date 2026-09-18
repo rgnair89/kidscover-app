@@ -126,6 +126,16 @@ function safeUrl(url) {
   return /^https?:\/\/[^\s]+\.[^\s]+/i.test(full) ? full : null;
 }
 
+// Google business names often carry emoji and search-engine text ("Best Preschool In ... | ..."). Show the part a
+// parent would call the name. This is display only: search still matches the original text.
+function cleanName(name) {
+  const original = String(name ?? '').trim();
+  const stripped = original.replace(/[\u{1F000}-\u{1FAFF}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{200D}]/gu, ' ');
+  const first = stripped.split(/(?:^|\s)\|(?:\s|$)/).map((p) => p.trim()).filter(Boolean)[0] ?? '';
+  const cleaned = first.replace(/\s{2,}/g, ' ').replace(/[\s|\-–—,:;]+$/, '').trim();
+  return cleaned || original;
+}
+
 function validateAuth({ mode, first, last, email, password }) {
   if (mode === 'signup' && (!first.trim() || !last.trim())) return 'Please enter your first and last name.';
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return 'Please enter a valid email address.';
@@ -298,7 +308,7 @@ function SchoolCard({ school, onPress }) {
   const community = communityText(school.community);
   return (
     <Pressable testID={`school-${school.id}`} accessibilityRole="button" onPress={onPress} style={s.card}>
-      <Text style={s.schoolName}>{school.name}</Text>
+      <Text style={s.schoolName}>{cleanName(school.name)}</Text>
       {!!school.address && <Text style={s.muted} numberOfLines={2}>{school.address}</Text>}
       <View style={s.badgeRow}>
         {levelBadges(school.levels).map((b) => <Text key={b} style={s.badge}>{b}</Text>)}
@@ -487,7 +497,7 @@ function SchoolScreen({ school, onBack }) {
   return (
     <ScrollView contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
       <Btn testID="back" kind="quiet" label="< Back to schools" onPress={onBack} />
-      <Text style={s.title}>{school.name}</Text>
+      <Text style={s.title}>{cleanName(school.name)}</Text>
       {!!school.address && <Text style={s.body}>{school.address}</Text>}
       <View style={s.badgeRow}>
         {levelBadges(school.levels).map((b) => <Text key={b} style={s.badge}>{b}</Text>)}

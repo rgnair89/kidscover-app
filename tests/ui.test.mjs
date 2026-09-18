@@ -63,7 +63,10 @@ function seed() {
     S('s6', 'Kids Daycare Only', 'Powai, Mumbai', ['daycare'], 4.5, 10),
     S('s7', 'Chess Class', 'Dadar, Mumbai', ['primary'], 5, 3, { is_hidden: true }),
   ];
-  for (let i = 1; i <= 30; i++) schools.push(S('f' + String(i).padStart(2, '0'), 'Filler School ' + String(i).padStart(2, '0'), 'Chembur, Mumbai', ['primary'], null, null));
+  for (let i = 1; i <= 28; i++) schools.push(S('f' + String(i).padStart(2, '0'), 'Filler School ' + String(i).padStart(2, '0'), 'Chembur, Mumbai', ['primary'], null, null));
+  // two real-looking Google names with emoji / search-engine text
+  schools.push(S('n1', '\u{1F60A}Smiling Kids Pre-school \u{1F60A} and \u{1F4DA}Eon International School \u{1F4DA}', 'Kalher, Maharashtra', ['preschool'], 5, 21));
+  schools.push(S('n2', '270 Degree Kids Preschool Kasarvadavali, Thane | Best Preschool In Kasarvadavali', 'Kasarvadavali, Thane', ['preschool', 'daycare'], 4.9, 139));
   return {
     schools, session: null, log: [], authCalls: [], nextId: 1,
     users: { 'ann@x.in': { password: 'password1', id: 'u1', verified: true }, 'bob@x.in': { password: 'password2', id: 'u2', verified: true }, 'cat@x.in': { password: 'password3', id: 'u3', verified: false } },
@@ -244,28 +247,39 @@ check('a search with no match says so', !!ui.id('empty') && ui.cards() === 0);
 await ui.type('search', ''); await waitFor(() => ui.cards() === 20, 3000);
 check('clearing the search brings the list back', ui.cards() === 20);
 
+console.log('\n=== tidy names ===');
+await ui.type('search', 'kasarvadavali'); await waitFor(() => ui.id('school-n2') && ui.cards() === 1, 3000);
+check('a name with search-engine text is shown without it', ui.cards() === 1 && /270 Degree Kids Preschool Kasarvadavali, Thane/.test(cardText(ui, 'n2')) && !/Best Preschool In/.test(cardText(ui, 'n2')), cardText(ui, 'n2'));
+await ui.type('search', 'best preschool'); await waitFor(() => ui.id('school-n2') && ui.cards() === 1, 3000);
+check('...but search still finds it by the hidden text', ui.cards() === 1 && /270 Degree/.test(ui.text()));
+await ui.type('search', 'smiling'); await waitFor(() => ui.id('school-n1') && ui.cards() === 1, 3000);
+check('a name with emoji is shown without them', !/[\u{1F300}-\u{1FAFF}]/u.test(cardText(ui, 'n1')) && /Smiling Kids Pre-school and Eon International School/.test(cardText(ui, 'n1')), cardText(ui, 'n1'));
+await ui.click('school-n1'); await waitFor(() => ui.id('back'));
+check('the school page title is tidied too', /Smiling Kids Pre-school and Eon International School/.test(ui.text()) && !/[\u{1F300}-\u{1FAFF}]/u.test(ui.text()));
+await ui.click('back'); await waitFor(() => ui.id('search')); await ui.type('search', ''); await waitFor(() => ui.cards() === 20, 3000);
+
 console.log('\n=== filters ===');
 await ui.click('toggle-filters');
 check('the filter panel opens', !!ui.id('level-preschool') && !!ui.id('include-unrated'));
 check('it tells parents why unrated schools are kept by default', /Most primary and secondary schools have none/.test(ui.text()));
-await ui.click('level-preschool'); await waitFor(() => ui.cards() === 2, 3000);
-check('Preschool: only preschools (Sunrise and Tiny Tots)', ui.cards() === 2 && /Sunrise/.test(ui.text()) && /Tiny Tots/.test(ui.text()), ui.cards());
-await ui.toggle('daycare'); await waitFor(() => ui.cards() === 1, 3000);
-check('Preschool + Daycare available: only Sunrise', ui.cards() === 1 && /Sunrise/.test(ui.text()));
-await ui.click('level-preschool'); await waitFor(() => ui.cards() === 2, 3000);
-check('tapping the selected level again clears it (daycare only: Sunrise and Kids Daycare Only)', ui.cards() === 2 && /Kids Daycare Only/.test(ui.text()), ui.cards());
+await ui.click('level-preschool'); await waitFor(() => ui.cards() === 4, 3000);
+check('Preschool: only the 4 preschools (Sunrise, Tiny Tots, Smiling Kids, 270 Degree)', ui.cards() === 4 && /Sunrise/.test(ui.text()) && /Tiny Tots/.test(ui.text()) && /Smiling Kids/.test(ui.text()) && !/Podar/.test(ui.text()), ui.cards());
+await ui.toggle('daycare'); await waitFor(() => ui.cards() === 2, 3000);
+check('Preschool + Daycare available: Sunrise and 270 Degree', ui.cards() === 2 && /Sunrise/.test(ui.text()) && /270 Degree/.test(ui.text()), ui.cards());
+await ui.click('level-preschool'); await waitFor(() => ui.cards() === 3, 3000);
+check('tapping the selected level again clears it (daycare only: Sunrise, Kids Daycare Only, 270 Degree)', ui.cards() === 3 && /Kids Daycare Only/.test(ui.text()), ui.cards());
 await ui.toggle('daycare'); await ui.click('level-secondary'); await waitFor(() => ui.cards() === 1, 3000);
 check('Secondary: St. Andrew only, and it says no Google rating yet', /St\. Andrew/.test(ui.text()) && /No Google rating yet/.test(cardText(ui, 's2')));
 await ui.click('level-none'); await waitFor(() => /BMC/.test(ui.text()) && ui.cards() === 1, 3000);
 check('Level not stated: the BMC school', ui.cards() === 1 && /BMC School Sion/.test(ui.text()) && /Level not stated/.test(cardText(ui, 's4')));
 await ui.click('level-none'); await ui.click('rating-4'); await waitFor(() => ui.cards() === 20, 3000);
 check('4+ rating while "include unrated" is on keeps unrated schools (still 20 on page one)', ui.cards() === 20);
-await ui.toggle('include-unrated'); await waitFor(() => ui.cards() === 4, 3000);
-check('4+ with unrated switched off: only Sunrise, Podar, Tiny Tots, Kids Daycare (all >= 4)', ui.cards() === 4 && /Podar/.test(ui.text()) && !/Filler/.test(ui.text()) && !/St\. Andrew/.test(ui.text()), ui.cards());
-await ui.click('rating-4.5'); await waitFor(() => ui.cards() === 3, 3000);
-check('4.5+ narrows further (Sunrise 4.8, Tiny Tots 4.9, Kids Daycare 4.5)', ui.cards() === 3 && !/Podar/.test(ui.text()));
-await ui.click('sort-rating'); await waitFor(() => ui.all('school-')[0]?.textContent.includes('Tiny Tots'), 3000);
-check('Best rated puts the highest first (Tiny Tots 4.9)', /Tiny Tots/.test(ui.all('school-')[0].textContent));
+await ui.toggle('include-unrated'); await waitFor(() => ui.cards() === 6, 3000);
+check('4+ with unrated switched off: only the 6 rated 4 or above (Sunrise, Podar, Tiny Tots, Kids Daycare, Smiling Kids, 270 Degree)', ui.cards() === 6 && /Podar/.test(ui.text()) && !/Filler/.test(ui.text()) && !/St\. Andrew/.test(ui.text()), ui.cards());
+await ui.click('rating-4.5'); await waitFor(() => ui.cards() === 5, 3000);
+check('4.5+ narrows further (Podar at 4.1 drops out)', ui.cards() === 5 && !/Podar/.test(ui.text()), ui.cards());
+await ui.click('sort-rating'); await waitFor(() => ui.all('school-')[0]?.textContent.includes('Smiling Kids'), 3000);
+check('Best rated puts the highest first (Smiling Kids, 5.0)', /Smiling Kids/.test(ui.all('school-')[0].textContent));
 check('the filter button shows how many filters are on', /Filters|Hide filters/.test(ui.id('toggle-filters').textContent) && !!ui.id('clear-filters'));
 await ui.click('clear-filters'); await waitFor(() => ui.cards() === 20, 3000);
 check('Clear filters resets everything', ui.cards() === 20 && !ui.id('clear-filters'));

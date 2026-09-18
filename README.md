@@ -33,7 +33,7 @@ Snack has no way to keep a secret, so the key is pasted into the code. That is f
 ## Tests
 ```
 npm install
-npm test          # 47 logic checks + 61 screen checks
-node tests/mutate.mjs   # breaks the app 12 ways on purpose and checks the tests notice
+npm test          # 55 logic checks + 65 screen checks
+node tests/mutate.mjs   # breaks the app 14 ways on purpose and checks the tests notice
 ```
 The screen tests run the real `App.js` in a simulated browser against a stand-in database that follows the same rules as the real one (unverified accounts blocked, one review per school, pending reviews hidden).

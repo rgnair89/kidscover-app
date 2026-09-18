@@ -8,7 +8,7 @@ const src = fs.readFileSync(process.env.APP_FILE ?? path.join(here, '..', 'App.j
 const a = src.indexOf('// ==== BEGIN pure logic'), b = src.indexOf('// ==== END pure logic');
 if (a < 0 || b < 0) throw new Error('markers not found in App.js');
 fs.mkdirSync(path.join(here, '.tmp'), { recursive: true });
-const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'levelBadges', 'googleRatingText', 'communityText', 'stars', 'safeUrl', 'validateAuth', 'validateReview', 'statusLine', 'friendlyError', 'loadStats', 'loadSchools', 'loadReviews', 'loadMyReview', 'submitReview', 'updateReview', 'deleteReview', 'reportReview', 'DEFAULT_FILTERS', 'PAGE_SIZE', 'monthYear'];
+const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'levelBadges', 'googleRatingText', 'communityText', 'stars', 'safeUrl', 'validateAuth', 'validateReview', 'statusLine', 'cleanName', 'friendlyError', 'loadStats', 'loadSchools', 'loadReviews', 'loadMyReview', 'submitReview', 'updateReview', 'deleteReview', 'reportReview', 'DEFAULT_FILTERS', 'PAGE_SIZE', 'monthYear'];
 fs.writeFileSync(path.join(here, '.tmp', 'logic.mjs'), src.slice(a, b) + `\nexport { ${names.join(', ')} };\n`);
 const L = await import(pathToFileURL(path.join(here, '.tmp', 'logic.mjs')).href);
 
@@ -56,6 +56,17 @@ check('parent rating text: nothing for no reviews, singular / plural otherwise',
 check('stars are clamped to 0-5', L.stars(4) === '★★★★☆' && L.stars(0) === '☆☆☆☆☆' && L.stars(9) === '★★★★★' && L.stars(undefined) === '☆☆☆☆☆');
 check('month and year', L.monthYear('2026-09-18T10:00:00Z') === 'Sep 2026' && L.monthYear('nonsense') === '');
 check('review status lines (the moderator note is shown when rejected)', /Waiting/.test(L.statusLine('pending')) && /without your name/.test(L.statusLine('published')) && /Not published: Please remove the name/.test(L.statusLine('rejected', 'Please remove the name')) && /removed/.test(L.statusLine('removed')));
+
+console.log('\n=== school names are tidied for display ===');
+const cn = L.cleanName;
+check('emoji are removed, and the gaps closed (real name from the app)', cn('\u{1F60A}Smiling Kids Pre-school \u{1F60A} and \u{1F4DA}Eon International School \u{1F4DA}') === 'Smiling Kids Pre-school and Eon International School', cn('\u{1F60A}Smiling Kids Pre-school \u{1F60A} and \u{1F4DA}Eon International School \u{1F4DA}'));
+check('search-engine text after a pipe is dropped (real name from the app)', cn('270 Degree Kids Preschool Kasarvadavali, Thane | Best Preschool In Kasarvadavali') === '270 Degree Kids Preschool Kasarvadavali, Thane');
+check('several pipes: only the first part is kept', cn('Iqra Creative | Best pencil pouches | wholesaler') === 'Iqra Creative');
+check('ordinary names are left exactly as they are, including dashes, commas, dots and brackets', ['Podar International School - Santacruz', "St. Xavier's High School, Fort", 'S.M.G Vidyamandir & Junior College', '(S.E.S) SITALDAS KHEMANI HIGH SCHOOL', 'NMMC School No.9'].every((x) => cn(x) === x));
+check('a trailing separator left behind is removed', cn('Sunrise School - \u{1F31F}') === 'Sunrise School' && cn('Sunrise School |') === 'Sunrise School', JSON.stringify([cn('Sunrise School - \u{1F31F}'), cn('Sunrise School |')]));
+check('a name that is only emoji, or empty, is never made blank', cn('\u{1F60A}\u{1F60A}') === '\u{1F60A}\u{1F60A}' && cn('') === '' && cn(null) === '');
+check('a name that starts with a pipe uses the first real part', cn('| Real Name | ad') === 'Real Name', cn('| Real Name | ad'));
+check('non-English names are untouched', cn('शारदा विद्यालय') === 'शारदा विद्यालय');
 
 console.log('\n=== links ===');
 check('website links are made safe', L.safeUrl('example.com') === 'https://example.com' && L.safeUrl('http://a.in/x') === 'http://a.in/x' && L.safeUrl('') === null && L.safeUrl(null) === null && L.safeUrl('javascript:alert(1)') === null && L.safeUrl('not a url') === null);

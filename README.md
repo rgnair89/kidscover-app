@@ -11,7 +11,11 @@ The whole app is one file, `App.js`, so it can be pasted straight into [snack.ex
 Not in this version: location / "near me", compare, Google / Microsoft / phone sign-in, push notifications, admissions forms and chat. Those come next.
 
 ## Before you try it: the database
-Run `supabase/migrations/20260919000200_school_quality_rules.sql` (in the kidscover-admin repo) in the Supabase SQL Editor. The app asks the database to leave out places that are not schools, and that column does not exist until the migration is run.
+Run these in the Supabase SQL Editor (they live in the kidscover-admin repo, `supabase/migrations/`), then paste the app:
+- `20260919000200_school_quality_rules.sql` and `20260919000300_school_quality_rules_v2.sql` - the app asks the database to leave out places that are not schools
+- `20260919000400_school_name_sort.sql` - the A to Z list sorts on the `name_sort` column, which does not exist until this is run
+
+If the app shows an error mentioning a missing column, one of these has not been run yet.
 
 ## Run it in Snack
 1. Open <https://snack.expo.dev> (no account needed).
@@ -33,7 +37,7 @@ Snack has no way to keep a secret, so the key is pasted into the code. That is f
 ## Tests
 ```
 npm install
-npm test          # 55 logic checks + 65 screen checks
-node tests/mutate.mjs   # breaks the app 14 ways on purpose and checks the tests notice
+npm test          # 56 logic checks + 68 screen checks
+node tests/mutate.mjs   # breaks the app 16 ways on purpose and checks the tests notice
 ```
 The screen tests run the real `App.js` in a simulated browser against a stand-in database that follows the same rules as the real one (unverified accounts blocked, one review per school, pending reviews hidden).

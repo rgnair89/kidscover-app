@@ -75,12 +75,15 @@ function applySchoolFilters(query, f) {
   } else if (!f.includeUnrated) {
     q = q.not('google_rating', 'is', null);
   }
+  // name_sort is the name without emoji, brackets or punctuation, in lower case (a database column), so the list is
+  // truly A to Z. The final "id" makes the order the same every time: schools with equal names or ratings would
+  // otherwise be free to swap places between pages, so "Show more" could repeat one school and skip another.
   if (f.sort === 'rating') {
     q = q.order('google_rating', { ascending: false, nullsFirst: false }).order('google_review_count', { ascending: false, nullsFirst: false });
   } else {
-    q = q.order('name', { ascending: true });
+    q = q.order('name_sort', { ascending: true });
   }
-  return q;
+  return q.order('id', { ascending: true });
 }
 
 function activeFilterCount(f) {

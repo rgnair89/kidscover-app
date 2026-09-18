@@ -35,18 +35,19 @@ check('spaces are tidied, length capped at 60, null is fine', L.sanitizeSearch('
 check('an attempt to smuggle in a second filter comes out as plain words', !/[,()]/.test(L.sanitizeSearch('x),id.eq.1,(name.ilike.*')), L.sanitizeSearch('x),id.eq.1,(name.ilike.*'));
 
 console.log('\n=== the parent\'s choices become database filters ===');
-check('default: never shows hidden places, A to Z, nothing else', eq(filtersOf({}), ['eq("is_hidden",false)', 'order("name",{"ascending":true})']), JSON.stringify(filtersOf({})));
+check('default: never shows hidden places, A to Z by the clean sort name, then id', eq(filtersOf({}), ['eq("is_hidden",false)', 'order("name_sort",{"ascending":true})', 'order("id",{"ascending":true})']), JSON.stringify(filtersOf({})));
+check('every sort ends with an id tie-break, so equal names or ratings never repeat or skip between pages', filtersOf({}).at(-1) === 'order("id",{"ascending":true})' && filtersOf({ sort: 'rating' }).at(-1) === 'order("id",{"ascending":true})');
 check('search looks in name AND address', filtersOf({ search: 'Bandra' }).includes('or("name.ilike.*Bandra*,address.ilike.*Bandra*")'), JSON.stringify(filtersOf({ search: 'Bandra' })));
 check('a search with commas and brackets cannot break the filter', filtersOf({ search: 'a,b)' }).includes('or("name.ilike.*a b*,address.ilike.*a b*")'));
 check('an empty or blank search adds no filter', !filtersOf({ search: '   ' }).some((x) => x.startsWith('or(')));
 check('level: primary -> levels overlap', filtersOf({ level: 'primary' }).includes('overlaps("levels",["primary"])'));
 check('level: not stated -> levels equal to the empty list', filtersOf({ level: 'none' }).includes('eq("levels","{}")'));
 check('daycare switch -> levels contain daycare', filtersOf({ daycare: true }).includes('contains("levels",["daycare"])'));
-check('level and daycare together are both applied', filtersOf({ level: 'preschool', daycare: true }).length === 4);
+check('level and daycare together are both applied', filtersOf({ level: 'preschool', daycare: true }).includes('overlaps("levels",["preschool"])') && filtersOf({ level: 'preschool', daycare: true }).includes('contains("levels",["daycare"])'));
 check('rating 4+ while keeping unrated schools -> rating >= 4 OR no rating', filtersOf({ minRating: 4 }).includes('or("google_rating.gte.4,google_rating.is.null")'));
 check('rating 4+ with unrated switched off -> rating >= 4 only', filtersOf({ minRating: 4, includeUnrated: false }).includes('gte("google_rating",4)') && !filtersOf({ minRating: 4, includeUnrated: false }).some((x) => x.startsWith('or(')));
 check('any rating with unrated switched off -> only rated schools', filtersOf({ includeUnrated: false }).includes('not("google_rating","is",null)'));
-check('best rated sorts by rating then review count, unrated last', filtersOf({ sort: 'rating' }).join('|').includes('order("google_rating",{"ascending":false,"nullsFirst":false})|order("google_review_count",{"ascending":false,"nullsFirst":false})'), filtersOf({ sort: 'rating' }).join('|'));
+check('best rated sorts by rating, then review count, unrated last, then id', filtersOf({ sort: 'rating' }).join('|').includes('order("google_rating",{"ascending":false,"nullsFirst":false})|order("google_review_count",{"ascending":false,"nullsFirst":false})|order("id",{"ascending":true})'), filtersOf({ sort: 'rating' }).join('|'));
 check('filter count for the button label', L.activeFilterCount(L.DEFAULT_FILTERS) === 0 && L.activeFilterCount({ ...L.DEFAULT_FILTERS, level: 'primary', daycare: true, minRating: 4, includeUnrated: false, sort: 'rating' }) === 5);
 
 console.log('\n=== wording ===');

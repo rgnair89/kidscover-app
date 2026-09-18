@@ -52,7 +52,9 @@ const keyed = await import(keyedUrl);
 const unkeyed = await import(unkeyedUrl);
 
 // ---- the stand-in database: follows the same rules as the real one ----
-const S = (id, name, address, levels, rating, count, extra = {}) => ({ id, name, address, levels, google_rating: rating, google_review_count: count, board: null, website: null, is_hidden: false, ...extra });
+// the same recipe as the database column schools.name_sort: first part before " | ", punctuation and emoji removed, lower case
+const sortKey = (name) => name.split(' | ')[0].replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim().toLowerCase();
+const S = (id, name, address, levels, rating, count, extra = {}) => ({ id, name, name_sort: sortKey(name), address, levels, google_rating: rating, google_review_count: count, board: null, website: null, is_hidden: false, ...extra });
 function seed() {
   const schools = [
     S('s1', 'Sunrise Preschool & Daycare', 'Bandra West, Mumbai', ['daycare', 'preschool'], 4.8, 120, { website: 'sunrisepre.in' }),
@@ -63,7 +65,11 @@ function seed() {
     S('s6', 'Kids Daycare Only', 'Powai, Mumbai', ['daycare'], 4.5, 10),
     S('s7', 'Chess Class', 'Dadar, Mumbai', ['primary'], 5, 3, { is_hidden: true }),
   ];
-  for (let i = 1; i <= 28; i++) schools.push(S('f' + String(i).padStart(2, '0'), 'Filler School ' + String(i).padStart(2, '0'), 'Chembur, Mumbai', ['primary'], null, null));
+  for (let i = 1; i <= 25; i++) schools.push(S('f' + String(i).padStart(2, '0'), 'Filler School ' + String(i).padStart(2, '0'), 'Chembur, Mumbai', ['primary'], null, null));
+  // a name that starts with a bracket, and two schools with the SAME name (a chain with two branches)
+  schools.push(S('n3', '(S.E.S) SITALDAS KHEMANI HIGH SCHOOL', 'Ulhasnagar, Maharashtra', ['secondary'], null, null));
+  schools.push(S('t2', 'Twin Branch School', 'Thane', ['primary'], null, null));
+  schools.push(S('t1', 'Twin Branch School', 'Thane', ['primary'], null, null));
   // two real-looking Google names with emoji / search-engine text
   schools.push(S('n1', '\u{1F60A}Smiling Kids Pre-school \u{1F60A} and \u{1F4DA}Eon International School \u{1F4DA}', 'Kalher, Maharashtra', ['preschool'], 5, 21));
   schools.push(S('n2', '270 Degree Kids Preschool Kasarvadavali, Thane | Best Preschool In Kasarvadavali', 'Kasarvadavali, Thane', ['preschool', 'daycare'], 4.9, 139));
@@ -236,6 +242,13 @@ st = seed(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1');
 check('the first page shows 20 schools', await waitFor(() => ui.cards() === 20), ui.cards());
 check('a place the database marks as not a school (Chess Class) never appears', !ui.text().includes('Chess Class'));
 check('"Show more schools" is offered, and adds the rest (36 in total)', !!ui.id('more') && (await ui.click('more'), await waitFor(() => ui.cards() === 36)) && !ui.id('more'), ui.cards());
+{
+  const shownIds = ui.all('school-').map((e) => e.getAttribute('data-testid').slice(7));
+  const expected = st.schools.filter((x) => !x.is_hidden).sort((a, b) => (a.name_sort < b.name_sort ? -1 : a.name_sort > b.name_sort ? 1 : a.id < b.id ? -1 : 1)).map((x) => x.id);
+  check('the whole list is A to Z by the clean name: numbers first, "(S.E.S)" under S, emoji ignored', JSON.stringify(shownIds) === JSON.stringify(expected), shownIds.slice(0, 6).join(','));
+  check('across the two pages every school appears exactly once (no repeats, none skipped)', new Set(shownIds).size === 36 && shownIds.length === 36);
+  check('the two schools with the same name keep a fixed order (t1 before t2)', shownIds.indexOf('t1') < shownIds.indexOf('t2') && shownIds.indexOf('t1') === shownIds.indexOf('t2') - 1);
+}
 await ui.type('search', 'bandra');
 check('typing in the search box narrows the list by name or area (after a short pause)', await waitFor(() => ui.cards() === 2, 3000), ui.cards());
 check('...and matches on address, so "Bandra" finds both schools there', /Sunrise/.test(ui.text()) && /St\. Andrew/.test(ui.text()));
@@ -268,8 +281,8 @@ await ui.toggle('daycare'); await waitFor(() => ui.cards() === 2, 3000);
 check('Preschool + Daycare available: Sunrise and 270 Degree', ui.cards() === 2 && /Sunrise/.test(ui.text()) && /270 Degree/.test(ui.text()), ui.cards());
 await ui.click('level-preschool'); await waitFor(() => ui.cards() === 3, 3000);
 check('tapping the selected level again clears it (daycare only: Sunrise, Kids Daycare Only, 270 Degree)', ui.cards() === 3 && /Kids Daycare Only/.test(ui.text()), ui.cards());
-await ui.toggle('daycare'); await ui.click('level-secondary'); await waitFor(() => ui.cards() === 1, 3000);
-check('Secondary: St. Andrew only, and it says no Google rating yet', /St\. Andrew/.test(ui.text()) && /No Google rating yet/.test(cardText(ui, 's2')));
+await ui.toggle('daycare'); await ui.click('level-secondary'); await waitFor(() => ui.cards() === 2, 3000);
+check('Secondary: St. Andrew and the S.E.S high school, and St. Andrew says no Google rating yet', /St\. Andrew/.test(ui.text()) && /SITALDAS/.test(ui.text()) && /No Google rating yet/.test(cardText(ui, 's2')), ui.cards());
 await ui.click('level-none'); await waitFor(() => /BMC/.test(ui.text()) && ui.cards() === 1, 3000);
 check('Level not stated: the BMC school', ui.cards() === 1 && /BMC School Sion/.test(ui.text()) && /Level not stated/.test(cardText(ui, 's4')));
 await ui.click('level-none'); await ui.click('rating-4'); await waitFor(() => ui.cards() === 20, 3000);

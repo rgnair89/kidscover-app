@@ -31,6 +31,8 @@ const mutations = [
   ['the website link skips the safety check', String.raw`Linking.openURL(site)`, String.raw`Linking.openURL(school.website)`],
   ['school names are shown raw again on the list', String.raw`<Text style={s.schoolName}>{cleanName(school.name)}</Text>`, String.raw`<Text style={s.schoolName}>{school.name}</Text>`],
   ['the name tidier stops removing the text after a pipe', String.raw`.split(/(?:^|\s)\|(?:\s|$)/).map((p) => p.trim()).filter(Boolean)[0] ?? ''`, String.raw`.trim()`],
+  ['the id tie-break is dropped, so equal names can repeat or skip between pages', String.raw`return q.order('id', { ascending: true });`, String.raw`return q;`],
+  ['the list sorts by the raw name again', String.raw`q = q.order('name_sort', { ascending: true });`, String.raw`q = q.order('name', { ascending: true });`],
   ['search text is not cleaned before it goes into a filter', String.raw`const term = sanitizeSearch(f.search);`, String.raw`const term = String(f.search ?? '');`],
 ];
 

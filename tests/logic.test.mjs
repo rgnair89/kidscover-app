@@ -8,7 +8,7 @@ const src = fs.readFileSync(process.env.APP_FILE ?? path.join(here, '..', 'App.j
 const a = src.indexOf('// ==== BEGIN pure logic'), b = src.indexOf('// ==== END pure logic');
 if (a < 0 || b < 0) throw new Error('markers not found in App.js');
 fs.mkdirSync(path.join(here, '.tmp'), { recursive: true });
-const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'levelBadges', 'googleRatingText', 'communityText', 'stars', 'safeUrl', 'validateAuth', 'validateReview', 'statusLine', 'cleanName', 'friendlyError', 'loadStats', 'loadSchools', 'loadReviews', 'loadMyReview', 'submitReview', 'updateReview', 'deleteReview', 'reportReview', 'DEFAULT_FILTERS', 'PAGE_SIZE', 'monthYear'];
+const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'levelBadges', 'googleRatingText', 'communityText', 'stars', 'safeUrl', 'validateAuth', 'validateReview', 'statusLine', 'cleanName', 'friendlyError', 'loadStats', 'loadSchools', 'loadReviews', 'loadMyReview', 'submitReview', 'updateReview', 'deleteReview', 'reportReview', 'DEFAULT_FILTERS', 'PAGE_SIZE', 'monthYear', 'SCHOOL_COLUMNS', 'NEARBY_COLUMNS', 'DISTANCE_CHOICES', 'SERVICE_AREA', 'validPlace', 'inServiceArea', 'defaultSort', 'normalizeFilters', 'distanceText', 'cleanAddress', 'isMissingNearby', 'locateMe', 'locationProblemText', 'OUTSIDE_AREA_TEXT', 'NEARBY_MISSING_TEXT'];
 fs.writeFileSync(path.join(here, '.tmp', 'logic.mjs'), src.slice(a, b) + `\nexport { ${names.join(', ')} };\n`);
 const L = await import(pathToFileURL(path.join(here, '.tmp', 'logic.mjs')).href);
 
@@ -24,10 +24,15 @@ function fakeDb(handler) {
     const p = new Proxy(function () {}, { get(_, prop) { if (prop === 'then') return (res, rej) => Promise.resolve(handler(rec)).then(res, rej); return (...args) => { rec.ops.push([prop, ...args]); return p; }; } });
     return p;
   };
-  return { from, recs };
+  const rpc = (fn, args) => {
+    const rec = { table: 'rpc:' + fn, args, ops: [] }; recs.push(rec);
+    const p = new Proxy(function () {}, { get(_, prop) { if (prop === 'then') return (res, rej) => Promise.resolve(handler(rec)).then(res, rej); return (...a) => { rec.ops.push([prop, ...a]); return p; }; } });
+    return p;
+  };
+  return { from, rpc, recs };
 }
 const ops = (rec) => rec.ops.map((o) => o[0] + '(' + o.slice(1).map((x) => JSON.stringify(x)).join(',') + ')');
-const filtersOf = (f) => { const db = fakeDb(() => ({ data: [], error: null })); const rec = { table: 'schools', ops: [] }; const p = new Proxy(function () {}, { get(_, prop) { return (...args) => { rec.ops.push([prop, ...args]); return p; }; } }); L.applySchoolFilters(p, { ...L.DEFAULT_FILTERS, ...f }); return ops(rec); };
+const filtersOf = (f, hasPlace = false) => { const db = fakeDb(() => ({ data: [], error: null })); const rec = { table: 'schools', ops: [] }; const p = new Proxy(function () {}, { get(_, prop) { return (...args) => { rec.ops.push([prop, ...args]); return p; }; } }); L.applySchoolFilters(p, { ...L.DEFAULT_FILTERS, ...f }, hasPlace); return ops(rec); };
 
 console.log('\n=== search text is made safe ===');
 check('filter-syntax characters are removed', L.sanitizeSearch('a,b(c)*d"e\\f%g') === 'a b c d e f g', L.sanitizeSearch('a,b(c)*d"e\\f%g'));
@@ -123,6 +128,95 @@ L.deleteReview(db, 'r1'); L.reportReview(db, 'r1', 'spam');
 check('a new review sends trimmed text, no title when blank, and only the allowed columns', eq(inserted[0], ['school_reviews', { school_id: 'sch1', rating: 4, title: null, body: 'A long enough review body.', relationship: 'current_parent' }]), JSON.stringify(inserted[0]));
 check('an edit sends only the editable columns', eq(inserted[1], ['school_reviews', 'update', { rating: 3, title: 'Fine', body: 'Edited review text here ok.', relationship: 'other' }, 'id', 'r1']), JSON.stringify(inserted[1]));
 check('delete and report go to the right tables', eq(inserted[2], ['school_reviews', 'delete', 'id', 'r1']) && eq(inserted[3], ['review_reports', { review_id: 'r1', reason: 'spam' }]));
+
+console.log('\n=== near me: what is asked of the database ===');
+check('with a place the default order is nearest first, then id', eq(filtersOf({ sort: 'distance' }, true), ['eq("is_hidden",false)', 'order("distance_km",{"ascending":true})', 'order("id",{"ascending":true})']), JSON.stringify(filtersOf({ sort: 'distance' }, true)));
+check('"within 5 km" -> distance <= 5 (only with a place)', filtersOf({ sort: 'distance', nearKm: 5 }, true).includes('lte("distance_km",5)') && !filtersOf({ nearKm: 5 }, false).some((x) => x.includes('distance_km')));
+check('no distance choice -> no distance filter', !filtersOf({ sort: 'distance' }, true).some((x) => x.startsWith('lte(')));
+check('without a place, a left-over "nearest first" falls back to A to Z and never mentions distance', eq(filtersOf({ sort: 'distance', nearKm: 2 }, false), ['eq("is_hidden",false)', 'order("name_sort",{"ascending":true})', 'order("id",{"ascending":true})']), JSON.stringify(filtersOf({ sort: 'distance', nearKm: 2 }, false)));
+check('with a place, A to Z and best rated still work', filtersOf({ sort: 'name' }, true).includes('order("name_sort",{"ascending":true})') && filtersOf({ sort: 'rating' }, true).includes('order("google_rating",{"ascending":false,"nullsFirst":false})'));
+check('every order ends with an id tie-break, distance included', ['distance', 'name', 'rating'].every((sort) => filtersOf({ sort }, true).at(-1) === 'order("id",{"ascending":true})'));
+check('distance works together with the other filters', ['overlaps("levels",["primary"])', 'lte("distance_km",5)', 'or("google_rating.gte.4,google_rating.is.null")'].every((x) => filtersOf({ sort: 'distance', nearKm: 5, level: 'primary', minRating: 4 }, true).includes(x)));
+check('the choices are Any / 2 / 5 / 10 km', eq(L.DISTANCE_CHOICES.map((d) => d.km), [null, 2, 5, 10]));
+check('filter count: nearest-first is the default with a place, so it is not counted', L.activeFilterCount({ ...L.DEFAULT_FILTERS, sort: 'distance' }, true) === 0 && L.activeFilterCount(L.DEFAULT_FILTERS, false) === 0);
+check('filter count: a distance limit counts once; choosing A to Z with a place counts once', L.activeFilterCount({ ...L.DEFAULT_FILTERS, sort: 'distance', nearKm: 5 }, true) === 1 && L.activeFilterCount({ ...L.DEFAULT_FILTERS, sort: 'name' }, true) === 1);
+check('filter count: without a place a left-over distance choice is ignored', L.activeFilterCount({ ...L.DEFAULT_FILTERS, sort: 'distance', nearKm: 5 }, false) === 0);
+check('default sort and normalising', L.defaultSort(true) === 'distance' && L.defaultSort(false) === 'name' && eq(L.normalizeFilters({ sort: 'distance', nearKm: 5, level: 'primary' }, false), { sort: 'name', nearKm: null, level: 'primary' }) && eq(L.normalizeFilters({ sort: 'rating', nearKm: 5 }, false), { sort: 'rating', nearKm: null }) && eq(L.normalizeFilters({ sort: 'distance', nearKm: 5 }, true), { sort: 'distance', nearKm: 5 }));
+
+console.log('\n=== near me: loading a page ===');
+const near20 = Array.from({ length: 20 }, (_, i) => ({ id: 'n' + i, name: 'N' + i, distance_km: i / 4 }));
+let ndb = fakeDb((rec) => (rec.table.startsWith('rpc:') ? { data: near20, error: null } : { data: [], error: null }));
+res = await L.loadSchools(ndb, { ...L.DEFAULT_FILTERS, sort: 'distance', nearKm: 5 }, 1, { lat: 19.076, lng: 72.878 });
+check('with a place: calls schools_nearby with the position (not the schools table)', ndb.recs[0].table === 'rpc:schools_nearby' && eq(ndb.recs[0].args, { p_lat: 19.076, p_lng: 72.878 }) && !ndb.recs.some((r) => r.table === 'schools'), JSON.stringify(ndb.recs[0]));
+check('asks for the school columns plus distance_km', ndb.recs[0].ops[0][0] === 'select' && ndb.recs[0].ops[0][1] === L.SCHOOL_COLUMNS + ',distance_km' && L.NEARBY_COLUMNS === L.SCHOOL_COLUMNS + ',distance_km');
+check('and applies the filters, the order and the page (rows 20-39 for page 2)', ndb.recs[0].ops.some((o) => o[0] === 'lte' && o[1] === 'distance_km' && o[2] === 5) && ndb.recs[0].ops.some((o) => o[0] === 'order' && o[1] === 'distance_km') && ndb.recs[0].ops.some((o) => o[0] === 'range' && o[1] === 20 && o[2] === 39));
+check('the distances come back on the rows, with the parent ratings attached', res.rows.length === 20 && res.rows[3].distance_km === 0.75 && res.hasMore === true && 'community' in res.rows[3]);
+ndb = fakeDb(() => ({ data: [], error: null }));
+await L.loadSchools(ndb, L.DEFAULT_FILTERS, 0, null);
+check('without a place: the schools table, no function call', ndb.recs[0].table === 'schools' && !ndb.recs.some((r) => r.table.startsWith('rpc:')));
+ndb = fakeDb(() => ({ data: [], error: null }));
+await L.loadSchools(ndb, { ...L.DEFAULT_FILTERS, sort: 'distance', nearKm: 2 }, 0, undefined);
+check('without a place, a left-over "nearest first" is not sent to the schools table (it has no distance column)', !ndb.recs[0].ops.some((o) => String(o[1]).includes('distance_km')), JSON.stringify(ndb.recs[0].ops));
+for (const bad of [{ lat: NaN, lng: 72 }, { lat: 91, lng: 72 }, { lat: 19, lng: 181 }, { lat: null, lng: 72 }, { lat: '19.07', lng: 72.8 }, {}, 'here']) {
+  ndb = fakeDb(() => ({ data: [], error: null }));
+  await L.loadSchools(ndb, L.DEFAULT_FILTERS, 0, bad);
+  check(`a broken place (${JSON.stringify(bad)}) is treated as no place`, ndb.recs[0].table === 'schools');
+}
+ndb = fakeDb(() => ({ data: null, error: { code: 'PGRST202', message: 'Could not find the function public.schools_nearby(p_lat, p_lng) in the schema cache' } }));
+res = await L.loadSchools(ndb, L.DEFAULT_FILTERS, 0, { lat: 19, lng: 72.8 });
+check('the function not being installed comes back as an error, not a crash, and is recognised', !!res.error && L.isMissingNearby(res.error) && res.rows.length === 0);
+check('missing-function detection: by code, by name, and not for other errors', L.isMissingNearby({ code: 'PGRST202' }) && L.isMissingNearby({ message: 'function public.schools_nearby does not exist' }) && !L.isMissingNearby({ message: 'Network request failed' }) && !L.isMissingNearby(null) && !L.isMissingNearby({ code: '23505' }));
+check('a missing function is explained in plain words (not the raw database message)', L.friendlyError({ code: 'PGRST202', message: 'Could not find the function public.schools_nearby' }) === L.NEARBY_MISSING_TEXT && /not switched on yet/.test(L.NEARBY_MISSING_TEXT) && !/PGRST|schema cache/.test(L.NEARBY_MISSING_TEXT));
+
+console.log('\n=== near me: how far ===');
+const dt = L.distanceText;
+check('under 100 m', dt(0) === 'Under 100 m away' && dt(0.06) === 'Under 100 m away' && dt(0.099) === 'Under 100 m away');
+check('one decimal below 10 km', dt(0.1) === '0.1 km away' && dt(0.5) === '0.5 km away' && dt(0.51) === '0.5 km away' && dt(4.26) === '4.3 km away' && dt(5.38) === '5.4 km away' && dt(9.94) === '9.9 km away');
+check('9.96 rounds up to 10, not "10.0 km"', dt(9.96) === '10 km away' && dt(9.95) !== '10.0 km away');
+check('whole km from 10 up', dt(10) === '10 km away' && dt(12.4) === '12 km away' && dt(19.02) === '19 km away' && dt(480.6) === '481 km away');
+check('nothing is shown when there is no distance (no place, or bad data)', ['', dt(null), dt(undefined), dt(NaN), dt(-1), dt(Infinity), dt('3.2'), dt({})].every((x) => x === ''));
+
+console.log('\n=== near me: Plus Codes are removed from addresses ===');
+const ca = L.cleanAddress;
+check('a leading Plus Code and its comma go', ca('3W9C+9VX, Sion Koliwada, Mumbai, Maharashtra 400037, India') === 'Sion Koliwada, Mumbai, Maharashtra 400037, India', ca('3W9C+9VX, Sion Koliwada, Mumbai, Maharashtra 400037, India'));
+check('a full-length code (with the area part) goes too', ca('7JFJ3W9C+9VX, Mumbai, Maharashtra') === 'Mumbai, Maharashtra' && ca('3W9C+9V, Mumbai') === 'Mumbai');
+check('a code followed by a space instead of a comma', ca('3W9C+9VX Mumbai, Maharashtra') === 'Mumbai, Maharashtra');
+check('an address that is only a code is shown as nothing', ca('3W9C+9VX') === '' && ca('  3W9C+9VX,  ') === '');
+check('ordinary addresses are left exactly as they are', ['Plot 12, Road No 3, Bandra West, Mumbai 400050', '90 Feet Road, Dharavi, Mumbai', 'B/1, 2nd Floor, Shivaji Nagar', 'Shop 1+2, Andheri West', 'C+22 Main Road', 'BANDRA+WEST, Mumbai', 'Near Sion 3W9C+9VX, Mumbai', '3w9c+9vx, Mumbai'].every((a) => ca(a) === a), JSON.stringify(['Shop 1+2, Andheri West', 'C+22 Main Road', 'BANDRA+WEST, Mumbai', 'Near Sion 3W9C+9VX, Mumbai', '3w9c+9vx, Mumbai'].map(ca)));
+check('empty and missing addresses', ca('') === '' && ca(null) === '' && ca(undefined) === '');
+
+console.log('\n=== near me: where the parent is ===');
+check('a place must be two real, in-range numbers', L.validPlace({ lat: 19.07, lng: 72.87 }) && L.validPlace({ lat: -90, lng: 180 }) && [null, undefined, {}, { lat: 19 }, { lat: NaN, lng: 1 }, { lat: 91, lng: 0 }, { lat: 0, lng: -181 }, { lat: '19', lng: '72' }, { lat: Infinity, lng: 0 }].every((p) => !L.validPlace(p)));
+check('inside the Mumbai area: Bandra, Thane, Navi Mumbai', L.inServiceArea({ lat: 19.06, lng: 72.83 }) && L.inServiceArea({ lat: 19.218, lng: 72.978 }) && L.inServiceArea({ lat: 19.033, lng: 73.03 }));
+check('outside: Delhi, Pune, Chennai, the middle of the sea, and nonsense', [{ lat: 28.61, lng: 77.2 }, { lat: 18.52, lng: 73.86 }, { lat: 13.08, lng: 80.27 }, { lat: 19.0, lng: 60 }, { lat: 200, lng: 72.8 }, null].every((p) => !L.inServiceArea(p)));
+
+console.log('\n=== near me: asking the phone ===');
+const okPos = (lat, lng) => ({ coords: { latitude: lat, longitude: lng, accuracy: 20 } });
+const fakeLoc = (o = {}) => { const calls = []; return { calls, Accuracy: { Balanced: 3 }, requestForegroundPermissionsAsync: async () => { calls.push('permission'); if (o.permThrows) throw new Error('boom'); return o.perm ?? { status: 'granted', canAskAgain: true }; }, getCurrentPositionAsync: async (opts) => { calls.push(['position', opts]); if (o.posThrows) throw new Error('Location services are disabled'); if (o.hang) return new Promise(() => {}); return 'pos' in o ? o.pos : okPos(19.07604, 72.87771); } }; };
+let loc = fakeLoc();
+let got = await L.locateMe(loc);
+check('permission first, then the position; both work -> a place', got.ok === true && eq(loc.calls.map((c) => (Array.isArray(c) ? c[0] : c)), ['permission', 'position']) && loc.calls[1][1].accuracy === 3, JSON.stringify(got));
+check('the position is rounded to about 100 m before it goes anywhere', eq(got.place, { lat: 19.076, lng: 72.878 }), JSON.stringify(got.place));
+got = await L.locateMe(fakeLoc({ pos: okPos(-33.86882, 151.20929) }));
+check('rounding works for negative coordinates too', eq(got.place, { lat: -33.869, lng: 151.209 }), JSON.stringify(got));
+loc = fakeLoc({ perm: { status: 'denied', canAskAgain: true } }); got = await L.locateMe(loc);
+check('permission refused -> "denied", and the phone is never asked for a position', got.ok === false && got.reason === 'denied' && loc.calls.length === 1);
+got = await L.locateMe(fakeLoc({ perm: { status: 'denied', canAskAgain: false } }));
+check('refused and cannot ask again -> "blocked" (needs the phone settings)', got.reason === 'blocked');
+got = await L.locateMe(fakeLoc({ perm: { status: 'undetermined' } }));
+check('undetermined is treated as denied', got.ok === false && got.reason === 'denied');
+got = await L.locateMe(fakeLoc({ permThrows: true }));
+check('an error while asking for permission is "unavailable", not a crash', got.ok === false && got.reason === 'unavailable');
+got = await L.locateMe(fakeLoc({ posThrows: true }));
+check('location switched off on the phone (position throws) -> "unavailable"', got.ok === false && got.reason === 'unavailable');
+const t0 = Date.now(); got = await L.locateMe(fakeLoc({ hang: true }), 40);
+check('a position that never arrives -> "timeout" after the limit', got.ok === false && got.reason === 'timeout' && Date.now() - t0 < 1500, JSON.stringify(got));
+for (const [why, pos] of [['no coordinates', {}], ['a null latitude (must not become 0,0)', okPos(null, 72.8)], ['a null longitude', okPos(19, null)], ['undefined', undefined], ['NaN', okPos(NaN, 72.8)], ['latitude 95', okPos(95, 72.8)], ['text instead of numbers', okPos('19.07', '72.87')]]) {
+  got = await L.locateMe(fakeLoc({ pos }));
+  check(`a bad position (${why}) is "unavailable"`, got.ok === false && got.reason === 'unavailable', JSON.stringify(got));
+}
+check('each problem has its own plain-words message, and none blames the parent', ['denied', 'blocked', 'timeout', 'unavailable'].every((r) => L.locationProblemText(r).length > 30) && new Set(['denied', 'blocked', 'timeout', 'unavailable'].map(L.locationProblemText)).size === 4 && /settings/.test(L.locationProblemText('blocked')) && /search by school name/.test(L.locationProblemText('denied')));
+check('the outside-Mumbai notice names the area', /Mumbai/.test(L.OUTSIDE_AREA_TEXT));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

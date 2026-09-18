@@ -1,0 +1,16 @@
+{
+  "name": "kidscover-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Kidscover parent app. The app itself is App.js (paste it into snack.expo.dev). This package.json only exists to run the tests.",
+  "scripts": {
+    "test": "node tests/logic.test.mjs && node tests/ui.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "jsdom": "^26.0.0",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native-web": "^0.21.0"
+  }
+}

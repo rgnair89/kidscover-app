@@ -11,8 +11,11 @@ const tmp = path.join(here, '.tmp');
 fs.mkdirSync(tmp, { recursive: true });
 
 // ---- stand-ins for the packages that only exist on a phone / at Supabase ----
-fs.writeFileSync(path.join(tmp, 'stub-storage.mjs'), `export default { getItem: async () => null, setItem: async () => {}, removeItem: async () => {} };`);
+// (it also remembers everything the app writes to the phone's storage, so a test can check the location is never saved)
+fs.writeFileSync(path.join(tmp, 'stub-storage.mjs'), `globalThis.__stored = []; export default { getItem: async () => null, setItem: async (k, v) => { globalThis.__stored.push([k, String(v)]); }, removeItem: async () => {} };`);
 fs.writeFileSync(path.join(tmp, 'stub-empty.mjs'), `export {};`);
+// the phone's location: each test sets globalThis.__loc to the behaviour it wants
+fs.writeFileSync(path.join(tmp, 'fake-location.mjs'), `export const Accuracy = { Balanced: 3 };\nexport const requestForegroundPermissionsAsync = (...a) => globalThis.__loc.requestForegroundPermissionsAsync(...a);\nexport const getCurrentPositionAsync = (...a) => globalThis.__loc.getCurrentPositionAsync(...a);`);
 // the app creates its client when the file loads, before a test has set up its data, so look the real stand-in up on every use
 fs.writeFileSync(path.join(tmp, 'fake-supabase.mjs'), `export const createClient = () => new Proxy({}, { get: (_, prop) => globalThis.__db[prop] });`);
 
@@ -28,13 +31,19 @@ async function bundle(name, source) {
       '@react-native-async-storage/async-storage': path.join(tmp, 'stub-storage.mjs'),
       'react-native-url-polyfill/auto': path.join(tmp, 'stub-empty.mjs'),
       '@supabase/supabase-js': path.join(tmp, 'fake-supabase.mjs'),
+      'expo-location': path.join(tmp, 'fake-location.mjs'),
     },
     define: { 'process.env.NODE_ENV': '"development"', __DEV__: 'true' },
   });
   return pathToFileURL(path.join(tmp, `${name}.bundle.mjs`)).href;
 }
-const keyedUrl = await bundle('keyed', appSource.replace('PASTE_YOUR_PUBLISHABLE_KEY_HERE', 'sb_publishable_test'));
+const keyedSource = appSource.replace('PASTE_YOUR_PUBLISHABLE_KEY_HERE', 'sb_publishable_test');
+const keyedUrl = await bundle('keyed', keyedSource);
 const unkeyedUrl = await bundle('unkeyed', appSource);
+// the same app with a 60 ms wait for the phone's position instead of 15 s, so a "phone never answers" case can be tested
+const quickSource = keyedSource.replace('const LOCATION_TIMEOUT_MS = 15000;', 'const LOCATION_TIMEOUT_MS = 60;');
+if (quickSource === keyedSource) throw new Error('could not shorten the location wait: the constant changed');
+const quickUrl = await bundle('quick', quickSource);
 
 // ---- a tiny browser ----
 const dom = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost/', pretendToBeVisual: true });
@@ -50,6 +59,7 @@ const opened = []; w.open = (u) => { opened.push(u); return null; };
 // each bundle carries its own copy of React, so an app must always be rendered with the React that came with it
 const keyed = await import(keyedUrl);
 const unkeyed = await import(unkeyedUrl);
+const quick = await import(quickUrl);
 
 // ---- the stand-in database: follows the same rules as the real one ----
 // the same recipe as the database column schools.name_sort: first part before " | ", punctuation and emoji removed, lower case
@@ -57,22 +67,22 @@ const sortKey = (name) => name.split(' | ')[0].replace(/[^\p{L}\p{N}\s]/gu, '').
 const S = (id, name, address, levels, rating, count, extra = {}) => ({ id, name, name_sort: sortKey(name), address, levels, google_rating: rating, google_review_count: count, board: null, website: null, is_hidden: false, ...extra });
 function seed() {
   const schools = [
-    S('s1', 'Sunrise Preschool & Daycare', 'Bandra West, Mumbai', ['daycare', 'preschool'], 4.8, 120, { website: 'sunrisepre.in' }),
-    S('s2', "St. Andrew's High School", 'Bandra West, Mumbai', ['secondary'], null, null),
-    S('s3', 'Podar Primary', 'Santacruz, Mumbai', ['primary'], 4.1, 40),
-    S('s4', 'BMC School Sion', 'Sion, Mumbai', [], null, null),
-    S('s5', 'Tiny Tots Preschool', 'Andheri, Mumbai', ['preschool'], 4.9, 60),
-    S('s6', 'Kids Daycare Only', 'Powai, Mumbai', ['daycare'], 4.5, 10),
-    S('s7', 'Chess Class', 'Dadar, Mumbai', ['primary'], 5, 3, { is_hidden: true }),
+    S('s1', 'Sunrise Preschool & Daycare', 'Bandra West, Mumbai', ['daycare', 'preschool'], 4.8, 120, { website: 'sunrisepre.in', latitude: 19.0596, longitude: 72.8295 }),
+    S('s2', "St. Andrew's High School", 'Bandra West, Mumbai', ['secondary'], null, null, { latitude: 19.055, longitude: 72.829 }),
+    S('s3', 'Podar Primary', 'Santacruz, Mumbai', ['primary'], 4.1, 40, { latitude: 19.08, longitude: 72.842 }),
+    S('s4', 'BMC School Sion', '3W9C+9VX, Sion, Mumbai', [], null, null, { latitude: 19.039, longitude: 72.8619 }),
+    S('s5', 'Tiny Tots Preschool', 'Andheri, Mumbai', ['preschool'], 4.9, 60, { latitude: 19.1136, longitude: 72.8697 }),
+    S('s6', 'Kids Daycare Only', 'Powai, Mumbai', ['daycare'], 4.5, 10, { latitude: 19.1176, longitude: 72.906 }),
+    S('s7', 'Chess Class', 'Dadar, Mumbai', ['primary'], 5, 3, { is_hidden: true, latitude: 19.0178, longitude: 72.8478 }),
   ];
-  for (let i = 1; i <= 25; i++) schools.push(S('f' + String(i).padStart(2, '0'), 'Filler School ' + String(i).padStart(2, '0'), 'Chembur, Mumbai', ['primary'], null, null));
+  for (let i = 1; i <= 25; i++) schools.push(S('f' + String(i).padStart(2, '0'), 'Filler School ' + String(i).padStart(2, '0'), 'Chembur, Mumbai', ['primary'], null, null, i === 25 ? {} : { latitude: Math.round((19.0625 + i * 0.0004) * 1e6) / 1e6, longitude: 72.9023 })); // the last one has no coordinates yet
   // a name that starts with a bracket, and two schools with the SAME name (a chain with two branches)
-  schools.push(S('n3', '(S.E.S) SITALDAS KHEMANI HIGH SCHOOL', 'Ulhasnagar, Maharashtra', ['secondary'], null, null));
-  schools.push(S('t2', 'Twin Branch School', 'Thane', ['primary'], null, null));
-  schools.push(S('t1', 'Twin Branch School', 'Thane', ['primary'], null, null));
+  schools.push(S('n3', '(S.E.S) SITALDAS KHEMANI HIGH SCHOOL', 'Ulhasnagar, Maharashtra', ['secondary'], null, null, { latitude: 19.2215, longitude: 73.1631 }));
+  schools.push(S('t2', 'Twin Branch School', 'Thane', ['primary'], null, null, { latitude: 19.2183, longitude: 72.9781 }));
+  schools.push(S('t1', 'Twin Branch School', 'Thane', ['primary'], null, null, { latitude: 19.2183, longitude: 72.9781 }));
   // two real-looking Google names with emoji / search-engine text
-  schools.push(S('n1', '\u{1F60A}Smiling Kids Pre-school \u{1F60A} and \u{1F4DA}Eon International School \u{1F4DA}', 'Kalher, Maharashtra', ['preschool'], 5, 21));
-  schools.push(S('n2', '270 Degree Kids Preschool Kasarvadavali, Thane | Best Preschool In Kasarvadavali', 'Kasarvadavali, Thane', ['preschool', 'daycare'], 4.9, 139));
+  schools.push(S('n1', '\u{1F60A}Smiling Kids Pre-school \u{1F60A} and \u{1F4DA}Eon International School \u{1F4DA}', 'Kalher, Maharashtra', ['preschool'], 5, 21, { latitude: 19.2831, longitude: 73.0546 }));
+  schools.push(S('n2', '270 Degree Kids Preschool Kasarvadavali, Thane | Best Preschool In Kasarvadavali', 'Kasarvadavali, Thane', ['preschool', 'daycare'], 4.9, 139, { latitude: 19.2645, longitude: 72.9694 }));
   return {
     schools, session: null, log: [], authCalls: [], nextId: 1,
     users: { 'ann@x.in': { password: 'password1', id: 'u1', verified: true }, 'bob@x.in': { password: 'password2', id: 'u2', verified: true }, 'cat@x.in': { password: 'password3', id: 'u3', verified: false } },
@@ -85,6 +95,8 @@ function seed() {
     reports: [], failNext: null,
   };
 }
+// great-circle distance in km, written here on its own (the app never calculates distance; the database does)
+const hav = (a, b, c, d) => { const rad = (x) => (x * Math.PI) / 180; const h = Math.sin(rad(c - a) / 2) ** 2 + Math.cos(rad(a)) * Math.cos(rad(c)) * Math.sin(rad(d - b) / 2) ** 2; return 2 * 6371.0088 * Math.asin(Math.min(1, Math.sqrt(h))); };
 const cond = (r, { col, op, val }) => {
   const v = r[col];
   if (op === 'ilike') return v != null && String(v).toLowerCase().includes(val.replace(/\*/g, '').toLowerCase());
@@ -94,12 +106,13 @@ const cond = (r, { col, op, val }) => {
 };
 class Query {
   constructor(state, table) { Object.assign(this, { state, table, preds: [], sorts: [], op: 'select', payload: null, rng: null, lim: null, one: false, ops: [] }); state.log.push(this); }
-  select() { return this; }
+  select(cols) { this.cols = cols; return this; }
   eq(c, v) { this.ops.push(['eq', c, v]); this.preds.push((r) => (c === 'levels' && v === '{}' ? Array.isArray(r.levels) && r.levels.length === 0 : r[c] === v)); return this; }
   in(c, vals) { this.preds.push((r) => vals.includes(r[c])); return this; }
   overlaps(c, vals) { this.ops.push(['overlaps', c, vals]); this.preds.push((r) => Array.isArray(r[c]) && r[c].some((x) => vals.includes(x))); return this; }
   contains(c, vals) { this.preds.push((r) => Array.isArray(r[c]) && vals.every((x) => r[c].includes(x))); return this; }
   gte(c, v) { this.preds.push((r) => r[c] != null && r[c] >= v); return this; }
+  lte(c, v) { this.ops.push(['lte', c, v]); this.preds.push((r) => r[c] != null && r[c] <= v); return this; }
   not(c, op, v) { this.preds.push((r) => (op === 'is' && v === null ? r[c] != null : true)); return this; }
   or(str) { this.ops.push(['or', str]); const cs = str.split(',').map((t) => { const [col, op, ...rest] = t.split('.'); return { col, op, val: rest.join('.') }; }); this.preds.push((r) => cs.some((c) => cond(r, c))); return this; }
   order(c, o) { this.sorts.push([c, o]); return this; }
@@ -134,6 +147,13 @@ class Query {
     const mineIds = new Set(st.private.filter((p) => p.author_id === me?.id).map((p) => p.review_id));
     const all = (rows) => rows.filter((r) => this.preds.every((p) => p(r)));
     if (this.table === 'schools') return this.finish(all(st.schools));
+    if (this.table === 'rpc:schools_nearby') {
+      // the same rules as the database function: only schools with coordinates, distance in km rounded to 0.01, bad input -> nothing
+      if (st.nearbyMissing) return { data: null, error: { code: 'PGRST202', message: 'Could not find the function public.schools_nearby(p_lat, p_lng) in the schema cache' } };
+      const { p_lat, p_lng } = this.args;
+      if (![p_lat, p_lng].every((x) => typeof x === 'number' && Number.isFinite(x)) || Math.abs(p_lat) > 90 || Math.abs(p_lng) > 180) return this.finish([]);
+      return this.finish(all(st.schools.filter((x) => x.latitude != null && x.longitude != null).map((x) => ({ ...x, distance_km: Math.round(hav(p_lat, p_lng, x.latitude, x.longitude) * 100) / 100 }))));
+    }
     if (this.table === 'school_review_stats') {
       const by = {}; for (const r of st.reviews.filter((x) => x.status === 'published')) (by[r.school_id] ??= []).push(r.rating);
       return this.finish(all(Object.entries(by).map(([school_id, a]) => ({ school_id, review_count: a.length, avg_rating: (a.reduce((x, y) => x + y, 0) / a.length).toFixed(1) }))));
@@ -178,6 +198,7 @@ function makeDb(state) {
       startAutoRefresh() {}, stopAutoRefresh() {},
     },
     from: (t) => new Query(state, t),
+    rpc: (fn, args) => Object.assign(new Query(state, 'rpc:' + fn), { args }),
   };
 }
 
@@ -382,6 +403,192 @@ st = seed(); ui = await mount(st); await signIn(ui, 'bob@x.in', 'password2'); aw
 await ui.type('search', 'sunrise'); await waitFor(() => ui.cards() === 1, 3000); await ui.click('school-s1'); await waitFor(() => ui.id('review-rv1'));
 check('a parent is never offered a Report button on their own review (Bob wrote rv1)', !ui.id('report-rv1') && !!ui.id('report-rv2'));
 await ui.click('report-rv2'); await ui.click('reason-spam'); await waitFor(() => ui.id('report-msg-rv2'));
+await ui.unmount();
+
+// =============================================================================================================
+// the phone's location, as each test wants it
+const fakePhone = (o = {}) => {
+  const calls = [];
+  globalThis.__loc = {
+    calls,
+    requestForegroundPermissionsAsync: async () => { calls.push('permission'); return o.perm ?? { status: 'granted', canAskAgain: true }; },
+    getCurrentPositionAsync: async () => { calls.push('position'); if (o.hang) return new Promise(() => {}); if (o.posThrows) throw new Error('Location services are disabled'); return 'pos' in o ? o.pos : { coords: { latitude: 19.07604, longitude: 72.87771, accuracy: 15 } }; },
+  };
+  return calls;
+};
+const DELHI = { coords: { latitude: 28.6139, longitude: 77.209 } };
+// what the list should be, worked out here on its own: schools with coordinates that are not hidden, by distance from (lat, lng), then id
+const expectedNear = (stt, lat, lng) => stt.schools.filter((x) => !x.is_hidden && x.latitude != null).map((x) => ({ id: x.id, km: Math.round(hav(lat, lng, x.latitude, x.longitude) * 100) / 100 })).sort((a, b) => a.km - b.km || (a.id < b.id ? -1 : 1));
+const shown = (u) => u.all('school-').map((e) => e.getAttribute('data-testid').slice(7));
+const distanceOf = (u, id) => u.id('distance-' + id)?.textContent ?? '';
+const firstCard = (u) => u.all('school-')[0]?.getAttribute('data-testid') ?? '';
+// a chosen chip is the blue one (the app's selected style); read it from the style the page really has
+const selected = (u, t) => !!u.id(t) && w.getComputedStyle(u.id(t)).backgroundColor === 'rgb(37, 99, 235)';
+const settle = () => sleep(80); // a button re-enabled a moment ago needs the page to finish updating before it takes a tap
+
+console.log('\n=== addresses and tags (cosmetic fixes) ===');
+st = seed(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+await ui.type('search', 'sion'); await waitFor(() => ui.cards() === 1, 3000);
+check('a Google Plus Code in front of an address is not shown ("3W9C+9VX, Sion, Mumbai" -> "Sion, Mumbai")', /Sion, Mumbai/.test(cardText(ui, 's4')) && !/3W9C/.test(cardText(ui, 's4')), cardText(ui, 's4'));
+await ui.type('search', '3W9C'); await waitFor(() => ui.cards() === 1, 3000);
+check('...but searching for that text still finds the school (display only)', ui.cards() === 1 && /BMC School Sion/.test(cardText(ui, 's4')));
+await ui.click('school-s4'); await waitFor(() => ui.id('back'));
+check('the school page hides the Plus Code too', /Sion, Mumbai/.test(ui.text()) && !/3W9C/.test(ui.text()));
+await ui.click('back'); await waitFor(() => ui.id('search')); await ui.type('search', 'sunrise'); await waitFor(() => ui.cards() === 1 && ui.id('school-s1'), 3000);
+{
+  const row = [...ui.id('school-s1').querySelectorAll('div')].find((d) => [...d.children].map((c) => c.textContent).join('|') === 'Preschool|Daycare available');
+  const align = row ? w.getComputedStyle(row).alignItems : 'no row';
+  check('the row of level tags does not stretch the tags to equal height (align-items: flex-start)', align === 'flex-start', align);
+}
+await ui.unmount();
+
+console.log('\n=== schools near me ===');
+st = seed(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+check('before asking: a "Use my location" button, a line saying it is not saved, and no distances anywhere', !!ui.id('use-location') && /not saved/.test(ui.id('near-me-off').textContent) && ui.all('distance-').length === 0 && !ui.id('near-me-on'));
+await ui.click('toggle-filters');
+check('"Nearest first" is not offered until the app knows where the parent is', !ui.id('sort-distance') && !!ui.id('sort-name'));
+await ui.click('toggle-filters');
+let calls = fakePhone(); globalThis.__stored = [];
+const logBefore = st.log.length;
+await ui.click('use-location');
+check('tapping it shows "Finding you..." while the phone works, and cannot be tapped twice', /Finding you/.test(ui.id('use-location')?.textContent ?? 'gone') || !!ui.id('near-me-on'));
+check('it switches to the near-me panel and lists the nearest schools first', await waitFor(() => ui.id('near-me-on') && firstCard(ui) === 'school-f24', 4000), firstCard(ui));
+check('the phone was asked for permission first, then for the position', JSON.stringify(calls) === JSON.stringify(['permission', 'position']), JSON.stringify(calls));
+{
+  const rpcs = st.log.slice(logBefore).filter((q) => q.table === 'rpc:schools_nearby');
+  check('the position sent to the database is rounded to about 100 m (19.07604 -> 19.076, 72.87771 -> 72.878)', rpcs.length > 0 && rpcs.every((q) => q.args.p_lat === 19.076 && q.args.p_lng === 72.878), JSON.stringify(rpcs.map((q) => q.args)));
+  check('...and nothing else about the parent is sent: only the two numbers', rpcs.every((q) => JSON.stringify(Object.keys(q.args).sort()) === '["p_lat","p_lng"]'));
+  check('...and the app asks for the distance column along with the school columns', rpcs.every((q) => /distance_km/.test(q.cols) && /google_rating/.test(q.cols)), rpcs[0]?.cols);
+  check('nothing is written anywhere: no inserts, updates or deletes, and nothing saved on the phone', st.log.slice(logBefore).every((q) => q.op === 'select') && globalThis.__stored.length === 0);
+}
+check('the app source has no code that saves anything to the phone or the browser', !/AsyncStorage\.(setItem|multiSet|mergeItem)|localStorage|sessionStorage|SecureStore/.test(appSource.replace(/\/\/.*$/gm, '')));
+{
+  const want = expectedNear(st, 19.076, 72.878);
+  check('the first page is the 20 nearest, in distance order (independent maths)', JSON.stringify(shown(ui)) === JSON.stringify(want.slice(0, 20).map((x) => x.id)), shown(ui).slice(0, 5).join(','));
+  check('every card shows its distance: nearest is "2.6 km away"', ui.all('distance-').length === 20 && distanceOf(ui, 'f24') === '2.6 km away', distanceOf(ui, 'f24'));
+  check('the address still shows under the name', /Chembur, Mumbai/.test(cardText(ui, 'f24')));
+  check('the near-me panel offers Any distance / 2 / 5 / 10 km, with Any selected, and a straight-line note', ['near-any', 'near-2', 'near-5', 'near-10'].every((t) => !!ui.id(t)) && selected(ui, 'near-any') && /straight line/.test(ui.id('near-me-on').textContent));
+  check('the filter button shows no count (nearest first is the normal order once you share your location)', ui.id('toggle-filters').textContent === 'Filters', ui.id('toggle-filters').textContent);
+  await ui.click('more'); await waitFor(() => ui.cards() === 35, 3000);
+  const all = shown(ui);
+  check('35 schools in all: every school with coordinates once, in order', all.length === 35 && new Set(all).size === 35 && JSON.stringify(all) === JSON.stringify(want.map((x) => x.id)), `${all.length} / ${new Set(all).size}`);
+  check('a school with no coordinates (f25) and a hidden one (Chess Class) are not in the near list', !all.includes('f25') && !all.includes('s7'));
+  check('the two same-named branches at the same spot keep a fixed order, both "19 km away"', all.indexOf('t1') === all.indexOf('t2') - 1 && distanceOf(ui, 't1') === '19 km away' && distanceOf(ui, 't2') === '19 km away');
+  check('far schools show whole kilometres (Ulhasnagar 34 km) and the list ends with the farthest', all.at(-1) === 'n3' && distanceOf(ui, 'n3') === '34 km away' && distanceOf(ui, 's3') === '3.8 km away' && distanceOf(ui, 's5') === '4.3 km away');
+}
+await ui.click('toggle-filters');
+check('the filter panel offers "Nearest first", selected', selected(ui, 'sort-distance') && !selected(ui, 'sort-name'));
+await ui.click('near-5'); await waitFor(() => ui.cards() === 20 && !!ui.id('more'), 3000);
+check('Within 5 km: a first page of 20 with more to come, all within 5 km', ui.cards() === 20 && !!ui.id('more') && ui.all('distance-').every((e) => parseFloat(e.textContent) <= 5.05), ui.all('distance-').map((e) => e.textContent).slice(-3).join('|'));
+await ui.click('more'); await waitFor(() => ui.cards() === 27, 3000);
+check('...27 schools in all (24 fillers, Podar, Tiny Tots, BMC), none farther than 5 km', ui.cards() === 27 && !ui.id('more') && !/Twin Branch|Sunrise/.test(ui.text()), ui.cards());
+check('the button counts the distance limit as one filter', /Hide filters/.test(ui.id('toggle-filters').textContent) && !!ui.id('clear-filters'));
+await ui.click('near-2'); await waitFor(() => ui.id('empty'), 3000);
+check('Within 2 km: nobody is that close, and the message says so', ui.cards() === 0 && /within 2 km/.test(ui.id('empty').textContent) && /bigger distance/.test(ui.id('empty').textContent), ui.id('empty')?.textContent);
+await ui.click('near-10'); await ui.click('level-preschool'); await waitFor(() => ui.cards() === 2, 3000);
+check('Within 10 km and Preschool: Tiny Tots (4.3 km) then Sunrise (5.4 km)', JSON.stringify(shown(ui)) === JSON.stringify(['s5', 's1']) && distanceOf(ui, 's5') === '4.3 km away' && distanceOf(ui, 's1') === '5.4 km away', JSON.stringify(shown(ui)));
+await ui.click('level-preschool'); await ui.click('near-any');
+await ui.click('sort-name'); await waitFor(() => ui.cards() === 20 && !!ui.id('more'), 3000);
+{
+  const az = st.schools.filter((x) => !x.is_hidden && x.latitude != null).sort((a, b) => (a.name_sort < b.name_sort ? -1 : a.name_sort > b.name_sort ? 1 : a.id < b.id ? -1 : 1)).map((x) => x.id);
+  check('A to Z with a location: the same order as the plain A to Z list, and every card still shows a distance', JSON.stringify(shown(ui)) === JSON.stringify(az.slice(0, 20)) && ui.all('distance-').length === 20, shown(ui).slice(0, 4).join(','));
+  check('the filter button now counts the sort choice', /Hide filters/.test(ui.id('toggle-filters').textContent) && !!ui.id('clear-filters'));
+}
+await ui.click('sort-rating'); await waitFor(() => firstCard(ui) === 'school-n1', 3000);
+check('Best rated with a location: Smiling Kids (5.0), then 270 Degree (4.9, more reviews), then Tiny Tots (4.9)', JSON.stringify(shown(ui).slice(0, 3)) === JSON.stringify(['n1', 'n2', 's5']), shown(ui).slice(0, 3).join(','));
+await ui.click('clear-filters'); await waitFor(() => firstCard(ui) === 'school-f24', 3000);
+check('Clear filters puts the order back to nearest first (and keeps the location)', firstCard(ui) === 'school-f24' && !!ui.id('near-me-on') && selected(ui, 'sort-distance') && !ui.id('clear-filters'));
+await ui.click('toggle-filters');
+await ui.type('search', 'bandra'); await waitFor(() => ui.cards() === 2, 3000);
+check('searching while sharing a location: Bandra schools, nearest first, with distances (Sunrise 5.4 km, St. Andrew 5.7 km)', JSON.stringify(shown(ui)) === JSON.stringify(['s1', 's2']) && distanceOf(ui, 's1') === '5.4 km away' && distanceOf(ui, 's2') === '5.7 km away', JSON.stringify(shown(ui)));
+await ui.click('school-s1'); await waitFor(() => ui.id('back'));
+check('the school page shows the distance', ui.id('school-distance')?.textContent === '5.4 km away', ui.id('school-distance')?.textContent);
+await ui.click('back'); await waitFor(() => ui.id('search'));
+check('...and going back keeps the location, the search and the distances', !!ui.id('near-me-on') && ui.cards() === 2 && distanceOf(ui, 's1') === '5.4 km away');
+await ui.type('search', ''); await waitFor(() => ui.cards() === 20, 3000);
+await ui.click('near-5'); await waitFor(() => ui.cards() === 20 && !!ui.id('more'), 3000);
+await ui.click('stop-location');
+check('Stop goes back to A to Z without distances, and offers the button again', await waitFor(() => ui.id('use-location') && !ui.id('near-me-on') && ui.all('distance-').length === 0, 3000) && !ui.id('sort-distance'));
+{
+  const az = st.schools.filter((x) => !x.is_hidden).sort((a, b) => (a.name_sort < b.name_sort ? -1 : a.name_sort > b.name_sort ? 1 : a.id < b.id ? -1 : 1)).map((x) => x.id);
+  await waitFor(() => JSON.stringify(shown(ui)) === JSON.stringify(az.slice(0, 20)), 3000);
+  check('...the plain A to Z list is back (including schools that have no coordinates)', JSON.stringify(shown(ui)) === JSON.stringify(az.slice(0, 20)) && ui.id('toggle-filters').textContent === 'Filters', shown(ui).slice(0, 4).join(','));
+}
+await ui.click('toggle-filters');
+check('after Stop, "A to Z" is the chosen order and the distance choices are gone', selected(ui, 'sort-name') && !ui.id('sort-distance') && !ui.id('near-5'));
+await ui.click('toggle-filters');
+await ui.click('use-location'); await waitFor(() => ui.id('near-me-on') && firstCard(ui) === 'school-f24', 3000);
+check('starting again: back to nearest first, and the old distance limit did not come back', selected(ui, 'near-any') && !selected(ui, 'near-5'));
+await ui.click('near-5'); await waitFor(() => ui.cards() === 20, 3000);
+await ui.click('sign-out'); await waitFor(() => ui.id('auth-submit'));
+await signIn(ui, 'bob@x.in', 'password2'); await waitFor(() => ui.cards() === 20);
+check('signing out forgets the location: the next person starts with the button and a plain list', !!ui.id('use-location') && !ui.id('near-me-on') && ui.all('distance-').length === 0);
+await ui.unmount();
+
+console.log('\n=== schools near me: when it does not work ===');
+st = seed(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+calls = fakePhone({ perm: { status: 'denied', canAskAgain: true } });
+await ui.click('use-location');
+check('permission refused: an amber note explains, and the parent can still search by name or area', await waitFor(() => /did not get permission/.test(ui.id('location-note')?.textContent ?? '')) && /search by school name or area/.test(ui.id('location-note').textContent));
+check('...the button is still there to try again, the list is unchanged, and the database was never asked for distances', !!ui.id('use-location') && !ui.id('near-me-on') && ui.cards() === 20 && ui.all('distance-').length === 0 && !st.log.some((q) => q.table.startsWith('rpc:')) && JSON.stringify(calls) === JSON.stringify(['permission']), JSON.stringify(calls));
+await settle(); fakePhone({ perm: { status: 'denied', canAskAgain: false } });
+await ui.click('use-location');
+check('permission blocked for good: says to switch it on in the phone settings', await waitFor(() => /phone settings/.test(ui.id('location-note')?.textContent ?? '')) && !ui.id('near-me-on'));
+await settle(); fakePhone({ posThrows: true });
+await ui.click('use-location');
+check('the phone has location switched off: a plain message, no crash', await waitFor(() => /could not find your location/.test(ui.id('location-note')?.textContent ?? '')) && !ui.id('near-me-on'));
+await settle(); fakePhone({ pos: { coords: { latitude: null, longitude: 72.8 } } });
+await ui.click('use-location');
+check('a broken position (null latitude) is refused, not treated as 0,0', await waitFor(() => /could not find your location/.test(ui.id('location-note')?.textContent ?? '')) && !ui.id('near-me-on') && !st.log.some((q) => q.table.startsWith('rpc:')));
+await settle(); fakePhone();
+await ui.click('use-location');
+check('then it works, and the old warning is gone', await waitFor(() => ui.id('near-me-on') && firstCard(ui) === 'school-f24', 3000) && !ui.id('location-note'));
+await ui.unmount();
+
+st = seed(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+fakePhone({ pos: DELHI });
+await ui.click('use-location');
+check('a parent outside Mumbai still gets distances, with a note that we only list Mumbai and Thane', await waitFor(() => ui.id('near-me-on') && !!ui.id('location-note') && /outside Mumbai/.test(ui.id('location-note').textContent), 3000));
+{
+  const want = expectedNear(st, 28.614, 77.209);
+  await waitFor(() => firstCard(ui) === 'school-' + want[0].id, 3000);
+  check('the nearest school to Delhi is listed first with its real distance in whole km', firstCard(ui) === 'school-' + want[0].id && distanceOf(ui, want[0].id) === `${Math.round(want[0].km)} km away`, `${firstCard(ui)} ${distanceOf(ui, want[0].id)} vs ${want[0].id} ${want[0].km}`);
+}
+await ui.unmount();
+
+// the phone never answers (a shortened wait of 60 ms stands in for 15 seconds)
+st = seed(); ui = await mount(st, quick); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+calls = fakePhone({ hang: true });
+await ui.click('use-location');
+check('while waiting the button says so and is off', /Finding you/.test(ui.id('use-location')?.textContent ?? ''));
+await ui.click('use-location');
+check('tapping it again does not ask the phone twice', calls.filter((c) => c === 'permission').length === 1, JSON.stringify(calls));
+check('a phone that never answers ends with a "took too long" note, and the button is back', await waitFor(() => /took too long/.test(ui.id('location-note')?.textContent ?? ''), 3000) && /Use my location/.test(ui.id('use-location')?.textContent ?? '') && !ui.id('near-me-on'));
+await ui.unmount();
+
+// the database function has not been installed yet (the paste-order mistake)
+st = seed(); st.nearbyMissing = true; ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+fakePhone();
+await ui.click('use-location');
+check('function missing in the database: a plain "not switched on yet" note, not a database error', await waitFor(() => /not switched on yet/.test(ui.id('location-note')?.textContent ?? ''), 3000) && !/PGRST|schema cache|schools_nearby/.test(ui.text()));
+{
+  const az = st.schools.filter((x) => !x.is_hidden).sort((a, b) => (a.name_sort < b.name_sort ? -1 : a.name_sort > b.name_sort ? 1 : a.id < b.id ? -1 : 1)).map((x) => x.id);
+  await waitFor(() => !ui.id('near-me-on') && JSON.stringify(shown(ui)) === JSON.stringify(az.slice(0, 20)), 3000);
+  check('...the parent is dropped back to the normal A to Z list, with no error box and the button available', !ui.id('near-me-on') && !ui.id('discover-error') && !!ui.id('use-location') && JSON.stringify(shown(ui)) === JSON.stringify(az.slice(0, 20)) && ui.all('distance-').length === 0, shown(ui).slice(0, 3).join(','));
+}
+st.nearbyMissing = false; await settle();
+await ui.click('use-location');
+check('once the function is installed, the same button works', await waitFor(() => ui.id('near-me-on') && firstCard(ui) === 'school-f24', 3000) && !ui.id('location-note'));
+await ui.unmount();
+
+// a network failure while the location is on
+st = seed(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+fakePhone(); await ui.click('use-location'); await waitFor(() => ui.id('near-me-on') && firstCard(ui) === 'school-f24', 3000);
+st.failNext = { message: 'Network request failed' };
+await ui.click('near-5'); await waitFor(() => ui.id('discover-error'), 3000);
+check('a connection failure while sharing a location shows the usual message and Try again, and keeps the location', /internet connection/.test(ui.id('discover-error')?.textContent ?? '') && !!ui.id('retry') && !!ui.id('near-me-on'));
+await ui.click('retry');
+check('Try again works, with the distance limit applied', await waitFor(() => !ui.id('discover-error') && ui.cards() === 20 && !!ui.id('more'), 3000) && ui.all('distance-').every((e) => parseFloat(e.textContent) <= 5.05));
 await ui.unmount();
 
 console.log(`\n${pass} passed, ${fail} failed`);

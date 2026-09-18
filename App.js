@@ -4,9 +4,13 @@
 // ONE FILE ON PURPOSE: paste all of this into snack.expo.dev as App.js.
 //   1. Set SUPABASE_KEY below to your publishable key (sb_publishable_...). NEVER a secret key.
 //   2. Snack offers to add the packages this file imports (@supabase/supabase-js, @react-native-async-storage/
-//      async-storage, react-native-url-polyfill). Accept them.
-// What it does: sign in / sign up, search schools, filter by level / daycare / Google rating, open a school,
-// read parent reviews, write one (anonymous, moderated before it shows), and report a review.
+//      async-storage, react-native-url-polyfill, expo-location). Accept them.
+//   3. "Schools near me" needs the database function from supabase/migrations/20260919000500_schools_nearby.sql (in the
+//      admin repo). Run that in the Supabase SQL Editor BEFORE using the new app. Without it the app still works; the
+//      "Use my location" button just says it is not switched on yet.
+// What it does: sign in / sign up, search schools, filter by level / daycare / Google rating / distance, see how far each
+// school is from you, open a school, read parent reviews, write one (anonymous, moderated before it shows), and report a
+// review.
 // =====================================================================================================
 import 'react-native-url-polyfill/auto';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -15,6 +19,7 @@ import {
   StyleSheet, Switch, Text, TextInput, View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Location from 'expo-location';
 import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = 'https://twpcjrpknsqlycdvwtsj.supabase.co';
@@ -29,6 +34,10 @@ const supabase = createClient(SUPABASE_URL, KEY_IS_SET ? SUPABASE_KEY : 'key-not
 
 const PAGE_SIZE = 20;
 const SCHOOL_COLUMNS = 'id,name,address,website,board,levels,google_rating,google_review_count';
+const NEARBY_COLUMNS = `${SCHOOL_COLUMNS},distance_km`; // the database function schools_nearby adds the distance
+const LOCATION_TIMEOUT_MS = 15000;
+// The area the schools were collected for (the same box the importer is limited to). Outside it the app still works.
+const SERVICE_AREA = { latMin: 18.5, latMax: 19.7, lngMin: 72.5, lngMax: 73.5 };
 
 const LEVEL_CHOICES = [
   { key: 'preschool', label: 'Preschool' },
@@ -41,6 +50,12 @@ const RATING_CHOICES = [
   { value: 3.5, label: '3.5+' },
   { value: 4, label: '4+' },
   { value: 4.5, label: '4.5+' },
+];
+const DISTANCE_CHOICES = [
+  { km: null, label: 'Any distance' },
+  { km: 2, label: 'Within 2 km' },
+  { km: 5, label: 'Within 5 km' },
+  { km: 10, label: 'Within 10 km' },
 ];
 const RELATIONSHIPS = [
   { key: 'current_parent', label: 'Current parent' },
@@ -55,15 +70,83 @@ const REPORT_REASONS = [
   { key: 'personal_info', label: 'Personal details' },
   { key: 'other', label: 'Something else' },
 ];
-const DEFAULT_FILTERS = { search: '', level: null, daycare: false, minRating: 0, includeUnrated: true, sort: 'name' };
+const DEFAULT_FILTERS = { search: '', level: null, daycare: false, minRating: 0, includeUnrated: true, sort: 'name', nearKm: null };
+
+// ---- where the parent is. A "place" is { lat, lng }, rounded to about 100 m. It lives only in memory: nothing is saved. ----
+function validPlace(p) {
+  return !!p && typeof p.lat === 'number' && typeof p.lng === 'number'
+    && Number.isFinite(p.lat) && Number.isFinite(p.lng) && Math.abs(p.lat) <= 90 && Math.abs(p.lng) <= 180;
+}
+
+function inServiceArea(p) {
+  return validPlace(p) && p.lat >= SERVICE_AREA.latMin && p.lat <= SERVICE_AREA.latMax && p.lng >= SERVICE_AREA.lngMin && p.lng <= SERVICE_AREA.lngMax;
+}
+
+// The order a parent gets when they have not chosen one: nearest first once we know where they are, A to Z before.
+const defaultSort = (hasPlace) => (hasPlace ? 'distance' : 'name');
+
+// Distance choices only make sense with a place. Without one they fall back to what a parent without a place can have.
+function normalizeFilters(f, hasPlace) {
+  if (hasPlace) return f;
+  return { ...f, nearKm: null, sort: f.sort === 'distance' ? 'name' : f.sort };
+}
+
+function distanceText(km) {
+  if (typeof km !== 'number' || !Number.isFinite(km) || km < 0) return '';
+  if (km < 0.1) return 'Under 100 m away';
+  const tenth = Math.round(km * 10) / 10;
+  return tenth < 10 ? `${tenth.toFixed(1)} km away` : `${Math.round(km)} km away`;
+}
+
+// Google puts a "Plus Code" first in some addresses ("3W9C+9VX, Mumbai, ..."). It means nothing to a parent. Display only.
+function cleanAddress(address) {
+  const a = String(address ?? '').trim();
+  const rest = a.replace(/^[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}(?:\s*,\s*|\s+|$)/, '').trim();
+  return rest;
+}
+
+const isMissingNearby = (error) => error?.code === 'PGRST202' || /schools_nearby/i.test(String(error?.message ?? ''));
+
+function withTimeout(promise, ms) {
+  let timer;
+  const limit = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('location-timeout')), ms); });
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
+}
+
+// Asks the phone for permission and its position. `loc` is expo-location (or a stand-in in tests).
+// Returns { ok: true, place } or { ok: false, reason: 'denied' | 'blocked' | 'timeout' | 'unavailable' }.
+async function locateMe(loc, timeoutMs = LOCATION_TIMEOUT_MS) {
+  try {
+    const perm = await loc.requestForegroundPermissionsAsync();
+    if (perm?.status !== 'granted') return { ok: false, reason: perm?.canAskAgain === false ? 'blocked' : 'denied' };
+    const pos = await withTimeout(loc.getCurrentPositionAsync({ accuracy: loc.Accuracy?.Balanced }), timeoutMs);
+    const lat = pos?.coords?.latitude;
+    const lng = pos?.coords?.longitude;
+    if (typeof lat !== 'number' || typeof lng !== 'number') return { ok: false, reason: 'unavailable' };
+    const place = { lat: Math.round(lat * 1000) / 1000, lng: Math.round(lng * 1000) / 1000 };
+    return validPlace(place) ? { ok: true, place } : { ok: false, reason: 'unavailable' };
+  } catch (e) {
+    return { ok: false, reason: e?.message === 'location-timeout' ? 'timeout' : 'unavailable' };
+  }
+}
+
+function locationProblemText(reason) {
+  if (reason === 'blocked') return 'Location is switched off for this app. Turn it on in your phone settings, then try again. You can still search by school name or area.';
+  if (reason === 'denied') return 'We did not get permission to use your location. You can still search by school name or area, or tap the button to try again.';
+  if (reason === 'timeout') return 'Finding your location took too long. Check that location is switched on for your phone, then try again.';
+  return 'We could not find your location. Check that location is switched on for your phone, then try again.';
+}
+const OUTSIDE_AREA_TEXT = 'You seem to be outside Mumbai and Thane, where Kidscover has schools so far. Distances are measured from where you are.';
+const NEARBY_MISSING_TEXT = 'Schools near you is not switched on yet. You can still search by school name or area.';
 
 // Text typed into the search box goes into a filter string, so remove the characters that filter syntax uses.
 function sanitizeSearch(text) {
   return String(text ?? '').replace(/[,()*"\\%]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
 }
 
-// Applies the parent's choices to a query on the schools table.
-function applySchoolFilters(query, f) {
+// Applies the parent's choices to a query on the schools table (or, with a place, on the schools_nearby function, whose
+// rows also carry distance_km). Without a place the distance choices are ignored.
+function applySchoolFilters(query, f, hasPlace = false) {
   let q = query.eq('is_hidden', false); // the database already hides non-schools from parents; this also keeps an admin's view the same
   const term = sanitizeSearch(f.search);
   if (term) q = q.or(`name.ilike.*${term}*,address.ilike.*${term}*`);
@@ -75,10 +158,14 @@ function applySchoolFilters(query, f) {
   } else if (!f.includeUnrated) {
     q = q.not('google_rating', 'is', null);
   }
+  if (hasPlace && f.nearKm > 0) q = q.lte('distance_km', f.nearKm);
   // name_sort is the name without emoji, brackets or punctuation, in lower case (a database column), so the list is
-  // truly A to Z. The final "id" makes the order the same every time: schools with equal names or ratings would
-  // otherwise be free to swap places between pages, so "Show more" could repeat one school and skip another.
-  if (f.sort === 'rating') {
+  // truly A to Z. The final "id" makes the order the same every time: schools with equal names, ratings or distances
+  // would otherwise be free to swap places between pages, so "Show more" could repeat one school and skip another.
+  const sort = f.sort === 'distance' && !hasPlace ? 'name' : f.sort;
+  if (sort === 'distance') {
+    q = q.order('distance_km', { ascending: true });
+  } else if (sort === 'rating') {
     q = q.order('google_rating', { ascending: false, nullsFirst: false }).order('google_review_count', { ascending: false, nullsFirst: false });
   } else {
     q = q.order('name_sort', { ascending: true });
@@ -86,8 +173,11 @@ function applySchoolFilters(query, f) {
   return q.order('id', { ascending: true });
 }
 
-function activeFilterCount(f) {
-  return (f.level ? 1 : 0) + (f.daycare ? 1 : 0) + (f.minRating > 0 ? 1 : 0) + (f.includeUnrated ? 0 : 1) + (f.sort !== 'name' ? 1 : 0);
+// How many choices are narrowing or re-ordering the list (for the "Filters (n)" button).
+function activeFilterCount(f, hasPlace = false) {
+  const g = normalizeFilters(f, hasPlace);
+  return (g.level ? 1 : 0) + (g.daycare ? 1 : 0) + (g.minRating > 0 ? 1 : 0) + (g.includeUnrated ? 0 : 1)
+    + (g.sort !== defaultSort(hasPlace) ? 1 : 0) + (hasPlace && g.nearKm > 0 ? 1 : 0);
 }
 
 function levelBadges(levels) {
@@ -168,6 +258,7 @@ function statusLine(status, note) {
 function friendlyError(error, context) {
   const msg = typeof error === 'string' ? error : String(error?.message ?? '');
   const code = error?.code;
+  if (isMissingNearby(error)) return NEARBY_MISSING_TEXT;
   if (/invalid login credentials/i.test(msg)) return 'That email and password do not match.';
   if (/email not confirmed/i.test(msg)) return 'Please confirm your email first: open the link we sent you, then sign in.';
   if (/already registered|already been registered/i.test(msg)) return 'That email already has an account. Try signing in instead.';
@@ -190,9 +281,14 @@ async function loadStats(db, ids) {
   return Object.fromEntries((data ?? []).map((r) => [r.school_id, r]));
 }
 
-async function loadSchools(db, filters, page) {
+// One page of schools. With a place, the rows come from the schools_nearby function and carry distance_km.
+async function loadSchools(db, filters, page, place = null) {
+  const hasPlace = validPlace(place);
   const from = page * PAGE_SIZE;
-  const { data, error } = await applySchoolFilters(db.from('schools').select(SCHOOL_COLUMNS), filters).range(from, from + PAGE_SIZE - 1);
+  const base = hasPlace
+    ? db.rpc('schools_nearby', { p_lat: place.lat, p_lng: place.lng }).select(NEARBY_COLUMNS)
+    : db.from('schools').select(SCHOOL_COLUMNS);
+  const { data, error } = await applySchoolFilters(base, normalizeFilters(filters, hasPlace), hasPlace).range(from, from + PAGE_SIZE - 1);
   if (error) return { rows: [], hasMore: false, error };
   const rows = data ?? [];
   const stats = await loadStats(db, rows.map((r) => r.id));
@@ -309,10 +405,13 @@ function AuthScreen() {
 // ---------------------------------------------------------------------------------------------- discover
 function SchoolCard({ school, onPress }) {
   const community = communityText(school.community);
+  const distance = distanceText(school.distance_km);
+  const address = cleanAddress(school.address);
   return (
     <Pressable testID={`school-${school.id}`} accessibilityRole="button" onPress={onPress} style={s.card}>
       <Text style={s.schoolName}>{cleanName(school.name)}</Text>
-      {!!school.address && <Text style={s.muted} numberOfLines={2}>{school.address}</Text>}
+      {!!distance && <Text testID={`distance-${school.id}`} style={s.distance}>{distance}</Text>}
+      {!!address && <Text style={s.muted} numberOfLines={2}>{address}</Text>}
       <View style={s.badgeRow}>
         {levelBadges(school.levels).map((b) => <Text key={b} style={s.badge}>{b}</Text>)}
         {!!school.board && <Text style={[s.badge, { backgroundColor: C.greenSoft, color: C.green }]}>{school.board}</Text>}
@@ -332,6 +431,9 @@ function DiscoverScreen({ onOpen }) {
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [place, setPlace] = useState(null); // where the parent is, once they allow it; kept in memory only
+  const [locating, setLocating] = useState(false);
+  const [locationNote, setLocationNote] = useState(null); // { tone, text } about the location, kept apart from list errors
   const latest = useRef(0);
   const pageRef = useRef(0);
 
@@ -340,14 +442,20 @@ function DiscoverScreen({ onOpen }) {
     return () => clearTimeout(t);
   }, [typed]);
 
-  const key = JSON.stringify({ ...filters, search });
+  const key = JSON.stringify({ ...filters, search, place });
   const run = useCallback(async (page, append) => {
     const id = ++latest.current;
+    const { place: where, ...f } = JSON.parse(key);
     setLoading(true);
     setError('');
-    const res = await loadSchools(supabase, JSON.parse(key), page);
+    const res = await loadSchools(supabase, f, page, where);
     if (id !== latest.current) return; // a newer search has replaced this one
-    if (res.error) setError(friendlyError(res.error));
+    if (res.error && where && isMissingNearby(res.error)) {
+      // the database function has not been installed: carry on without a position instead of showing a dead list
+      setPlace(null);
+      setFilters((cur) => normalizeFilters(cur, false));
+      setLocationNote({ tone: 'amber', text: NEARBY_MISSING_TEXT });
+    } else if (res.error) setError(friendlyError(res.error));
     else {
       pageRef.current = page;
       setRows((prev) => (append ? [...prev, ...res.rows] : res.rows));
@@ -359,14 +467,50 @@ function DiscoverScreen({ onOpen }) {
   useEffect(() => { run(0, false); }, [run]);
 
   const set = (patch) => setFilters((f) => ({ ...f, ...patch }));
-  const count = activeFilterCount(filters);
+  const hasPlace = !!place;
+  const count = activeFilterCount(filters, hasPlace);
+
+  async function useMyLocation() {
+    setLocating(true);
+    setLocationNote(null);
+    const res = await locateMe(Location);
+    setLocating(false);
+    if (!res.ok) { setLocationNote({ tone: 'amber', text: locationProblemText(res.reason) }); return; }
+    setPlace(res.place);
+    set({ sort: 'distance' }); // they asked for schools near them, so show the nearest first
+    if (!inServiceArea(res.place)) setLocationNote({ tone: 'amber', text: OUTSIDE_AREA_TEXT });
+  }
+
+  function stopUsingLocation() {
+    setPlace(null);
+    setLocationNote(null);
+    setFilters((f) => normalizeFilters(f, false));
+  }
 
   const header = (
     <View>
       <TextInput testID="search" style={s.search} placeholder="Search by school name or area" value={typed} onChangeText={setTyped} autoCorrect={false} />
+      {hasPlace ? (
+        <View style={[s.card, { marginBottom: 8 }]} testID="near-me-on">
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={s.body}>Distances are from your location</Text>
+            <Btn testID="stop-location" kind="quiet" label="Turn off" onPress={stopUsingLocation} />
+          </View>
+          <View style={s.wrap}>
+            {DISTANCE_CHOICES.map((d) => <Chip key={String(d.km)} testID={`near-${d.km ?? 'any'}`} label={d.label} selected={filters.nearKm === d.km} onPress={() => set({ nearKm: d.km })} />)}
+          </View>
+          <Text style={s.muted}>In a straight line, not by road.</Text>
+        </View>
+      ) : (
+        <View style={[s.card, { marginBottom: 8 }]} testID="near-me-off">
+          <Btn testID="use-location" kind="outline" label={locating ? 'Finding you...' : 'Use my location'} onPress={useMyLocation} disabled={locating} />
+          <Text style={s.muted}>See how far each school is from you. Your location is only used to measure distance and is not saved.</Text>
+        </View>
+      )}
+      {!!locationNote && <Notice tone={locationNote.tone} text={locationNote.text} testID="location-note" />}
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <Btn testID="toggle-filters" kind="outline" label={showFilters ? 'Hide filters' : `Filters${count ? ` (${count})` : ''}`} onPress={() => setShowFilters((v) => !v)} />
-        {count > 0 && <Btn testID="clear-filters" kind="quiet" label="Clear filters" onPress={() => setFilters(DEFAULT_FILTERS)} />}
+        {count > 0 && <Btn testID="clear-filters" kind="quiet" label="Clear filters" onPress={() => setFilters({ ...DEFAULT_FILTERS, sort: defaultSort(hasPlace) })} />}
       </View>
       {showFilters && (
         <View style={[s.card, { marginBottom: 12 }]}>
@@ -391,6 +535,7 @@ function DiscoverScreen({ onOpen }) {
           </View>
           <Text style={s.label}>Sort by</Text>
           <View style={s.wrap}>
+            {hasPlace && <Chip testID="sort-distance" label="Nearest first" selected={filters.sort === 'distance'} onPress={() => set({ sort: 'distance' })} />}
             <Chip testID="sort-name" label="A to Z" selected={filters.sort === 'name'} onPress={() => set({ sort: 'name' })} />
             <Chip testID="sort-rating" label="Best rated" selected={filters.sort === 'rating'} onPress={() => set({ sort: 'rating' })} />
           </View>
@@ -404,7 +549,11 @@ function DiscoverScreen({ onOpen }) {
     <ScrollView testID="discover-list" contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
       {header}
       {rows.map((item) => <SchoolCard key={item.id} school={item} onPress={() => onOpen(item)} />)}
-      {!loading && !error && rows.length === 0 && <Text testID="empty" style={s.empty}>No schools match. Try removing a filter.</Text>}
+      {!loading && !error && rows.length === 0 && (
+        <Text testID="empty" style={s.empty}>
+          {hasPlace && filters.nearKm ? `No schools within ${filters.nearKm} km match. Try a bigger distance or remove a filter.` : 'No schools match. Try removing a filter.'}
+        </Text>
+      )}
       <View style={{ paddingVertical: 12 }}>
         {loading && <ActivityIndicator testID="loading" />}
         {!loading && !!error && <Btn testID="retry" label="Try again" onPress={() => run(0, false)} />}
@@ -501,7 +650,8 @@ function SchoolScreen({ school, onBack }) {
     <ScrollView contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
       <Btn testID="back" kind="quiet" label="< Back to schools" onPress={onBack} />
       <Text style={s.title}>{cleanName(school.name)}</Text>
-      {!!school.address && <Text style={s.body}>{school.address}</Text>}
+      {!!distanceText(school.distance_km) && <Text testID="school-distance" style={s.distance}>{distanceText(school.distance_km)}</Text>}
+      {!!cleanAddress(school.address) && <Text style={s.body}>{cleanAddress(school.address)}</Text>}
       <View style={s.badgeRow}>
         {levelBadges(school.levels).map((b) => <Text key={b} style={s.badge}>{b}</Text>)}
         {!!school.board && <Text style={[s.badge, { backgroundColor: C.greenSoft, color: C.green }]}>{school.board}</Text>}
@@ -630,7 +780,8 @@ const s = StyleSheet.create({
   chipText: { color: C.ink, fontSize: 14 },
   chipTextOn: { color: '#fff', fontWeight: '700' },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 4 },
-  badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginVertical: 4 },
+  badgeRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: 6, marginVertical: 4 },
+  distance: { fontSize: 13, fontWeight: '700', color: C.blue },
   badge: { backgroundColor: C.blueSoft, color: C.blue, fontSize: 12, fontWeight: '700', paddingVertical: 3, paddingHorizontal: 8, borderRadius: 999, overflow: 'hidden' },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginVertical: 6 },
   notice: { borderRadius: 10, padding: 10, marginVertical: 6 },

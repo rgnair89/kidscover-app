@@ -13,7 +13,8 @@ const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'lev
   'enquiryStatusText', 'enquiryAbout', 'unreadCount', 'fromMe', 'isMissingEnquiries', 'ENQUIRIES_MISSING_TEXT', 'sendEnquiry', 'loadEnquiries',
   'loadEnquiryForSchool', 'loadEnquiryMessages', 'replyToEnquiry', 'markEnquiryRead', 'closeEnquiry',
   'DRIVE_MODES', 'MAX_DRIVE_BATCH', 'driveTimeText', 'driveKey', 'needDriveTimes', 'requestDriveTimes', 'driveProblemText',
-  'BOARD_CHOICES', 'boardSourceText', 'admissionText'];
+  'BOARD_CHOICES', 'boardSourceText', 'admissionText',
+  'CATEGORY_CHOICES', 'categoryOf', 'categoryFilters', 'isSchoolPlace'];
 fs.writeFileSync(path.join(here, '.tmp', 'logic.mjs'), src.slice(a, b) + `\nexport { ${names.join(', ')} };\n`);
 const L = await import(pathToFileURL(path.join(here, '.tmp', 'logic.mjs')).href);
 
@@ -45,7 +46,7 @@ check('spaces are tidied, length capped at 60, null is fine', L.sanitizeSearch('
 check('an attempt to smuggle in a second filter comes out as plain words', !/[,()]/.test(L.sanitizeSearch('x),id.eq.1,(name.ilike.*')), L.sanitizeSearch('x),id.eq.1,(name.ilike.*'));
 
 console.log('\n=== the parent\'s choices become database filters ===');
-check('default: never shows hidden places, A to Z by the clean sort name, then id', eq(filtersOf({}), ['eq("is_hidden",false)', 'order("name_sort",{"ascending":true})', 'order("id",{"ascending":true})']), JSON.stringify(filtersOf({})));
+check('default: never shows hidden places, only schools, A to Z by the clean sort name, then id', eq(filtersOf({}), ['eq("is_hidden",false)', 'eq("category","school")', 'order("name_sort",{"ascending":true})', 'order("id",{"ascending":true})']), JSON.stringify(filtersOf({})));
 check('every sort ends with an id tie-break, so equal names or ratings never repeat or skip between pages', filtersOf({}).at(-1) === 'order("id",{"ascending":true})' && filtersOf({ sort: 'rating' }).at(-1) === 'order("id",{"ascending":true})');
 check('search looks in name AND address', filtersOf({ search: 'Bandra' }).includes('or("name.ilike.*Bandra*,address.ilike.*Bandra*")'), JSON.stringify(filtersOf({ search: 'Bandra' })));
 check('a search with commas and brackets cannot break the filter', filtersOf({ search: 'a,b)' }).includes('or("name.ilike.*a b*,address.ilike.*a b*")'));
@@ -135,10 +136,10 @@ check('an edit sends only the editable columns', eq(inserted[1], ['school_review
 check('delete and report go to the right tables', eq(inserted[2], ['school_reviews', 'delete', 'id', 'r1']) && eq(inserted[3], ['review_reports', { review_id: 'r1', reason: 'spam' }]));
 
 console.log('\n=== near me: what is asked of the database ===');
-check('with a place the default order is nearest first, then id', eq(filtersOf({ sort: 'distance' }, true), ['eq("is_hidden",false)', 'order("distance_km",{"ascending":true})', 'order("id",{"ascending":true})']), JSON.stringify(filtersOf({ sort: 'distance' }, true)));
+check('with a place the default order is nearest first, then id', eq(filtersOf({ sort: 'distance' }, true), ['eq("is_hidden",false)', 'eq("category","school")', 'order("distance_km",{"ascending":true})', 'order("id",{"ascending":true})']), JSON.stringify(filtersOf({ sort: 'distance' }, true)));
 check('"within 5 km" -> distance <= 5 (only with a place)', filtersOf({ sort: 'distance', nearKm: 5 }, true).includes('lte("distance_km",5)') && !filtersOf({ nearKm: 5 }, false).some((x) => x.includes('distance_km')));
 check('no distance choice -> no distance filter', !filtersOf({ sort: 'distance' }, true).some((x) => x.startsWith('lte(')));
-check('without a place, a left-over "nearest first" falls back to A to Z and never mentions distance', eq(filtersOf({ sort: 'distance', nearKm: 2 }, false), ['eq("is_hidden",false)', 'order("name_sort",{"ascending":true})', 'order("id",{"ascending":true})']), JSON.stringify(filtersOf({ sort: 'distance', nearKm: 2 }, false)));
+check('without a place, a left-over "nearest first" falls back to A to Z and never mentions distance', eq(filtersOf({ sort: 'distance', nearKm: 2 }, false), ['eq("is_hidden",false)', 'eq("category","school")', 'order("name_sort",{"ascending":true})', 'order("id",{"ascending":true})']), JSON.stringify(filtersOf({ sort: 'distance', nearKm: 2 }, false)));
 check('with a place, A to Z and best rated still work', filtersOf({ sort: 'name' }, true).includes('order("name_sort",{"ascending":true})') && filtersOf({ sort: 'rating' }, true).includes('order("google_rating",{"ascending":false,"nullsFirst":false})'));
 check('every order ends with an id tie-break, distance included', ['distance', 'name', 'rating'].every((sort) => filtersOf({ sort }, true).at(-1) === 'order("id",{"ascending":true})'));
 check('distance works together with the other filters', ['overlaps("levels",["primary"])', 'lte("distance_km",5)', 'or("google_rating.gte.4,google_rating.is.null")'].every((x) => filtersOf({ sort: 'distance', nearKm: 5, level: 'primary', minRating: 4 }, true).includes(x)));
@@ -332,6 +333,20 @@ check('the boards offered: CBSE, ICSE, IB, IGCSE, State Board', eq(L.BOARD_CHOIC
 check('board CBSE -> only schools known to be CBSE (the default)', filtersOf({ board: 'CBSE' }).includes('overlaps("boards",["CBSE"])') && !filtersOf({ board: 'CBSE' }).some((x) => x.startsWith('or(')));
 check('...with "also show unknown" -> CBSE or not known yet (quoted, so "State Board" works too)', filtersOf({ board: 'State Board', includeUnknownBoard: true }).includes('or("boards.ov.{\\"State Board\\"},boards.is.null")'), JSON.stringify(filtersOf({ board: 'State Board', includeUnknownBoard: true })));
 check('no board chosen -> no board filter, whatever the switch says', !filtersOf({ includeUnknownBoard: true }).some((x) => /boards/.test(x)));
+
+console.log('\n=== schools, after-school classes, colleges ===');
+check('three categories, schools first and the default', L.CATEGORY_CHOICES.map((c) => c.key).join() === 'school,after_school,college' && L.DEFAULT_FILTERS.category === 'school');
+check('after-school -> only after-school classes', filtersOf({ category: 'after_school' }).includes('eq("category","after_school")') && !filtersOf({ category: 'after_school' }).includes('eq("category","school")'));
+check('colleges -> only colleges', filtersOf({ category: 'college' }).includes('eq("category","college")'));
+check('no category, or one that does not exist -> schools (never an unfiltered list)', filtersOf({}).includes('eq("category","school")') && filtersOf({ category: 'shop' }).includes('eq("category","school")') && !filtersOf({ category: 'shop' }).some((x) => /shop/.test(x)), JSON.stringify(filtersOf({ category: 'shop' })));
+const classChoices = { category: 'after_school', level: 'primary', daycare: true, board: 'CBSE', includeUnknownBoard: true, minRating: 4, search: 'dance' };
+check('for classes, level / daycare / board are set aside; search and rating still apply', (() => { const ops = filtersOf(classChoices); return !ops.some((x) => /levels|boards/.test(x)) && ops.some((x) => /name\.ilike\.\*dance\*/.test(x)) && ops.some((x) => /google_rating/.test(x)); })(), JSON.stringify(filtersOf(classChoices)));
+check('...and they apply again on Schools (set aside, not cleared)', (() => { const ops = filtersOf({ ...classChoices, category: 'school' }); return ops.includes('overlaps("levels",["primary"])') && ops.includes('contains("levels",["daycare"])') && ops.some((x) => /boards/.test(x)); })(), JSON.stringify(filtersOf({ ...classChoices, category: 'school' })));
+check('the category itself is not counted as a filter; set-aside filters are not counted either', L.activeFilterCount({ ...L.DEFAULT_FILTERS, category: 'college' }) === 0 && L.activeFilterCount({ ...L.DEFAULT_FILTERS, category: 'college', level: 'primary', board: 'CBSE', daycare: true }) === 0 && L.activeFilterCount({ ...L.DEFAULT_FILTERS, level: 'primary', board: 'CBSE', daycare: true }) === 3 && L.activeFilterCount({ ...L.DEFAULT_FILTERS, category: 'college', minRating: 4 }) === 1);
+check('the parent\'s filters are not changed by being set aside', classChoices.level === 'primary' && classChoices.board === 'CBSE' && L.categoryFilters(classChoices) !== classChoices);
+check('a place with no category (an older database row) counts as a school; classes and colleges do not', L.isSchoolPlace({}) && L.isSchoolPlace({ category: 'school' }) && !L.isSchoolPlace({ category: 'after_school' }) && !L.isSchoolPlace({ category: 'college' }) && L.isSchoolPlace(null));
+check('the list asks for the category (the app hides level badges and admissions for classes and colleges)', L.SCHOOL_COLUMNS.split(',').includes('category') && L.NEARBY_COLUMNS.split(',').includes('category'));
+check('a category\'s words: "after-school classes", "colleges"', L.categoryOf('after_school').noun === 'after-school classes' && L.categoryOf('college').label === 'Colleges' && L.categoryOf('nope').key === 'school');
 check('a board that is not on the list is ignored (nothing odd reaches the filter)', !filtersOf({ board: 'Harvard' }).some((x) => /boards/.test(x)) && !filtersOf({ board: 'CBSE},id.eq.1' }).some((x) => /boards/.test(x)));
 check('board works together with level and near me', ['overlaps("boards",["ICSE"])', 'overlaps("levels",["primary"])', 'lte("distance_km",5)'].every((x) => filtersOf({ board: 'ICSE', level: 'primary', sort: 'distance', nearKm: 5 }, true).includes(x)));
 check('a chosen board counts as one filter', L.activeFilterCount({ ...L.DEFAULT_FILTERS, board: 'IB' }) === 1 && L.activeFilterCount({ ...L.DEFAULT_FILTERS, board: 'IB', includeUnknownBoard: true }) === 1 && L.DEFAULT_FILTERS.includeUnknownBoard === false);

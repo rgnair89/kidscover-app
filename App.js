@@ -12,6 +12,8 @@
 //      API switched on in Google Cloud. Without them the app says drive times are not switched on yet.
 //   5. Boards and admission status need 20260919000800_school_website_findings.sql (admin repo) run FIRST: the school
 //      list asks for its columns, so without it the list shows a missing-column error.
+//   6. Schools / After-school classes / Colleges need 20260919001000_school_categories.sql (admin repo) run FIRST, for
+//      the same reason. Paste this app straight after running it: the older app does not know the categories.
 // What it does: sign in / sign up, search schools, filter by level / daycare / Google rating / distance, see how far (and how long a drive) each
 // school is from you, open a school, read parent reviews, write one (anonymous, moderated before it shows), and report a
 // review.
@@ -37,7 +39,7 @@ const supabase = createClient(SUPABASE_URL, KEY_IS_SET ? SUPABASE_KEY : 'key-not
 // ==== BEGIN pure logic (no imports, no React: tested on its own) ====
 
 const PAGE_SIZE = 20;
-const SCHOOL_COLUMNS = 'id,name,address,website,board,levels,google_rating,google_review_count,'
+const SCHOOL_COLUMNS = 'id,name,address,website,board,levels,google_rating,google_review_count,category,'
   + 'boards,board_source,board_source_url,admissions_open,admissions_year,admissions_source_url,admissions_checked_at';
 const NEARBY_COLUMNS = `${SCHOOL_COLUMNS},distance_km`; // the database function schools_nearby adds the distance
 const LOCATION_TIMEOUT_MS = 15000;
@@ -75,7 +77,26 @@ const REPORT_REASONS = [
   { key: 'personal_info', label: 'Personal details' },
   { key: 'other', label: 'Something else' },
 ];
-const DEFAULT_FILTERS = { search: '', level: null, daycare: false, minRating: 0, includeUnrated: true, sort: 'name', nearKm: null, board: null, includeUnknownBoard: false };
+const DEFAULT_FILTERS = { search: '', level: null, daycare: false, minRating: 0, includeUnrated: true, sort: 'name', nearKm: null, board: null, includeUnknownBoard: false, category: 'school' };
+
+// What kind of place. The main list is schools (preschool to class 12, junior colleges included); after-school classes
+// (music, dance, sports, tuition) and colleges are kept apart so they do not crowd it. The database sorts every place
+// into one of these (school_category), and an admin can move any single place.
+const CATEGORY_CHOICES = [
+  { key: 'school', label: 'Schools', noun: 'schools' },
+  { key: 'after_school', label: 'After-school classes', noun: 'after-school classes' },
+  { key: 'college', label: 'Colleges', noun: 'colleges' },
+];
+const categoryOf = (key) => CATEGORY_CHOICES.find((c) => c.key === key) ?? CATEGORY_CHOICES[0];
+// Levels ("Level not stated") and admission enquiries are about schools; a dance class or a college shows neither.
+const isSchoolPlace = (school) => categoryOf(school?.category).key === 'school';
+
+// Level, daycare and board describe schools, so for classes and colleges they are set aside. Not cleared: they are
+// still there on going back to Schools.
+function categoryFilters(f) {
+  const category = categoryOf(f.category).key;
+  return category === 'school' ? { ...f, category } : { ...f, category, level: null, daycare: false, board: null, includeUnknownBoard: false };
+}
 
 // ---- boards and admissions: only facts an admin accepted, each with where it came from ----
 const BOARD_CHOICES = ['CBSE', 'ICSE', 'IB', 'IGCSE', 'State Board'];
@@ -238,8 +259,10 @@ function sanitizeSearch(text) {
 
 // Applies the parent's choices to a query on the schools table (or, with a place, on the schools_nearby function, whose
 // rows also carry distance_km). Without a place the distance choices are ignored.
-function applySchoolFilters(query, f, hasPlace = false) {
+function applySchoolFilters(query, choices, hasPlace = false) {
+  const f = categoryFilters(choices);
   let q = query.eq('is_hidden', false); // the database already hides non-schools from parents; this also keeps an admin's view the same
+  q = q.eq('category', f.category);
   const term = sanitizeSearch(f.search);
   if (term) q = q.or(`name.ilike.*${term}*,address.ilike.*${term}*`);
   if (f.level === 'none') q = q.eq('levels', '{}');
@@ -270,7 +293,7 @@ function applySchoolFilters(query, f, hasPlace = false) {
 
 // How many choices are narrowing or re-ordering the list (for the "Filters (n)" button).
 function activeFilterCount(f, hasPlace = false) {
-  const g = normalizeFilters(f, hasPlace);
+  const g = categoryFilters(normalizeFilters(f, hasPlace));
   return (g.level ? 1 : 0) + (g.daycare ? 1 : 0) + (g.minRating > 0 ? 1 : 0) + (g.includeUnrated ? 0 : 1) + (g.board ? 1 : 0)
     + (g.sort !== defaultSort(hasPlace) ? 1 : 0) + (hasPlace && g.nearKm > 0 ? 1 : 0);
 }
@@ -595,7 +618,7 @@ function SchoolCard({ school, drive, onPress }) {
       {!!driving && <Text testID={`drivetime-${school.id}`} style={s.distance}>{driving}</Text>}
       {!!address && <Text style={s.muted} numberOfLines={2}>{address}</Text>}
       <View style={s.badgeRow}>
-        {levelBadges(school.levels).map((b) => <Text key={b} style={s.badge}>{b}</Text>)}
+        {isSchoolPlace(school) && levelBadges(school.levels).map((b) => <Text key={b} style={s.badge}>{b}</Text>)}
         {!!school.board && <Text style={[s.badge, { backgroundColor: C.greenSoft, color: C.green }]}>{school.board}</Text>}
         {!!admissionText(school) && school.admissions_open && <Text testID={`open-${school.id}`} style={[s.badge, { backgroundColor: C.amberSoft, color: C.amber }]}>{`Admissions open${school.admissions_year ? ` ${school.admissions_year}` : ''}`}</Text>}
       </View>
@@ -654,6 +677,7 @@ function DiscoverScreen({ onOpen }) {
   useEffect(() => { run(0, false); }, [run]);
 
   const set = (patch) => setFilters((f) => ({ ...f, ...patch }));
+  const cat = categoryOf(filters.category);
   const hasPlace = !!place;
   const count = activeFilterCount(filters, hasPlace);
 
@@ -707,7 +731,10 @@ function DiscoverScreen({ onOpen }) {
 
   const header = (
     <View>
-      <TextInput testID="search" style={s.search} placeholder="Search by school name or area" value={typed} onChangeText={setTyped} autoCorrect={false} />
+      <View style={s.wrap}>
+        {CATEGORY_CHOICES.map((c) => <Chip key={c.key} testID={`category-${c.key}`} label={c.label} selected={cat.key === c.key} onPress={() => set({ category: c.key })} />)}
+      </View>
+      <TextInput testID="search" style={s.search} placeholder={cat.key === 'school' ? 'Search by school name or area' : `Search ${cat.noun} by name or area`} value={typed} onChangeText={setTyped} autoCorrect={false} />
       {hasPlace ? (
         <View style={[s.card, { marginBottom: 8 }]} testID="near-me-on">
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -737,10 +764,11 @@ function DiscoverScreen({ onOpen }) {
       {!!locationNote && <Notice tone={locationNote.tone} text={locationNote.text} testID="location-note" />}
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <Btn testID="toggle-filters" kind="outline" label={showFilters ? 'Hide filters' : `Filters${count ? ` (${count})` : ''}`} onPress={() => setShowFilters((v) => !v)} />
-        {count > 0 && <Btn testID="clear-filters" kind="quiet" label="Clear filters" onPress={() => setFilters({ ...DEFAULT_FILTERS, sort: defaultSort(hasPlace) })} />}
+        {count > 0 && <Btn testID="clear-filters" kind="quiet" label="Clear filters" onPress={() => setFilters({ ...DEFAULT_FILTERS, category: cat.key, sort: defaultSort(hasPlace) })} />}
       </View>
       {showFilters && (
         <View style={[s.card, { marginBottom: 12 }]}>
+          {cat.key === 'school' && (<>
           <Text style={s.label}>Level</Text>
           <View style={s.wrap}>
             {LEVEL_CHOICES.map((l) => <Chip key={l.key} testID={`level-${l.key}`} label={l.label} selected={filters.level === l.key} onPress={() => set({ level: filters.level === l.key ? null : l.key })} />)}
@@ -762,6 +790,7 @@ function DiscoverScreen({ onOpen }) {
               <Switch testID="include-unknown-board" value={filters.includeUnknownBoard} onValueChange={(v) => set({ includeUnknownBoard: v })} />
             </View>
           )}
+          </>)}
           <Text style={s.label}>Google rating</Text>
           <View style={s.wrap}>
             {RATING_CHOICES.map((r) => <Chip key={r.value} testID={`rating-${r.value}`} label={r.label} selected={filters.minRating === r.value} onPress={() => set({ minRating: r.value })} />)}
@@ -794,13 +823,13 @@ function DiscoverScreen({ onOpen }) {
       ))}
       {!loading && !error && rows.length === 0 && (
         <Text testID="empty" style={s.empty}>
-          {hasPlace && filters.nearKm ? `No schools within ${filters.nearKm} km match. Try a bigger distance or remove a filter.` : 'No schools match. Try removing a filter.'}
+          {hasPlace && filters.nearKm ? `No ${cat.noun} within ${filters.nearKm} km match. Try a bigger distance or remove a filter.` : `No ${cat.noun} match. Try removing a filter.`}
         </Text>
       )}
       <View style={{ paddingVertical: 12 }}>
         {loading && <ActivityIndicator testID="loading" />}
         {!loading && !!error && <Btn testID="retry" label="Try again" onPress={() => run(0, false)} />}
-        {!loading && hasMore && <Btn testID="more" kind="outline" label="Show more schools" onPress={() => run(pageRef.current + 1, true)} />}
+        {!loading && hasMore && <Btn testID="more" kind="outline" label={`Show more ${cat.noun}`} onPress={() => run(pageRef.current + 1, true)} />}
       </View>
     </ScrollView>
   );
@@ -1068,7 +1097,7 @@ function SchoolScreen({ school, onBack, onOpenEnquiries }) {
       )}
       {!!cleanAddress(school.address) && <Text style={s.body}>{cleanAddress(school.address)}</Text>}
       <View style={s.badgeRow}>
-        {levelBadges(school.levels).map((b) => <Text key={b} style={s.badge}>{b}</Text>)}
+        {isSchoolPlace(school) && levelBadges(school.levels).map((b) => <Text key={b} style={s.badge}>{b}</Text>)}
         {!!school.board && <Text style={[s.badge, { backgroundColor: C.greenSoft, color: C.green }]}>{school.board}</Text>}
       </View>
       {!!school.board && !!boardSourceText(school.board_source) && (
@@ -1087,6 +1116,7 @@ function SchoolScreen({ school, onBack, onOpenEnquiries }) {
       {!school.google_rating && <Text style={s.muted}>Google does not show ratings for many schools. Parent reviews below fill the gap.</Text>}
       {!!site && <Btn testID="website" kind="outline" label="Visit school website" onPress={() => Linking.openURL(site)} />}
 
+      {isSchoolPlace(school) && (<>
       <Text style={[s.h2, { marginTop: 20 }]}>Admissions</Text>
       {!!askDone && <Notice tone="green" text={askDone} testID="enquiry-sent" />}
       {enquiry === undefined ? <ActivityIndicator style={{ marginTop: 8 }} /> : (
@@ -1116,6 +1146,7 @@ function SchoolScreen({ school, onBack, onOpenEnquiries }) {
           onSent={() => { setAskForm(false); setAskDone('Sent. You will find the reply under Enquiries at the top of the app.'); reload(); }}
         />
       )}
+      </>)}
 
       <Text style={[s.h2, { marginTop: 20 }]}>What parents say</Text>
       {community ? <Text testID="community-summary" style={[s.rating, { color: C.green }]}>{community}</Text> : <Text style={s.muted}>No parent reviews yet. Be the first.</Text>}

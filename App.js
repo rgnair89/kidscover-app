@@ -258,7 +258,12 @@ function statusLine(status, note) {
 function friendlyError(error, context) {
   const msg = typeof error === 'string' ? error : String(error?.message ?? '');
   const code = error?.code;
+  // the enquiry screens ask first: a "function not found" from them must not be reported as the near-me one
+  if (context === 'enquiry' && isMissingEnquiries(error)) return ENQUIRIES_MISSING_TEXT;
   if (isMissingNearby(error)) return NEARBY_MISSING_TEXT;
+  if (/an enquiry with this school is already open/i.test(msg)) return 'You already have an open enquiry with this school. Open it under Enquiries to carry on there.';
+  if (/daily enquiry limit/i.test(msg)) return 'You have sent 10 enquiries today. Please carry on tomorrow.';
+  if (/too many messages/i.test(msg)) return 'That is a lot of messages at once. Please wait a few minutes and try again.';
   if (/invalid login credentials/i.test(msg)) return 'That email and password do not match.';
   if (/email not confirmed/i.test(msg)) return 'Please confirm your email first: open the link we sent you, then sign in.';
   if (/already registered|already been registered/i.test(msg)) return 'That email already has an account. Try signing in instead.';
@@ -311,6 +316,86 @@ async function loadMyReview(db, schoolId) {
   if (rev.error || !rev.data) return { review: null, error: rev.error ?? null };
   return { review: { ...rev.data, moderation_note: own.data.moderation_note }, error: null };
 }
+
+// ---- admissions enquiries: a parent asks a school about joining, and the conversation that follows ----
+const ENQUIRY_COLUMNS = 'id,school_id,school_name,subject,grade_of_interest,start_year,status,created_at,last_message_at,message_count,last_message,unread_for_parent';
+const MESSAGE_COLUMNS = 'id,sender_id,message,created_at';
+const MAX_ENQUIRY = 2000;
+const MIN_ENQUIRY = 10;
+
+const GRADE_CHOICES = ['Nursery', 'Jr KG', 'Sr KG', 'Class 1 to 5', 'Class 6 to 8', 'Class 9 to 10', 'Class 11 to 12'];
+
+// This year and the two after it: nobody plans a school admission further ahead than that.
+function startYearChoices(today = new Date()) {
+  const y = today.getFullYear();
+  return [y, y + 1, y + 2];
+}
+
+function validateEnquiry({ message }) {
+  const len = (message ?? '').trim().length;
+  if (len < MIN_ENQUIRY) return `Please write a little more (at least ${MIN_ENQUIRY} characters, ${len} so far).`;
+  if (len > MAX_ENQUIRY) return `Please keep your question under ${MAX_ENQUIRY} characters.`;
+  return null;
+}
+
+// The subject is what the school sees first in its inbox.
+function enquirySubject(grade) {
+  const g = (grade ?? '').trim();
+  return (g ? `Admission enquiry - ${g}` : 'Admission enquiry').slice(0, 120);
+}
+
+function enquiryStatusText(status) {
+  if (status === 'open') return 'Waiting for a reply';
+  if (status === 'replied') return 'They have replied';
+  if (status === 'closed') return 'Closed';
+  return '';
+}
+
+function enquiryAbout(thread) {
+  const bits = [];
+  if (thread?.grade_of_interest) bits.push(thread.grade_of_interest);
+  if (thread?.start_year) bits.push(`starting ${thread.start_year}`);
+  return bits.join(', ');
+}
+
+const unreadCount = (threads) => (threads ?? []).filter((t) => t.unread_for_parent).length;
+
+// A message is "yours" when you sent it; anything else came from the school side. The app never learns who a staff
+// member is: it only compares against its own user id.
+const fromMe = (message, myId) => !!myId && message?.sender_id === myId;
+
+const isMissingEnquiries = (error) => error?.code === 'PGRST202' || error?.code === 'PGRST205' || /enquiry_threads|send_enquiry|ticket_messages/i.test(String(error?.message ?? ''));
+const ENQUIRIES_MISSING_TEXT = 'Asking schools is not switched on yet. Please try again later.';
+
+async function sendEnquiry(db, schoolId, form) {
+  return db.rpc('send_enquiry', {
+    p_school: schoolId,
+    p_subject: enquirySubject(form.grade),
+    p_message: (form.message ?? '').trim(),
+    p_grade: form.grade ? form.grade : null,
+    p_start_year: form.startYear ?? null,
+  });
+}
+
+async function loadEnquiries(db) {
+  const { data, error } = await db.from('enquiry_threads').select(ENQUIRY_COLUMNS).order('last_message_at', { ascending: false }).limit(100);
+  return { rows: data ?? [], error };
+}
+
+// The parent's own enquiry about one school, if there is one, so the school page can offer to open it instead.
+async function loadEnquiryForSchool(db, schoolId) {
+  const { data, error } = await db.from('enquiry_threads').select(ENQUIRY_COLUMNS).eq('school_id', schoolId).order('last_message_at', { ascending: false }).limit(1);
+  return { thread: (data ?? [])[0] ?? null, error };
+}
+
+async function loadEnquiryMessages(db, ticketId) {
+  const { data, error } = await db.from('ticket_messages').select(MESSAGE_COLUMNS).eq('ticket_id', ticketId).order('created_at', { ascending: true }).limit(200);
+  return { rows: data ?? [], error };
+}
+
+const replyToEnquiry = (db, ticketId, text) => db.from('ticket_messages').insert({ ticket_id: ticketId, message: (text ?? '').trim() });
+const markEnquiryRead = (db, ticketId) => db.rpc('mark_ticket_read', { p_ticket: ticketId });
+const closeEnquiry = (db, ticketId) => db.rpc('set_ticket_status', { p_ticket: ticketId, p_status: 'closed' });
 
 const reviewFields = (f) => ({ rating: f.rating, title: f.title?.trim() ? f.title.trim() : null, body: f.body.trim(), relationship: f.relationship });
 const submitReview = (db, schoolId, f) => db.from('school_reviews').insert({ school_id: schoolId, ...reviewFields(f) });
@@ -611,7 +696,168 @@ function ReviewForm({ initial, onSaved, onCancel, schoolId }) {
   );
 }
 
-function SchoolScreen({ school, onBack }) {
+// ---------------------------------------------------------------------------------------------- enquiries
+function EnquiryForm({ schoolId, schoolName, onSent, onCancel }) {
+  const [grade, setGrade] = useState('');
+  const [startYear, setStartYear] = useState(null);
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function submit() {
+    const problem = validateEnquiry({ message });
+    if (problem) { setError(problem); return; }
+    setBusy(true);
+    setError('');
+    const res = await sendEnquiry(supabase, schoolId, { grade, startYear, message });
+    setBusy(false);
+    if (res.error) setError(friendlyError(res.error, 'enquiry'));
+    else onSent();
+  }
+
+  return (
+    <View style={[s.card, { marginTop: 12 }]} testID="enquiry-form">
+      <Text style={s.h2}>Ask about admissions</Text>
+      <Text style={s.muted}>{`Your question goes to ${cleanName(schoolName)} through Kidscover. Please do not include your child's name or date of birth.`}</Text>
+      <Text style={s.label}>Which class? (optional)</Text>
+      <View style={s.wrap}>
+        {GRADE_CHOICES.map((g) => <Chip key={g} testID={`grade-${g}`} label={g} selected={grade === g} onPress={() => setGrade(grade === g ? '' : g)} />)}
+      </View>
+      <Text style={s.label}>Starting when? (optional)</Text>
+      <View style={s.wrap}>
+        {startYearChoices().map((y) => <Chip key={y} testID={`year-${y}`} label={String(y)} selected={startYear === y} onPress={() => setStartYear(startYear === y ? null : y)} />)}
+      </View>
+      <TextInput
+        testID="enquiry-message"
+        style={[s.input, { minHeight: 110, textAlignVertical: 'top' }]}
+        multiline
+        placeholder="What would you like to ask? For example: are places open, what are the fees, how do we visit?"
+        value={message}
+        onChangeText={setMessage}
+      />
+      <Text style={s.muted}>{`${message.trim().length} / ${MAX_ENQUIRY}`}</Text>
+      {!!error && <Notice text={error} testID="enquiry-error" />}
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+        <Btn testID="enquiry-send" label={busy ? 'Sending...' : 'Send question'} onPress={submit} disabled={busy} />
+        <Btn testID="enquiry-cancel" kind="quiet" label="Cancel" onPress={onCancel} />
+      </View>
+    </View>
+  );
+}
+
+function Conversation({ thread, myId, onChanged, onBack }) {
+  const [messages, setMessages] = useState(null);
+  const [reply, setReply] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    const res = await loadEnquiryMessages(supabase, thread.id);
+    if (res.error) setError(friendlyError(res.error, 'enquiry'));
+    setMessages(res.rows);
+    if (thread.unread_for_parent) { await markEnquiryRead(supabase, thread.id); onChanged?.(); }
+  }, [thread.id, thread.unread_for_parent, onChanged]);
+  useEffect(() => { load(); }, [load]);
+
+  async function send() {
+    const text = reply.trim();
+    if (text.length < 1) { setError('Please write your message first.'); return; }
+    setBusy(true);
+    setError('');
+    const res = await replyToEnquiry(supabase, thread.id, text);
+    setBusy(false);
+    if (res.error) { setError(friendlyError(res.error, 'enquiry')); return; }
+    setReply('');
+    const again = await loadEnquiryMessages(supabase, thread.id);
+    if (!again.error) setMessages(again.rows);
+    onChanged?.();
+  }
+
+  async function close() {
+    setBusy(true);
+    const res = await closeEnquiry(supabase, thread.id);
+    setBusy(false);
+    if (res?.error) setError(friendlyError(res.error, 'enquiry'));
+    else onChanged?.();
+  }
+
+  return (
+    <View testID={`conversation-${thread.id}`}>
+      <Btn testID="conversation-back" kind="quiet" label="< Back to enquiries" onPress={onBack} />
+      <Text style={s.title}>{cleanName(thread.school_name ?? 'This school')}</Text>
+      <Text style={s.muted}>{`${enquiryStatusText(thread.status)}${enquiryAbout(thread) ? ` \u00b7 ${enquiryAbout(thread)}` : ''}`}</Text>
+      {!!error && <Notice text={error} testID="conversation-error" />}
+      {messages === null ? <ActivityIndicator style={{ marginTop: 12 }} /> : messages.map((m) => (
+        <View key={m.id} testID={`msg-${m.id}`} style={[s.card, fromMe(m, myId) ? s.mine : s.theirs]}>
+          <Text style={s.label}>{fromMe(m, myId) ? 'You' : 'The school'}</Text>
+          <Text style={s.body}>{m.message}</Text>
+          <Text style={s.muted}>{monthYear(m.created_at)}</Text>
+        </View>
+      ))}
+      {thread.status === 'closed' ? (
+        <Text style={s.muted}>This enquiry is closed. Write below if you need to ask again.</Text>
+      ) : null}
+      <TextInput
+        testID="reply-box"
+        style={[s.input, { minHeight: 80, textAlignVertical: 'top' }]}
+        multiline
+        placeholder="Write a message..."
+        value={reply}
+        onChangeText={setReply}
+      />
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        <Btn testID="reply-send" label={busy ? 'Sending...' : 'Send'} onPress={send} disabled={busy} />
+        {thread.status !== 'closed' && <Btn testID="close-enquiry" kind="quiet" label="Close this enquiry" onPress={close} disabled={busy} />}
+      </View>
+    </View>
+  );
+}
+
+function EnquiriesScreen({ myId, onBack, onChanged }) {
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState('');
+  const [openId, setOpenId] = useState(null);
+
+  const load = useCallback(async () => {
+    const res = await loadEnquiries(supabase);
+    if (res.error) setError(friendlyError(res.error, 'enquiry'));
+    else setError('');
+    setRows(res.rows);
+    onChanged?.(res.rows);
+  }, [onChanged]);
+  useEffect(() => { load(); }, [load]);
+
+  const open = (rows ?? []).find((t) => t.id === openId);
+
+  return (
+    <ScrollView testID="enquiries-screen" contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
+      {open ? (
+        <Conversation thread={open} myId={myId} onBack={() => { setOpenId(null); load(); }} onChanged={load} />
+      ) : (
+        <>
+          <Btn testID="enquiries-back" kind="quiet" label="< Back to schools" onPress={onBack} />
+          <Text style={s.title}>Your enquiries</Text>
+          {!!error && <Notice text={error} testID="enquiries-error" />}
+          {rows === null && <ActivityIndicator testID="enquiries-loading" style={{ marginTop: 12 }} />}
+          {rows !== null && rows.length === 0 && !error && (
+            <Text testID="enquiries-empty" style={s.empty}>You have not asked any schools yet. Open a school and tap &quot;Ask about admissions&quot;.</Text>
+          )}
+          {(rows ?? []).map((t) => (
+            <Pressable key={t.id} testID={`thread-${t.id}`} accessibilityRole="button" onPress={() => setOpenId(t.id)} style={s.card}>
+              <Text style={s.schoolName}>
+                {t.unread_for_parent ? '\u25cf ' : ''}{cleanName(t.school_name ?? 'This school')}
+              </Text>
+              <Text style={s.muted}>{`${enquiryStatusText(t.status)}${enquiryAbout(t) ? ` \u00b7 ${enquiryAbout(t)}` : ''}`}</Text>
+              {!!t.last_message && <Text style={s.body} numberOfLines={2}>{t.last_message}</Text>}
+            </Pressable>
+          ))}
+        </>
+      )}
+    </ScrollView>
+  );
+}
+
+function SchoolScreen({ school, onBack, onOpenEnquiries }) {
   const [stats, setStats] = useState(school.community);
   const [reviews, setReviews] = useState(null);
   const [mine, setMine] = useState(undefined); // undefined = still loading, null = has not reviewed
@@ -621,13 +867,19 @@ function SchoolScreen({ school, onBack }) {
   const [reporting, setReporting] = useState(null);
   const [reportMsg, setReportMsg] = useState({});
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [enquiry, setEnquiry] = useState(undefined); // undefined = still loading, null = none yet
+  const [askForm, setAskForm] = useState(false);
+  const [askDone, setAskDone] = useState('');
 
   const reload = useCallback(async () => {
-    const [r, m, st] = await Promise.all([loadReviews(supabase, school.id), loadMyReview(supabase, school.id), loadStats(supabase, [school.id])]);
+    const [r, m, st, en] = await Promise.all([
+      loadReviews(supabase, school.id), loadMyReview(supabase, school.id), loadStats(supabase, [school.id]), loadEnquiryForSchool(supabase, school.id),
+    ]);
     if (r.error) setError(friendlyError(r.error));
     setReviews(r.rows);
     setMine(m.review);
     setStats(st[school.id] ?? null);
+    setEnquiry(en.error ? null : en.thread);
   }, [school.id]);
   useEffect(() => { reload(); }, [reload]);
 
@@ -659,6 +911,36 @@ function SchoolScreen({ school, onBack }) {
       <Text style={s.rating}>{googleRatingText(school.google_rating, school.google_review_count)}</Text>
       {!school.google_rating && <Text style={s.muted}>Google does not show ratings for many schools. Parent reviews below fill the gap.</Text>}
       {!!site && <Btn testID="website" kind="outline" label="Visit school website" onPress={() => Linking.openURL(site)} />}
+
+      <Text style={[s.h2, { marginTop: 20 }]}>Admissions</Text>
+      {!!askDone && <Notice tone="green" text={askDone} testID="enquiry-sent" />}
+      {enquiry === undefined ? <ActivityIndicator style={{ marginTop: 8 }} /> : (
+        <>
+          {!!enquiry && (
+            <View style={s.card} testID="enquiry-existing">
+              <Text style={s.body}>{`You asked this school already. ${enquiryStatusText(enquiry.status)}.`}</Text>
+              <Btn testID="open-enquiry" kind="outline" label="Open the conversation" onPress={onOpenEnquiries} />
+            </View>
+          )}
+          {/* a closed enquiry is not a dead end: something new can always come up */}
+          {(!enquiry || enquiry.status === 'closed') && !askForm && (
+            <View style={s.card}>
+              <Text style={s.body}>
+                {enquiry ? 'That enquiry is closed. You can ask again if something new comes up.' : 'Ask about places, fees or a visit. Kidscover passes your question on and you get the reply here.'}
+              </Text>
+              <Btn testID="ask-school" label={enquiry ? 'Ask again' : 'Ask about admissions'} onPress={() => { setAskForm(true); setAskDone(''); }} />
+            </View>
+          )}
+        </>
+      )}
+      {askForm && (
+        <EnquiryForm
+          schoolId={school.id}
+          schoolName={school.name}
+          onCancel={() => setAskForm(false)}
+          onSent={() => { setAskForm(false); setAskDone('Sent. You will find the reply under Enquiries at the top of the app.'); reload(); }}
+        />
+      )}
 
       <Text style={[s.h2, { marginTop: 20 }]}>What parents say</Text>
       {community ? <Text testID="community-summary" style={[s.rating, { color: C.green }]}>{community}</Text> : <Text style={s.muted}>No parent reviews yet. Be the first.</Text>}
@@ -708,11 +990,22 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [session, setSession] = useState(null);
   const [school, setSchool] = useState(null);
+  const [showEnquiries, setShowEnquiries] = useState(false);
+  const [unread, setUnread] = useState(0);
+
+  const refreshUnread = useCallback(async (rows) => {
+    if (rows) { setUnread(unreadCount(rows)); return; }
+    const res = await loadEnquiries(supabase);
+    if (!res.error) setUnread(unreadCount(res.rows));
+  }, []);
 
   useEffect(() => {
     if (!KEY_IS_SET) return undefined;
     supabase.auth.getSession().then(({ data }) => { setSession(data?.session ?? null); setReady(true); });
-    const { data } = supabase.auth.onAuthStateChange((_event, next) => { setSession(next); if (!next) setSchool(null); });
+    const { data } = supabase.auth.onAuthStateChange((_event, next) => {
+      setSession(next);
+      if (!next) { setSchool(null); setShowEnquiries(false); setUnread(0); }
+    });
     const app = AppState.addEventListener('change', (state) => {
       if (state === 'active') supabase.auth.startAutoRefresh(); else supabase.auth.stopAutoRefresh();
     });
@@ -720,10 +1013,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!school || Platform.OS !== 'android') return undefined; // the phone's back button exists only on Android
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => { setSchool(null); return true; });
+    if (!session) return undefined;
+    refreshUnread();
+    return undefined;
+  }, [session, refreshUnread]);
+
+  useEffect(() => {
+    if ((!school && !showEnquiries) || Platform.OS !== 'android') return undefined; // the phone's back button exists only on Android
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (showEnquiries) setShowEnquiries(false); else setSchool(null);
+      return true;
+    });
     return () => sub.remove();
-  }, [school]);
+  }, [school, showEnquiries]);
 
   if (!KEY_IS_SET) {
     return (
@@ -742,10 +1044,30 @@ export default function App() {
     <View style={s.root}>
       <View style={s.topBar}>
         <Text style={s.topTitle}>Kidscover</Text>
-        <Btn testID="sign-out" kind="quiet" label="Sign out" onPress={() => supabase.auth.signOut()} />
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Btn testID="enquiries" kind="quiet" label={unread > 0 ? `Enquiries (${unread})` : 'Enquiries'} onPress={() => setShowEnquiries(true)} />
+          <Btn testID="sign-out" kind="quiet" label="Sign out" onPress={() => supabase.auth.signOut()} />
+        </View>
       </View>
-      <View style={{ flex: 1, display: school ? 'none' : 'flex' }}><DiscoverScreen onOpen={setSchool} /></View>
-      {school && <SchoolScreen key={school.id} school={school} onBack={() => setSchool(null)} />}
+      {showEnquiries ? (
+        <EnquiriesScreen
+          myId={session?.user?.id}
+          onBack={() => { setShowEnquiries(false); refreshUnread(); }}
+          onChanged={refreshUnread}
+        />
+      ) : (
+        <>
+          <View style={{ flex: 1, display: school ? 'none' : 'flex' }}><DiscoverScreen onOpen={setSchool} /></View>
+          {school && (
+            <SchoolScreen
+              key={school.id}
+              school={school}
+              onBack={() => setSchool(null)}
+              onOpenEnquiries={() => setShowEnquiries(true)}
+            />
+          )}
+        </>
+      )}
     </View>
   );
 }
@@ -782,6 +1104,8 @@ const s = StyleSheet.create({
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 4 },
   badgeRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: 6, marginVertical: 4 },
   distance: { fontSize: 13, fontWeight: '700', color: C.blue },
+  mine: { backgroundColor: C.blueSoft, borderColor: C.blueSoft, marginLeft: 24 },
+  theirs: { marginRight: 24 },
   badge: { backgroundColor: C.blueSoft, color: C.blue, fontSize: 12, fontWeight: '700', paddingVertical: 3, paddingHorizontal: 8, borderRadius: 999, overflow: 'hidden' },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginVertical: 6 },
   notice: { borderRadius: 10, padding: 10, marginVertical: 6 },

@@ -8,8 +8,15 @@ The whole app is one file, `App.js`, so it can be pasted straight into [snack.ex
 - **Schools near me**: a "Use my location" button (the phone asks permission), the distance on every school, "Nearest first", and "Within 2 / 5 / 10 km"
 - School page: address, level badges, Google rating, website link, **parent reviews**
 - Write a review (anonymous, checked by a moderator before it shows), edit or delete your own, report someone else's
+- **Ask a school about admissions**: a short form (which class, roughly when, your question), then a conversation with the school under **Enquiries**, with a count of unread replies
 
-Not in this version: travel time by car (that needs Google's Routes API, called from the server), compare, Google / Microsoft / phone sign-in, push notifications, admissions forms and chat. Those come next.
+Not in this version: travel time by car (that needs Google's Routes API, called from the server), compare, Google / Microsoft / phone sign-in, push notifications. Those come next.
+
+## Asking about admissions
+- An enquiry deliberately does **not** ask for a child's name or date of birth. A class and a rough start year are enough to start a conversation; the school can ask for the rest once it is talking to the family.
+- Kidscover staff answer from the Partner Portal for now. The parent sees replies as coming from "the school", never a staff member's name.
+- One open enquiry per school at a time (the existing conversation is the place to carry on), at most 10 new enquiries a day, and the account's email has to be confirmed &mdash; the same bar as writing a review.
+- Either side can close an enquiry; writing again reopens it.
 
 ## Schools near me: what it does and does not do
 - Distance is **in a straight line**, not by road. The app says so on screen.
@@ -24,6 +31,7 @@ Run these in the Supabase SQL Editor (they live in the kidscover-admin repo, `su
 - `20260919000200_school_quality_rules.sql` and `20260919000300_school_quality_rules_v2.sql` - the app asks the database to leave out places that are not schools
 - `20260919000400_school_name_sort.sql` - the A to Z list sorts on the `name_sort` column, which does not exist until this is run
 - `20260919000500_schools_nearby.sql` - the distance function used by "Use my location". Run it **before** pasting this version of the app. If it is missing the app still works; the button just says that nearby search is not switched on yet
+- `20260919000600_admissions_enquiries.sql` - the admissions enquiries and their messages. Run it **before** pasting this version too. Without it, "Ask about admissions" says it is not switched on yet
 
 If the app shows an error mentioning a missing column, one of these has not been run yet.
 
@@ -47,7 +55,8 @@ Snack has no way to keep a secret, so the key is pasted into the code. That is f
 ## Tests
 ```
 npm install
-npm test          # 116 logic checks + 125 screen checks
-node tests/mutate.mjs   # breaks the app 50 ways on purpose and checks the tests notice (takes a while)
+npm test          # 143 logic checks + 165 screen checks
+node tests/mutate.mjs   # breaks the app 75 ways on purpose and checks the tests notice (takes a while;
+                        # MUT_RANGE=1-25 runs part of it, so several copies can share the work)
 ```
-The screen tests run the real `App.js` in a simulated browser against a stand-in database that follows the same rules as the real one (unverified accounts blocked, one review per school, pending reviews hidden, distances from schools that have coordinates) and a stand-in for the phone's location (allowed, refused, blocked, switched off, never answers, outside Mumbai). The database function `schools_nearby` was tested separately against an in-memory Postgres engine (63 checks); those tests are not part of this repo.
+The screen tests run the real `App.js` in a simulated browser against a stand-in database that follows the same rules as the real one (unverified accounts blocked, one review per school, pending reviews hidden, distances from schools that have coordinates) and a stand-in for the phone's location (allowed, refused, blocked, switched off, never answers, outside Mumbai). The database side was tested separately against an in-memory Postgres engine &mdash; `schools_nearby` (63 checks) and the enquiries rules (88 checks); those tests are not part of this repo.

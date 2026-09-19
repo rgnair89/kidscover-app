@@ -13,6 +13,11 @@ The whole app is one file, `App.js`, so it can be pasted straight into [snack.ex
 
 Not in this version: compare, Google / Microsoft / phone sign-in, push notifications. Those come next.
 
+## Boards and admission status
+- A **Board** filter (CBSE, ICSE, IB, IGCSE, State Board). By default it shows only schools whose board is known; a switch adds the schools whose board is not known yet.
+- The school page says where the board comes from ("confirmed by CBSE's own record", "from the school's website", "from the school's name") with a link to the source, and shows an admission notice ("Admissions open for 2027-28, from the school's website, checked Sep 2026") with a link to that page. Cards show an "Admissions open" badge.
+- These facts come from the Partner Portal's **School Data** tab: the `read-school-websites` function reads each school's own website, checks CBSE affiliation numbers against CBSE's public record, and an admin accepts or rejects each finding. Nothing is shown to parents without an admin accepting it, and an admission status without a source (the old "closed" default) is never shown.
+
 ## Asking about admissions
 - An enquiry deliberately does **not** ask for a child's name or date of birth. A class and a rough start year are enough to start a conversation; the school can ask for the rest once it is talking to the family.
 - Kidscover staff answer from the Partner Portal for now. The parent sees replies as coming from "the school", never a staff member's name.
@@ -42,6 +47,7 @@ Run these in the Supabase SQL Editor (they live in the kidscover-admin repo, `su
 - `20260919000500_schools_nearby.sql` - the distance function used by "Use my location". Run it **before** pasting this version of the app. If it is missing the app still works; the button just says that nearby search is not switched on yet
 - `20260919000600_admissions_enquiries.sql` - the admissions enquiries and their messages. Run it **before** pasting this version too. Without it, "Ask about admissions" says it is not switched on yet
 - `20260919000700_drive_times.sql` - the daily limits for drive times (and deploy the `commute-times` function). Without them drive times say they are not switched on yet
+- `20260919000800_school_website_findings.sql` - boards and admission status (and deploy `read-school-websites` for the School Data tab). Run it **before** pasting this version: the app asks for the new columns
 
 If the app shows an error mentioning a missing column, one of these has not been run yet.
 
@@ -65,8 +71,8 @@ Snack has no way to keep a secret, so the key is pasted into the code. That is f
 ## Tests
 ```
 npm install
-npm test          # 167 logic checks + 192 screen checks
-node tests/mutate.mjs   # breaks the app 95 ways on purpose and checks the tests notice (takes a while;
+npm test          # 179 logic checks + 211 screen checks
+node tests/mutate.mjs   # breaks the app 108 ways on purpose and checks the tests notice (takes a while;
                         # MUT_RANGE=1-25 runs part of it, so several copies can share the work)
 ```
 The screen tests run the real `App.js` in a simulated browser against a stand-in database that follows the same rules as the real one (unverified accounts blocked, one review per school, pending reviews hidden, distances from schools that have coordinates) a stand-in for the phone's location (allowed, refused, blocked, switched off, never answers, outside Mumbai), and a stand-in for the drive-time function (answers, no road, daily limit, not deployed, no connection). The database side was tested separately against an in-memory Postgres engine &mdash; `schools_nearby` (63 checks) and the enquiries rules (88 checks); those tests are not part of this repo.

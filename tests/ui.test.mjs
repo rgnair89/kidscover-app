@@ -127,6 +127,7 @@ const cond = (r, { col, op, val }) => {
   if (op === 'ilike') return v != null && String(v).toLowerCase().includes(val.replace(/\*/g, '').toLowerCase());
   if (op === 'gte') return v != null && v >= Number(val);
   if (op === 'is') return val === 'null' && v == null;
+  if (op === 'ov') { const vals = val.replace(/^{|}$/g, '').split(',').map((x) => x.replace(/^"|"$/g, '')); return Array.isArray(v) && v.some((x) => vals.includes(x)); }
   return false;
 };
 class Query {
@@ -913,5 +914,66 @@ await ui.click('more'); await waitFor(() => ui.cards() === 35, 3000);
 check('...counting down, and "1 lookup" in the singular', await waitFor(() => /1 drive-time lookup left today/.test(ui.id('drive-note')?.textContent ?? ''), 3000), ui.id('drive-note')?.textContent);
 await ui.unmount();
 
+// =============================================================================================================
+console.log('\n=== boards and admissions ===');
+const withFacts = () => {
+  const s2 = seed();
+  const put = (id, o) => Object.assign(s2.schools.find((x) => x.id === id), o);
+  put('s2', { board: 'ICSE', boards: ['ICSE'], board_source: 'school website', board_source_url: 'https://standrews.example/about' });
+  put('s3', { board: 'CBSE', boards: ['CBSE'], board_source: 'CBSE directory', board_source_url: 'https://podar.example/disclosure' });
+  put('n3', { board: 'State Board', boards: ['State Board'], board_source: 'school name' });
+  put('s1', { admissions_open: true, admissions_year: '2027-28', admissions_source_url: 'https://sunrisepre.in/admissions', admissions_checked_at: '2026-09-19T05:00:00Z' });
+  put('f05', { admissions_open: false, admissions_year: '2026-27', admissions_source_url: 'https://filler5.example/', admissions_checked_at: '2026-09-19T05:00:00Z' });
+  put('s5', { admissions_open: false });   // the old default, never checked by anyone
+  return s2;
+};
+st = withFacts(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+await ui.click('toggle-filters');
+check('the filters offer the five boards, and no "unknown" switch until one is chosen', ['CBSE', 'ICSE', 'IB', 'IGCSE', 'State Board'].every((b) => !!ui.id('board-' + b)) && !ui.id('include-unknown-board'));
+await ui.click('board-CBSE');
+check('CBSE: only the school known to be CBSE', await waitFor(() => ui.cards() === 1 && !!ui.id('school-s3'), 3000), ui.cards());
+check('...and the filter button counts it', /Hide filters/.test(ui.id('toggle-filters').textContent) && !!ui.id('clear-filters'));
+check('...the switch to include unknown boards appears, off, and says why', !!ui.id('include-unknown-board') && /still checking boards/.test(ui.text()));
+await ui.toggle('include-unknown-board');
+check('with it on: CBSE plus every school whose board is not known (not the ICSE or State Board ones)', await waitFor(() => ui.cards() === 20 && !!ui.id('more'), 3000) && !ui.id('school-s2') && !ui.id('school-n3'), ui.cards());
+await ui.click('more'); await waitFor(() => ui.cards() > 20, 3000);
+check('...34 in all', await waitFor(() => ui.cards() === 34, 3000), ui.cards());
+await ui.toggle('include-unknown-board');
+await ui.click('board-State Board');
+check('State Board (two words) works', await waitFor(() => ui.cards() === 1 && !!ui.id('school-n3'), 3000), ui.cards());
+await ui.click('board-State Board');
+check('tapping it again clears the board filter', await waitFor(() => ui.cards() === 20 && !ui.id('include-unknown-board'), 3000));
+await ui.click('toggle-filters');
+
+await ui.type('search', 'podar'); await waitFor(() => ui.cards() === 1 && !!ui.id('school-s3'), 3000);
+await ui.click('school-s3'); await waitFor(() => ui.id('back'));
+check('a school page says where the board comes from: CBSE, confirmed by CBSE\'s own record', /Board: CBSE, confirmed by CBSE's own record\./.test(ui.id('page-board-source')?.textContent ?? ''), ui.id('page-board-source')?.textContent);
+await ui.click('board-source-link');
+check('..."See where" opens the page it came from', opened.at(-1) === 'https://podar.example/disclosure', opened.at(-1));
+await ui.click('back'); await waitFor(() => ui.id('search'));
+await ui.type('search', 'sunrise'); await waitFor(() => ui.cards() === 1 && !!ui.id('school-s1'), 3000);
+check('a card shows "Admissions open 2027-28" when a school\'s website said so and an admin accepted it', /Admissions open 2027-28/.test(ui.id('open-s1')?.textContent ?? ''));
+await ui.click('school-s1'); await waitFor(() => ui.id('back'));
+check('the school page gives the year, the source and when it was checked', ui.id('page-admission')?.textContent.startsWith("Admissions open for 2027-28 (from the school's website, checked Sep 2026)"), ui.id('page-admission')?.textContent);
+await ui.click('admission-source-link');
+check('..."See the page" opens the school\'s own admissions page', opened.at(-1) === 'https://sunrisepre.in/admissions');
+await ui.click('back'); await waitFor(() => ui.id('search'));
+await ui.type('search', 'filler school 05'); await waitFor(() => ui.cards() === 1 && !!ui.id('school-f05'), 3000);
+check('a school whose admissions are closed has no "open" badge on its card', !ui.id('open-f05') && !/Admissions open/.test(cardText(ui, 'f05')), cardText(ui, 'f05'));
+await ui.click('school-f05'); await waitFor(() => ui.id('back'));
+check('"Admissions closed for 2026-27" is shown as closed on its page', /^Admissions closed for 2026-27/.test(ui.id('page-admission')?.textContent ?? ''));
+await ui.click('back'); await waitFor(() => ui.id('search'));
+await ui.type('search', 'tiny tots'); await waitFor(() => ui.cards() === 1 && !!ui.id('school-s5'), 3000);
+check('a "closed" nobody checked (the old default) is never shown, on the card', !ui.id('open-s5') && !/Admissions/.test(cardText(ui, 's5')));
+await ui.click('school-s5'); await waitFor(() => ui.id('back'));
+check('...or on the school page', !ui.id('page-admission') && !/Admissions (open|closed)/.test(ui.text()));
+check('a board taken from the school\'s name says so', await (async () => { await ui.click('back'); await waitFor(() => ui.id('search')); await ui.type('search', 'sitaldas'); await waitFor(() => ui.cards() === 1 && !!ui.id('school-n3'), 3000); await ui.click('school-n3'); await waitFor(() => ui.id('back')); return /Board: State Board, from the school's name\./.test(ui.id('page-board-source')?.textContent ?? '') && !ui.id('board-source-link'); })(), ui.id('page-board-source')?.textContent);
+await ui.unmount();
+
+st = withFacts(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+fakePhone(); await ui.click('use-location'); await waitFor(() => ui.id('near-me-on') && firstCard(ui) === 'school-f24', 4000);
+await ui.click('toggle-filters'); await ui.click('board-ICSE');
+check('the board filter works in "near me" too, with the distance shown', await waitFor(() => ui.cards() === 1 && !!ui.id('school-s2'), 3000) && /km away/.test(distanceOf(ui, 's2')), ui.cards());
+await ui.unmount();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

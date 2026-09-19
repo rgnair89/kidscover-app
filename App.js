@@ -145,10 +145,13 @@ function facilityText(row) {
   return row?.detail ? `${label}: ${row.detail}` : label;
 }
 
-// Where the facts on a page came from, in one line ("from the school and from the school's website").
+// Where the facts on a page came from, in one line ("Listed by the school; found on the school's website.").
+const SOURCE_LINE = { school: 'listed by the school', 'school website': "found on the school's website", kidscover: 'checked by Kidscover' };
 function sourcesText(rows) {
-  const names = [...new Set((rows ?? []).map((r) => SOURCE_TEXT[r.source]).filter(Boolean))];
-  return names.length ? `Listed ${names.join(' and ')}.` : '';
+  const parts = [...new Set((rows ?? []).map((r) => SOURCE_LINE[r.source]).filter(Boolean))];
+  if (!parts.length) return '';
+  const line = parts.join('; ');
+  return `${line[0].toUpperCase()}${line.slice(1)}.`;
 }
 
 // The credit a photo needs: Wikimedia photos name their author and licence (their licences ask for it).

@@ -1077,7 +1077,7 @@ await ui.click('photo-source');
 check('..."source" opens the photo\'s Commons page', opened.at(-1) === 'https://commons.wikimedia.org/wiki/File:270.jpg', opened.at(-1));
 const facs = () => ui.all('facility-').map((e) => e.getAttribute('data-testid').slice(9));
 check('facilities are listed in the usual order, each with its detail; an unknown one is left out', await waitFor(() => !!ui.id('facilities')) && facs().join() === 'cafeteria,library,teacher_ratio' && /Teacher-student ratio: 1:15/.test(ui.id('facility-teacher_ratio').textContent), facs().join());
-check('...and the page says where they came from', /Listed from the school's website and from the school\./.test(ui.id('facilities').textContent), ui.id('facilities').textContent);
+check('...and the page says where they came from', /Found on the school's website; listed by the school\./.test(ui.id('facilities').textContent), ui.id('facilities').textContent);
 const groups = ui.all('achievements-').map((e) => e.getAttribute('data-testid'));
 check('achievements come grouped: class 10 results first, then class 12', groups.join() === 'achievements-class10,achievements-class12', groups.join());
 check('...newest first within a group, each with its year and where it came from', /2025: 100% pass in SSC, topper 97\.2% \(from the school's website\)/.test(ui.id('achievement-a2').textContent) && ui.id('achievements-class10').textContent.indexOf('2025') < ui.id('achievements-class10').textContent.indexOf('2024'), ui.id('achievements-class10').textContent);

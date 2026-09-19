@@ -132,7 +132,7 @@ const mutations = [
   ['a two-word board is sent unquoted', 'boards.ov.{"${f.board}"}', 'boards.ov.{${f.board}}'],
   ['any text is accepted as a board', 'if (BOARD_CHOICES.includes(f.board)) {', 'if (f.board) {'],
   ['a chosen board is not counted as a filter', ' + (g.board ? 1 : 0)', ''],
-  ['unknown boards are included by default', 'board: null, includeUnknownBoard: false };', 'board: null, includeUnknownBoard: true };'],
+  ['unknown boards are included by default', "board: null, includeUnknownBoard: false, category: 'school' };", "board: null, includeUnknownBoard: true, category: 'school' };"],
   ['an admission status without a source is shown', "if (!school || !school.admissions_source_url || typeof school.admissions_open !== 'boolean') return '';", "if (!school || typeof school.admissions_open !== 'boolean') return '';"],
   ['closed admissions are shown as open', "const what = school.admissions_open ? 'Admissions open' : 'Admissions closed';", "const what = 'Admissions open';"],
   ['the open badge shows on closed schools', '{!!admissionText(school) && school.admissions_open && ', '{!!admissionText(school) && '],
@@ -140,6 +140,22 @@ const mutations = [
   ['a "see where" link is shown with nowhere to go', '{!!safeUrl(school.board_source_url) && <Text testID="board-source-link"', '{true && <Text testID="board-source-link"'],
   ['the unknown-board switch shows without a board', '{!!filters.board && (', '{true && ('],
   ['the board facts are not asked for', "+ 'boards,board_source,board_source_url,", "+ 'board_source,board_source_url,"],
+  // ---- categories ----
+  ["the list is not limited to one category", "  q = q.eq('category', f.category);", "  q = q;"],
+  ["an unknown category is passed on as it is", "const categoryOf = (key) => CATEGORY_CHOICES.find((c) => c.key === key) ?? CATEGORY_CHOICES[0];", "const categoryOf = (key) => CATEGORY_CHOICES.find((c) => c.key === key) ?? { key, label: key, noun: key };"],
+  ["level / daycare / board still apply to classes and colleges", "  return category === 'school' ? { ...f, category } : { ...f, category, level: null, daycare: false, board: null, includeUnknownBoard: false };", "  return { ...f, category };"],
+  ["switching category clears the school filters instead of setting them aside", "onPress={() => set({ category: c.key })}", "onPress={() => set({ category: c.key, level: null, daycare: false, board: null })}"],
+  ["set-aside filters are counted", "  const g = categoryFilters(normalizeFilters(f, hasPlace));", "  const g = normalizeFilters(f, hasPlace);"],
+  ["\"Clear filters\" goes back to Schools", "setFilters({ ...DEFAULT_FILTERS, category: cat.key, sort: defaultSort(hasPlace) })", "setFilters({ ...DEFAULT_FILTERS, sort: defaultSort(hasPlace) })"],
+  ["classes and colleges show the Level / Daycare / Board filters", "          {cat.key === 'school' && (<>", "          {true && (<>"],
+  ["a class card shows school level badges", "        {isSchoolPlace(school) && levelBadges(school.levels).map(", "        {levelBadges(school.levels).map("],
+  ["a class page offers admission enquiries", "      {isSchoolPlace(school) && (<>\n      <Text style={[s.h2, { marginTop: 20 }]}>Admissions</Text>", "      {true && (<>\n      <Text style={[s.h2, { marginTop: 20 }]}>Admissions</Text>"],
+  ["a place with no category is not treated as a school", "const isSchoolPlace = (school) => categoryOf(school?.category).key === 'school';", "const isSchoolPlace = (school) => school?.category === 'school';"],
+  ["the category is not asked for", "google_rating,google_review_count,category,", "google_rating,google_review_count,"],
+  ["the empty list always says \"schools\"", "`No ${cat.noun} match. Try removing a filter.`", "'No schools match. Try removing a filter.'"],
+  ["the search box always says \"school name\"", "placeholder={cat.key === 'school' ? 'Search by school name or area' : `Search ${cat.noun} by name or area`}", "placeholder=\"Search by school name or area\""],
+  ["the app opens on After-school classes", "includeUnknownBoard: false, category: 'school' };", "includeUnknownBoard: false, category: 'after_school' };"],
+  ["the chosen category is not shown as chosen", "selected={cat.key === c.key}", "selected={c.key === 'school'}"],
 ];
 
 const run = (file) => { try { return execSync(`node tests/${file}`, { cwd: root, encoding: 'utf8', env: { ...process.env, APP_FILE: out }, stdio: ['ignore', 'pipe', 'pipe'], timeout: 200000 }); } catch (e) { return (e.stdout || '') + (e.stderr || ''); } };

@@ -64,7 +64,7 @@ const quick = await import(quickUrl);
 // ---- the stand-in database: follows the same rules as the real one ----
 // the same recipe as the database column schools.name_sort: first part before " | ", punctuation and emoji removed, lower case
 const sortKey = (name) => name.split(' | ')[0].replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim().toLowerCase();
-const S = (id, name, address, levels, rating, count, extra = {}) => ({ id, name, name_sort: sortKey(name), address, levels, google_rating: rating, google_review_count: count, board: null, website: null, is_hidden: false, ...extra });
+const S = (id, name, address, levels, rating, count, extra = {}) => ({ id, name, name_sort: sortKey(name), address, levels, google_rating: rating, google_review_count: count, board: null, website: null, is_hidden: false, category: 'school', ...extra });
 function seed() {
   const schools = [
     S('s1', 'Sunrise Preschool & Daycare', 'Bandra West, Mumbai', ['daycare', 'preschool'], 4.8, 120, { website: 'sunrisepre.in', latitude: 19.0596, longitude: 72.8295 }),
@@ -974,6 +974,66 @@ st = withFacts(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'
 fakePhone(); await ui.click('use-location'); await waitFor(() => ui.id('near-me-on') && firstCard(ui) === 'school-f24', 4000);
 await ui.click('toggle-filters'); await ui.click('board-ICSE');
 check('the board filter works in "near me" too, with the distance shown', await waitFor(() => ui.cards() === 1 && !!ui.id('school-s2'), 3000) && /km away/.test(distanceOf(ui, 's2')), ui.cards());
+await ui.unmount();
+
+// =============================================================================================================
+console.log('\n=== schools, after-school classes, colleges ===');
+const withCategories = () => {
+  const s2 = seed();
+  const C = (id, name, category, levels, lat, extra = {}) => S(id, name, 'Bandra West, Mumbai', levels, 4.6, 25, { category, latitude: lat, longitude: 72.83, ...extra });
+  s2.schools.push(
+    C('c1', 'Rhythm Dance Academy', 'after_school', [], 19.058),
+    C('c2', 'Aqua Kids Swimming', 'after_school', ['primary'], 19.059),
+    C('c3', 'Sharma Tuition Classes', 'after_school', [], 19.061, { google_rating: 3.2 }),
+    C('k1', 'Sardar Patel College of Engineering', 'college', [], 19.123),
+    C('k2', "St. Xavier's College", 'college', [], 18.943),
+  );
+  return s2;
+};
+const idsShown = () => ui.all('school-').map((e) => e.getAttribute('data-testid').slice(7));
+st = withCategories(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+check('three choices at the top, Schools chosen', ['school', 'after_school', 'college'].every((k) => !!ui.id('category-' + k)) && /Schools/.test(ui.id('category-school').textContent));
+await ui.type('search', 'academy');
+check('Schools holds none of the classes or colleges (searching "academy" finds nothing)', await waitFor(() => !!ui.id('empty'), 3000) && /No schools match/.test(ui.id('empty').textContent), ui.cards());
+await ui.type('search', '');
+await waitFor(() => ui.cards() === 20, 3000);
+await ui.click('category-after_school');
+check('After-school classes: exactly the three classes, A to Z', await waitFor(() => ui.cards() === 3, 3000) && idsShown().join() === 'c2,c1,c3', idsShown().join());
+const look = (k) => ui.id('category-' + k)?.className ?? '';
+check('...and it is shown as chosen (its own look), the other two alike', look('after_school') !== look('school') && look('school') === look('college'), [look('after_school'), look('school')].join(' | '));
+check('...the search box says what it searches', /after-school classes/.test(ui.id('search').getAttribute('placeholder') ?? ''), ui.id('search').getAttribute('placeholder'));
+check('...a class shows no school level badges ("Primary", "Level not stated")', !/Primary|Level not stated/.test(cardText(ui, 'c2')) && !/Level not stated/.test(cardText(ui, 'c1')), cardText(ui, 'c2'));
+await ui.click('toggle-filters');
+check('...its filters have no Level, Daycare or Board (they describe schools), but rating and sort stay', !ui.id('level-preschool') && !ui.id('daycare') && !ui.id('board-CBSE') && !!ui.id('rating-4') && !!ui.id('sort-name'));
+await ui.click('rating-4');
+check('...a rating filter works on classes', await waitFor(() => ui.cards() === 2 && !ui.id('school-c3'), 3000), idsShown().join());
+await ui.click('clear-filters');
+check('..."Clear filters" clears them but stays on After-school classes', await waitFor(() => ui.cards() === 3 && ui.id('category-after_school') && !ui.id('clear-filters'), 3000), idsShown().join());
+await ui.click('category-college');
+check('Colleges: the two colleges', await waitFor(() => ui.cards() === 2 && !!ui.id('school-k1') && !!ui.id('school-k2'), 3000), idsShown().join());
+await ui.type('search', 'zzz');
+check('...an empty search says "No colleges match"', await waitFor(() => /No colleges match/.test(ui.id('empty')?.textContent ?? ''), 3000));
+await ui.type('search', '');
+await ui.click('category-school');
+await waitFor(() => ui.cards() === 20, 3000);
+await ui.click('level-preschool');
+check('back on Schools, a level filter', await waitFor(() => ui.cards() > 0 && ui.cards() < 20, 3000) && /\(1\)|Hide filters/.test(ui.id('toggle-filters').textContent));
+const preschools = ui.cards();
+await ui.click('category-after_school');
+check('...is set aside on After-school classes (all three shown, nothing counted)', await waitFor(() => ui.cards() === 3, 3000) && !ui.id('clear-filters'), ui.cards());
+await ui.click('category-school');
+check('...and is back on returning to Schools', await waitFor(() => ui.cards() === preschools && !!ui.id('clear-filters'), 3000), ui.cards());
+await ui.click('level-preschool'); await ui.click('toggle-filters');
+await ui.click('category-after_school'); await waitFor(() => ui.cards() === 3, 3000);
+await ui.click('school-c1'); await waitFor(() => ui.id('back'));
+check('a class\'s page has no "Ask about admissions" (enquiries are for schools), but has parent reviews', !ui.id('ask-school') && !/Admissions/.test(ui.text()) && /What parents say/.test(ui.text()));
+await ui.click('back'); await waitFor(() => ui.id('search'));
+check('...and going back keeps After-school classes', await waitFor(() => ui.cards() === 3, 3000));
+fakePhone(); await ui.click('use-location');
+const kms = () => idsShown().map((id) => parseFloat(distanceOf(ui, id)));
+check('"near me" on After-school classes: only the classes, nearest first, with distances', await waitFor(() => !!ui.id('near-me-on') && ui.cards() === 3 && kms().every((k) => k > 0), 4000) && idsShown().every((id) => /^c/.test(id)) && kms().every((k, i, a) => i === 0 || a[i - 1] <= k), idsShown().join() + ' ' + kms().join());
+await ui.click('category-school');
+check('...and on Schools, only schools again', await waitFor(() => ui.cards() === 20 && !idsShown().some((id) => /^[ck]\d/.test(id)), 4000), idsShown().join());
 await ui.unmount();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

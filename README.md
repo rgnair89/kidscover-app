@@ -4,6 +4,7 @@ The whole app is one file, `App.js`, so it can be pasted straight into [snack.ex
 
 ## What it does
 - Sign in / create an account (email + password)
+- **Schools, After-school classes, Colleges**: the list shows schools (preschool to class 12, junior colleges included) by default; music, dance, sports and tuition classes, and degree / engineering / business colleges, each have their own list one tap away
 - Search schools by name or area, filter by **level** (Preschool / Primary / Secondary / not stated), **daycare available**, **Google rating** (with an "include schools with no rating" switch, on by default because most K-12 schools have none), and sort
 - **Schools near me**: a "Use my location" button (the phone asks permission), the distance on every school, "Nearest first", and "Within 2 / 5 / 10 km"
 - **Drive time by car** (after "Use my location"): "Weekday 7:30 am" (school-run traffic) or "Right now", from Google Maps, shown on each school
@@ -12,6 +13,12 @@ The whole app is one file, `App.js`, so it can be pasted straight into [snack.ex
 - **Ask a school about admissions**: a short form (which class, roughly when, your question), then a conversation with the school under **Enquiries**, with a count of unread replies
 
 Not in this version: compare, Google / Microsoft / phone sign-in, push notifications. Those come next.
+
+## Schools, after-school classes and colleges
+- Every place has a category, worked out in the database from its name and Google's type: **school** (preschools, schools, junior colleges), **after-school class** (music, dance, karate, swimming, sports, art, abacus, tuition) or **college** (degree colleges, universities, engineering, business / management, law, medicine, teacher training). A name like "School of Music" or "School of Business" goes by what it teaches, not by the word "school".
+- The app opens on Schools. Level, daycare and board filters apply to schools only; on the other two lists they are set aside (not cleared) and come back on Schools. Classes and colleges show no level badges and no "Ask about admissions".
+- Places that are not for children stay hidden (driving schools, gyms, IELTS and typing classes, shops, offices).
+- The rules will get some places wrong. The Partner Portal's **Categories** tab lists each category and the hidden places with the reason, and an admin can move any place (or hide it, or hand it back to the rules).
 
 ## Boards and admission status
 - A **Board** filter (CBSE, ICSE, IB, IGCSE, State Board). By default it shows only schools whose board is known; a switch adds the schools whose board is not known yet.
@@ -48,6 +55,8 @@ Run these in the Supabase SQL Editor (they live in the kidscover-admin repo, `su
 - `20260919000600_admissions_enquiries.sql` - the admissions enquiries and their messages. Run it **before** pasting this version too. Without it, "Ask about admissions" says it is not switched on yet
 - `20260919000700_drive_times.sql` - the daily limits for drive times (and deploy the `commute-times` function). Without them drive times say they are not switched on yet
 - `20260919000800_school_website_findings.sql` - boards and admission status (and deploy `read-school-websites` for the School Data tab). Run it **before** pasting this version: the app asks for the new columns
+- `20260919000900_enquiry_read_marks_for_old_threads.sql` - enquiries made before 600 no longer count as unread for the parent who wrote them
+- `20260919001000_school_categories.sql` - sorts every place into school / after-school class / college. Run it and paste this version **together**: the app asks for the category, and an older app would show the newly visible classes and colleges in its one list
 
 If the app shows an error mentioning a missing column, one of these has not been run yet.
 
@@ -71,8 +80,8 @@ Snack has no way to keep a secret, so the key is pasted into the code. That is f
 ## Tests
 ```
 npm install
-npm test          # 179 logic checks + 211 screen checks
-node tests/mutate.mjs   # breaks the app 108 ways on purpose and checks the tests notice (takes a while;
+npm test          # 190 logic checks + 229 screen checks
+node tests/mutate.mjs   # breaks the app 123 ways on purpose and checks the tests notice (takes a while;
                         # MUT_RANGE=1-25 runs part of it, so several copies can share the work)
 ```
-The screen tests run the real `App.js` in a simulated browser against a stand-in database that follows the same rules as the real one (unverified accounts blocked, one review per school, pending reviews hidden, distances from schools that have coordinates) a stand-in for the phone's location (allowed, refused, blocked, switched off, never answers, outside Mumbai), and a stand-in for the drive-time function (answers, no road, daily limit, not deployed, no connection). The database side was tested separately against an in-memory Postgres engine &mdash; `schools_nearby` (63 checks) and the enquiries rules (88 checks); those tests are not part of this repo.
+The screen tests run the real `App.js` in a simulated browser against a stand-in database that follows the same rules as the real one (unverified accounts blocked, one review per school, pending reviews hidden, distances from schools that have coordinates) a stand-in for the phone's location (allowed, refused, blocked, switched off, never answers, outside Mumbai), and a stand-in for the drive-time function (answers, no road, daily limit, not deployed, no connection). The database side was tested separately against an in-memory Postgres engine &mdash; `schools_nearby` (63 checks), the enquiries rules (88 checks) and the categories (87 checks); those tests are not part of this repo.

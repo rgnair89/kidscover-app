@@ -100,6 +100,32 @@ const mutations = [
   ['the school page offers the form again even when an enquiry is open', String.raw`{(!enquiry || enquiry.status === 'closed') && !askForm && (`, String.raw`{!askForm && (`],
   ['the top bar never shows how many replies are waiting', String.raw`label={unread > 0 ? `, String.raw`label={false ? `],
   ['signing out leaves the last person\'s unread count on screen', String.raw`if (!next) { setSchool(null); setShowEnquiries(false); setUnread(0); }`, String.raw`if (!next) { setSchool(null); setShowEnquiries(false); }`],
+  // ---- drive times by car ----
+  ['drive times are fetched without the parent asking', String.raw`const [driveMode, setDriveMode] = useState(null);`, String.raw`const [driveMode, setDriveMode] = useState('school_run');`],
+  ['schools already answered are asked about again', String.raw`!(driveKey(place, mode, r.id) in (known ?? {}))`, String.raw`true`],
+  ['a school being fetched is asked about twice', String.raw` && !pending?.has?.(driveKey(place, mode, r.id))`, ''],
+  ['schools without a distance are sent to Google', String.raw`.filter((r) => typeof r.distance_km === 'number' && `, String.raw`.filter((r) => `],
+  ['more than 20 schools go in one lookup', String.raw`    .slice(0, max);`, String.raw`    ;`],
+  ['the time of day chosen is not sent', String.raw`schoolIds: ids, when: mode } });`, String.raw`schoolIds: ids, when: 'now' } });`],
+  ['a refused lookup keeps asking', String.raw`        setDriveMode(null); // stop asking; the parent can tap again once the problem is gone`, ''],
+  ['a school with no road is asked about again and again', String.raw`ids.forEach((id) => { next[driveKey(where, mode, id)] = res.times[id] ?? null; });`, String.raw`ids.forEach((id) => { if (res.times[id]) next[driveKey(where, mode, id)] = res.times[id]; });`],
+  ['the parent is not warned when lookups run low', String.raw`if (typeof res.lookupsLeft === 'number' && res.lookupsLeft <= 3) {`, String.raw`if (false) {`],
+  ['"1 lookups left"', String.raw`res.lookupsLeft === 1 ? 'lookup' : 'lookups'`, String.raw`'lookups'`],
+  ['turning the location off leaves drive times on', String.raw`    setLocationNote(null);
+    setDriveMode(null);
+`, String.raw`    setLocationNote(null);
+`],
+  ['cards never show the drive time', String.raw`{!!driving && `, String.raw`{false && `],
+  ['the school page forgets the time of day', String.raw`DRIVE_MODES.find((m) => m.key === school.driveMode)?.long ?? 'leaving now'`, String.raw`'leaving now'`],
+  ['an hour-long drive is shown in minutes only', String.raw`  if (m < 60) return `, String.raw`  if (true) return `],
+  ['a very short drive shows 0 min', String.raw`const m = Math.max(1, Math.round(t.minutes));`, String.raw`const m = Math.round(t.minutes);`],
+  ['a function that is not deployed is reported as a general failure', String.raw`    if (error.context?.status === 404) return { ok: false, code: 'not_deployed' };
+`, ''],
+  ['the privacy note about Google is dropped', String.raw`Worked out by Google Maps from your approximate location, which Kidscover does not store.`, String.raw`Worked out by Google Maps.`],
+  ['tapping the chosen time of day again does not turn it off', String.raw`setDriveMode(driveMode === m.key ? null : m.key)`, String.raw`setDriveMode(m.key)`],
+  ['a setup problem at Google is shown to parents as a passing failure', String.raw`    case 'routes_not_enabled':
+`, ''],
+  ['drive times from one place are reused for another', 'const driveKey = (place, mode, id) => `${place.lat},${place.lng}|${mode}|${id}`;', 'const driveKey = (place, mode, id) => `${mode}|${id}`;'],
 ];
 
 const run = (file) => { try { return execSync(`node tests/${file}`, { cwd: root, encoding: 'utf8', env: { ...process.env, APP_FILE: out }, stdio: ['ignore', 'pipe', 'pipe'], timeout: 200000 }); } catch (e) { return (e.stdout || '') + (e.stderr || ''); } };

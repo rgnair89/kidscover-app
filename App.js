@@ -8,7 +8,9 @@
 //   3. "Schools near me" needs the database function from supabase/migrations/20260919000500_schools_nearby.sql (in the
 //      admin repo). Run that in the Supabase SQL Editor BEFORE using the new app. Without it the app still works; the
 //      "Use my location" button just says it is not switched on yet.
-// What it does: sign in / sign up, search schools, filter by level / daycare / Google rating / distance, see how far each
+//   4. Drive times need 20260919000700_drive_times.sql and the commute-times edge function (admin repo), plus the Routes
+//      API switched on in Google Cloud. Without them the app says drive times are not switched on yet.
+// What it does: sign in / sign up, search schools, filter by level / daycare / Google rating / distance, see how far (and how long a drive) each
 // school is from you, open a school, read parent reviews, write one (anonymous, moderated before it shows), and report a
 // review.
 // =====================================================================================================
@@ -137,6 +139,72 @@ function locationProblemText(reason) {
   return 'We could not find your location. Check that location is switched on for your phone, then try again.';
 }
 const OUTSIDE_AREA_TEXT = 'You seem to be outside Mumbai and Thane, where Kidscover has schools so far. Distances are measured from where you are.';
+
+// ---- drive time by car, from Google through the commute-times function (it counts each parent's daily lookups) ----
+const DRIVE_MODES = [
+  { key: 'school_run', label: 'Weekday 7:30 am', long: 'leaving at 7:30 am on a weekday' },
+  { key: 'now', label: 'Right now', long: 'leaving now' },
+];
+const MAX_DRIVE_BATCH = 20; // the function's limit per lookup, and one page of the list
+
+function driveTimeText(t) {
+  if (!t || typeof t.minutes !== 'number' || !Number.isFinite(t.minutes) || t.minutes < 0) return '';
+  const m = Math.max(1, Math.round(t.minutes));
+  if (m < 60) return `About ${m} min by car`;
+  const h = Math.floor(m / 60);
+  const rest = m % 60;
+  return `About ${h} h${rest ? ` ${rest} min` : ''} by car`;
+}
+
+const driveKey = (place, mode, id) => `${place.lat},${place.lng}|${mode}|${id}`;
+
+// Which schools on screen still need a drive time: ones with a distance (so they have coordinates), not already known
+// for this place and time of day, and not already being fetched. At most one lookup's worth.
+function needDriveTimes(rows, place, mode, known, pending, max = MAX_DRIVE_BATCH) {
+  if (!validPlace(place) || !DRIVE_MODES.some((m) => m.key === mode)) return [];
+  return (rows ?? [])
+    .filter((r) => typeof r.distance_km === 'number' && !(driveKey(place, mode, r.id) in (known ?? {})) && !pending?.has?.(driveKey(place, mode, r.id)))
+    .map((r) => r.id)
+    .slice(0, max);
+}
+
+// Asks the commute-times function. Returns { ok: true, times, lookupsLeft } or { ok: false, code, limit }.
+async function requestDriveTimes(fn, place, ids, mode) {
+  let res;
+  try {
+    res = await fn.invoke('commute-times', { body: { lat: place.lat, lng: place.lng, schoolIds: ids, when: mode } });
+  } catch (_e) {
+    return { ok: false, code: 'network' };
+  }
+  const { data, error } = res ?? {};
+  if (error) {
+    if (error.context?.status === 404) return { ok: false, code: 'not_deployed' };
+    if (error.name === 'FunctionsFetchError' || /failed to (send|fetch)|network/i.test(String(error.message ?? ''))) return { ok: false, code: 'network' };
+    return { ok: false, code: 'failed' };
+  }
+  if (!data || typeof data !== 'object') return { ok: false, code: 'failed' };
+  if (!data.ok) return { ok: false, code: String(data.code ?? 'failed'), limit: data.limit ?? null };
+  const times = {};
+  for (const id of ids) times[id] = data.times?.[id] ?? data.times?.[String(id).toLowerCase()] ?? null;
+  return { ok: true, times, lookupsLeft: typeof data.lookupsLeft === 'number' ? data.lookupsLeft : null };
+}
+
+function driveProblemText(code, limit) {
+  switch (code) {
+    case 'user_limit': return `You have used today's ${limit || 20} drive-time lookups. They start again tomorrow.`;
+    case 'daily_budget': return 'Drive times are paused for today because of high demand. Please try again tomorrow.';
+    case 'outside_area': return 'Drive times work only in Mumbai and Thane for now.';
+    case 'confirm_email': return 'Please confirm your email address first, then try again.';
+    case 'sign_in': return 'Please sign out and in again to see drive times.';
+    case 'switched_off':
+    case 'not_deployed':
+    case 'not_configured':
+    case 'routes_not_enabled':
+    case 'google_key_blocked':
+    case 'google_key_invalid': return 'Drive times are not switched on yet. Distances still work.';
+    default: return 'Could not get drive times just now. Please try again in a moment.';
+  }
+}
 const NEARBY_MISSING_TEXT = 'Schools near you is not switched on yet. You can still search by school name or area.';
 
 // Text typed into the search box goes into a filter string, so remove the characters that filter syntax uses.
@@ -488,14 +556,16 @@ function AuthScreen() {
 }
 
 // ---------------------------------------------------------------------------------------------- discover
-function SchoolCard({ school, onPress }) {
+function SchoolCard({ school, drive, onPress }) {
   const community = communityText(school.community);
   const distance = distanceText(school.distance_km);
   const address = cleanAddress(school.address);
+  const driving = driveTimeText(drive);
   return (
     <Pressable testID={`school-${school.id}`} accessibilityRole="button" onPress={onPress} style={s.card}>
       <Text style={s.schoolName}>{cleanName(school.name)}</Text>
       {!!distance && <Text testID={`distance-${school.id}`} style={s.distance}>{distance}</Text>}
+      {!!driving && <Text testID={`drivetime-${school.id}`} style={s.distance}>{driving}</Text>}
       {!!address && <Text style={s.muted} numberOfLines={2}>{address}</Text>}
       <View style={s.badgeRow}>
         {levelBadges(school.levels).map((b) => <Text key={b} style={s.badge}>{b}</Text>)}
@@ -519,6 +589,10 @@ function DiscoverScreen({ onOpen }) {
   const [place, setPlace] = useState(null); // where the parent is, once they allow it; kept in memory only
   const [locating, setLocating] = useState(false);
   const [locationNote, setLocationNote] = useState(null); // { tone, text } about the location, kept apart from list errors
+  const [driveMode, setDriveMode] = useState(null); // null until the parent asks: drive times cost a Google lookup
+  const [driveTimes, setDriveTimes] = useState({}); // driveKey -> { minutes, km } | null (no route); in memory only
+  const [driveNote, setDriveNote] = useState(null);
+  const drivePending = useRef(new Set());
   const latest = useRef(0);
   const pageRef = useRef(0);
 
@@ -569,8 +643,39 @@ function DiscoverScreen({ onOpen }) {
   function stopUsingLocation() {
     setPlace(null);
     setLocationNote(null);
+    setDriveMode(null);
+    setDriveNote(null);
     setFilters((f) => normalizeFilters(f, false));
   }
+
+  // Once the parent has asked for drive times, fetch them for the schools on screen that do not have one yet: one
+  // lookup per page of 20. Results are kept per place and time of day, so going back to a list costs nothing.
+  useEffect(() => {
+    if (!place || !driveMode) return;
+    const ids = needDriveTimes(rows, place, driveMode, driveTimes, drivePending.current);
+    if (ids.length === 0) return;
+    const where = place;
+    const mode = driveMode;
+    ids.forEach((id) => drivePending.current.add(driveKey(where, mode, id)));
+    requestDriveTimes(supabase.functions, where, ids, mode).then((res) => {
+      ids.forEach((id) => drivePending.current.delete(driveKey(where, mode, id)));
+      if (!res.ok) {
+        setDriveMode(null); // stop asking; the parent can tap again once the problem is gone
+        setDriveNote({ tone: 'amber', text: driveProblemText(res.code, res.limit) });
+        return;
+      }
+      setDriveTimes((cur) => {
+        const next = { ...cur };
+        ids.forEach((id) => { next[driveKey(where, mode, id)] = res.times[id] ?? null; });
+        return next;
+      });
+      if (typeof res.lookupsLeft === 'number' && res.lookupsLeft <= 3) {
+        setDriveNote({ tone: 'amber', text: `${res.lookupsLeft} drive-time ${res.lookupsLeft === 1 ? 'lookup' : 'lookups'} left today.` });
+      }
+    });
+  }, [rows, place, driveMode, driveTimes]);
+
+  const driveFor = (item) => (place && driveMode ? driveTimes[driveKey(place, driveMode, item.id)] : undefined);
 
   const header = (
     <View>
@@ -585,6 +690,15 @@ function DiscoverScreen({ onOpen }) {
             {DISTANCE_CHOICES.map((d) => <Chip key={String(d.km)} testID={`near-${d.km ?? 'any'}`} label={d.label} selected={filters.nearKm === d.km} onPress={() => set({ nearKm: d.km })} />)}
           </View>
           <Text style={s.muted}>In a straight line, not by road.</Text>
+          <Text style={s.label}>Drive time by car</Text>
+          <View style={s.wrap}>
+            {DRIVE_MODES.map((m) => (
+              <Chip key={m.key} testID={`drive-mode-${m.key}`} label={m.label} selected={driveMode === m.key}
+                onPress={() => { setDriveNote(null); setDriveMode(driveMode === m.key ? null : m.key); }} />
+            ))}
+          </View>
+          <Text style={s.muted}>Worked out by Google Maps from your approximate location, which Kidscover does not store. Each screen of 20 schools uses one of your daily lookups.</Text>
+          {!!driveNote && <Notice tone={driveNote.tone} text={driveNote.text} testID="drive-note" />}
         </View>
       ) : (
         <View style={[s.card, { marginBottom: 8 }]} testID="near-me-off">
@@ -633,7 +747,10 @@ function DiscoverScreen({ onOpen }) {
   return (
     <ScrollView testID="discover-list" contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
       {header}
-      {rows.map((item) => <SchoolCard key={item.id} school={item} onPress={() => onOpen(item)} />)}
+      {rows.map((item) => (
+        <SchoolCard key={item.id} school={item} drive={driveFor(item)}
+          onPress={() => onOpen(driveFor(item) ? { ...item, drive: driveFor(item), driveMode } : item)} />
+      ))}
       {!loading && !error && rows.length === 0 && (
         <Text testID="empty" style={s.empty}>
           {hasPlace && filters.nearKm ? `No schools within ${filters.nearKm} km match. Try a bigger distance or remove a filter.` : 'No schools match. Try removing a filter.'}
@@ -903,6 +1020,11 @@ function SchoolScreen({ school, onBack, onOpenEnquiries }) {
       <Btn testID="back" kind="quiet" label="< Back to schools" onPress={onBack} />
       <Text style={s.title}>{cleanName(school.name)}</Text>
       {!!distanceText(school.distance_km) && <Text testID="school-distance" style={s.distance}>{distanceText(school.distance_km)}</Text>}
+      {!!driveTimeText(school.drive) && (
+        <Text testID="page-drive" style={s.distance}>
+          {`${driveTimeText(school.drive)}, ${DRIVE_MODES.find((m) => m.key === school.driveMode)?.long ?? 'leaving now'}`}
+        </Text>
+      )}
       {!!cleanAddress(school.address) && <Text style={s.body}>{cleanAddress(school.address)}</Text>}
       <View style={s.badgeRow}>
         {levelBadges(school.levels).map((b) => <Text key={b} style={s.badge}>{b}</Text>)}

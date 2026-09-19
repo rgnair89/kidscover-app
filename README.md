@@ -6,11 +6,12 @@ The whole app is one file, `App.js`, so it can be pasted straight into [snack.ex
 - Sign in / create an account (email + password)
 - Search schools by name or area, filter by **level** (Preschool / Primary / Secondary / not stated), **daycare available**, **Google rating** (with an "include schools with no rating" switch, on by default because most K-12 schools have none), and sort
 - **Schools near me**: a "Use my location" button (the phone asks permission), the distance on every school, "Nearest first", and "Within 2 / 5 / 10 km"
+- **Drive time by car** (after "Use my location"): "Weekday 7:30 am" (school-run traffic) or "Right now", from Google Maps, shown on each school
 - School page: address, level badges, Google rating, website link, **parent reviews**
 - Write a review (anonymous, checked by a moderator before it shows), edit or delete your own, report someone else's
 - **Ask a school about admissions**: a short form (which class, roughly when, your question), then a conversation with the school under **Enquiries**, with a count of unread replies
 
-Not in this version: travel time by car (that needs Google's Routes API, called from the server), compare, Google / Microsoft / phone sign-in, push notifications. Those come next.
+Not in this version: compare, Google / Microsoft / phone sign-in, push notifications. Those come next.
 
 ## Asking about admissions
 - An enquiry deliberately does **not** ask for a child's name or date of birth. A class and a rough start year are enough to start a conversation; the school can ask for the rest once it is talking to the family.
@@ -26,12 +27,21 @@ Not in this version: travel time by car (that needs Google's Routes API, called 
 - A parent outside Mumbai / Thane still gets distances, plus a note that Kidscover only lists that area so far.
 - For a real app build (not Snack or Expo Go) the iOS permission text has to be set in `app.json` through the `expo-location` plugin (`locationWhenInUsePermission`).
 
+## Drive time by car
+- Nothing goes to Google until the parent taps "Weekday 7:30 am" or "Right now". Then the app asks the `commute-times` edge function (kidscover-admin repo) about the schools on screen, 20 at a time.
+- "Weekday 7:30 am" means leaving at 7:30 am India time on the next weekday. Google can plan car trips by departure time only (not "arrive by"), and this is when school-run traffic happens.
+- The position (rounded to about 100 m) goes to Google for that calculation only. Kidscover stores a count of lookups per parent per day, never where anyone was. The screen says so.
+- Google charges per school looked up, so there are limits (in the database, changeable by an admin): 20 lookups a parent a day and 500 schools a day for the whole app by default. When a parent is down to 3 lookups the app says how many are left.
+- A school Google finds no road to shows no drive time rather than a guess. Results are kept in memory while the app is open, so going back to a list costs nothing.
+- Setup (once): run `20260919000700_drive_times.sql`, deploy the `commute-times` function, and switch on "Routes API" in Google Cloud for the key already in `GOOGLE_MAPS_API_KEY`. The Partner Portal's "Test drive times" button says which step is missing. Until then the app says drive times are not switched on yet, and distances still work.
+
 ## Before you try it: the database
 Run these in the Supabase SQL Editor (they live in the kidscover-admin repo, `supabase/migrations/`), then paste the app:
 - `20260919000200_school_quality_rules.sql` and `20260919000300_school_quality_rules_v2.sql` - the app asks the database to leave out places that are not schools
 - `20260919000400_school_name_sort.sql` - the A to Z list sorts on the `name_sort` column, which does not exist until this is run
 - `20260919000500_schools_nearby.sql` - the distance function used by "Use my location". Run it **before** pasting this version of the app. If it is missing the app still works; the button just says that nearby search is not switched on yet
 - `20260919000600_admissions_enquiries.sql` - the admissions enquiries and their messages. Run it **before** pasting this version too. Without it, "Ask about admissions" says it is not switched on yet
+- `20260919000700_drive_times.sql` - the daily limits for drive times (and deploy the `commute-times` function). Without them drive times say they are not switched on yet
 
 If the app shows an error mentioning a missing column, one of these has not been run yet.
 
@@ -55,8 +65,8 @@ Snack has no way to keep a secret, so the key is pasted into the code. That is f
 ## Tests
 ```
 npm install
-npm test          # 143 logic checks + 165 screen checks
-node tests/mutate.mjs   # breaks the app 75 ways on purpose and checks the tests notice (takes a while;
+npm test          # 167 logic checks + 192 screen checks
+node tests/mutate.mjs   # breaks the app 95 ways on purpose and checks the tests notice (takes a while;
                         # MUT_RANGE=1-25 runs part of it, so several copies can share the work)
 ```
-The screen tests run the real `App.js` in a simulated browser against a stand-in database that follows the same rules as the real one (unverified accounts blocked, one review per school, pending reviews hidden, distances from schools that have coordinates) and a stand-in for the phone's location (allowed, refused, blocked, switched off, never answers, outside Mumbai). The database side was tested separately against an in-memory Postgres engine &mdash; `schools_nearby` (63 checks) and the enquiries rules (88 checks); those tests are not part of this repo.
+The screen tests run the real `App.js` in a simulated browser against a stand-in database that follows the same rules as the real one (unverified accounts blocked, one review per school, pending reviews hidden, distances from schools that have coordinates) a stand-in for the phone's location (allowed, refused, blocked, switched off, never answers, outside Mumbai), and a stand-in for the drive-time function (answers, no road, daily limit, not deployed, no connection). The database side was tested separately against an in-memory Postgres engine &mdash; `schools_nearby` (63 checks) and the enquiries rules (88 checks); those tests are not part of this repo.

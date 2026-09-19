@@ -94,6 +94,7 @@ function seed() {
     private: [{ review_id: 'rv1', school_id: 's1', author_id: 'u2', moderation_note: null }, { review_id: 'rv2', school_id: 's1', author_id: 'u9', moderation_note: null }, { review_id: 'rv3', school_id: 's1', author_id: 'u9', moderation_note: null }],
     reports: [], failNext: null,
     threads: [], tmsgs: [], nextT: 1, rpcCalls: [], clock: Date.now(),
+    fnCalls: [], fnMode: 'ok', lookupsLeft: undefined,
   };
 }
 
@@ -271,6 +272,24 @@ function makeDb(state) {
     },
     from: (t) => new Query(state, t),
     rpc: (fn, args) => Object.assign(new Query(state, 'rpc:' + fn), { args }),
+    // the commute-times edge function: a fixed rule for the minutes, and one school (s6) that has no road to it
+    functions: {
+      invoke: async (name, opts) => {
+        const body = opts?.body ?? {};
+        state.fnCalls.push({ name, body });
+        const mode = state.fnMode ?? 'ok';
+        if (mode === 'not_deployed') return { data: null, error: { name: 'FunctionsHttpError', message: 'Edge Function returned a non-2xx status code', context: { status: 404 } } };
+        if (mode === 'network') return { data: null, error: { name: 'FunctionsFetchError', message: 'Failed to send a request to the Edge Function' } };
+        if (mode !== 'ok') return { data: { ok: false, code: mode, limit: 20 }, error: null };
+        const times = {};
+        for (const id of body.schoolIds) {
+          const x = state.schools.find((s2) => s2.id === id);
+          times[id] = !x || x.id === 's6' || x.latitude == null ? null : { minutes: Math.round(hav(body.lat, body.lng, x.latitude, x.longitude) * 3) + 4, km: 1 };
+        }
+        if (typeof state.lookupsLeft === 'number') state.lookupsLeft -= 1;
+        return { data: { ok: true, when: body.when, times, lookupsLeft: state.lookupsLeft ?? 15 }, error: null };
+      },
+    },
   };
 }
 
@@ -811,6 +830,87 @@ await signIn(ui, 'bob@x.in', 'password2'); await waitFor(() => ui.cards() === 20
 check('the next person sees no unread count and none of the other family\'s enquiries', ui.id('enquiries').textContent === 'Enquiries', ui.id('enquiries')?.textContent);
 await ui.click('enquiries');
 check('...and an empty enquiries screen', await waitFor(() => !!ui.id('enquiries-empty')) && !/should ever see/.test(ui.text()));
+await ui.unmount();
+
+// =============================================================================================================
+console.log('\n=== drive times by car ===');
+// the drive time the stand-in function gives: 3 minutes a straight-line km, plus 4 (a fixed rule, so tests can check it)
+const fakeMinutes = (st2, id, lat, lng) => { const x = st2.schools.find((s2) => s2.id === id); return Math.round(hav(lat, lng, x.latitude, x.longitude) * 3) + 4; };
+const driveOf = (u, id) => u.id('drivetime-' + id)?.textContent ?? '';
+const fnCalls = (st2) => st2.fnCalls.filter((c) => c.name === 'commute-times');
+const locationOn = async (u) => { fakePhone(); await u.click('use-location'); return waitFor(() => u.id('near-me-on') && firstCard(u) === 'school-f24', 4000); };
+
+st = seed(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+check('without a location there is nothing about driving', !ui.id('drive-mode-school_run') && !ui.id('drive-mode-now'));
+await locationOn(ui);
+check('with a location, the panel offers "Weekday 7:30 am" and "Right now", neither chosen', !!ui.id('drive-mode-school_run') && !!ui.id('drive-mode-now') && !selected(ui, 'drive-mode-school_run') && !selected(ui, 'drive-mode-now'));
+check('...and says Google works it out and Kidscover does not store the location', /Google Maps/.test(ui.id('near-me-on').textContent) && /does not store/.test(ui.id('near-me-on').textContent));
+await sleep(200);
+check('nothing is sent to Google until the parent asks (it costs a lookup)', fnCalls(st).length === 0 && ui.all('drivetime-').length === 0);
+await ui.click('drive-mode-school_run');
+check('asking: one call for the 20 schools on screen', await waitFor(() => fnCalls(st).length === 1, 3000) && fnCalls(st)[0].body.schoolIds.length === 20, JSON.stringify(fnCalls(st).map((c) => c.body.schoolIds.length)));
+{
+  const c = fnCalls(st)[0].body;
+  check('...with the rounded position, the school run, and exactly the schools shown', c.lat === 19.076 && c.lng === 72.878 && c.when === 'school_run' && JSON.stringify(c.schoolIds) === JSON.stringify(shown(ui)), JSON.stringify(c).slice(0, 200));
+  check('...and nothing else', JSON.stringify(Object.keys(c).sort()) === JSON.stringify(['lat', 'lng', 'schoolIds', 'when']));
+}
+check('each card shows its drive time under the distance', await waitFor(() => driveOf(ui, 'f24') === `About ${fakeMinutes(st, 'f24', 19.076, 72.878)} min by car`, 3000), driveOf(ui, 'f24'));
+check('the chosen time of day is highlighted', selected(ui, 'drive-mode-school_run'));
+await ui.click('more'); await waitFor(() => ui.cards() === 35, 3000);
+check('"Show more" costs one more lookup, for the 15 new schools only', await waitFor(() => fnCalls(st).length === 2, 3000) && fnCalls(st)[1].body.schoolIds.length === 15 && !fnCalls(st)[1].body.schoolIds.some((id) => fnCalls(st)[0].body.schoolIds.includes(id)), JSON.stringify(fnCalls(st).map((c) => c.body.schoolIds.length)));
+check('a school Google finds no road to shows no drive time rather than a guess', await waitFor(() => !!driveOf(ui, 'n3'), 3000) && driveOf(ui, 's6') === '' && !!ui.id('school-s6'), driveOf(ui, 'n3'));
+check('far schools show hours and minutes', await waitFor(() => /^About 1 h \d+ min by car$|^About \d+ min by car$/.test(driveOf(ui, 'n3')), 3000), driveOf(ui, 'n3'));
+await ui.click('near-5'); await waitFor(() => ui.cards() === 20, 3000);
+await sleep(200);
+check('narrowing to 5 km reuses the times already fetched: no new lookup', fnCalls(st).length === 2 && !!driveOf(ui, 'f24'), fnCalls(st).length);
+await ui.click('near-any'); await waitFor(() => ui.cards() === 20, 3000);
+await sleep(200);
+check('...and so does going back to "Any distance"', fnCalls(st).length === 2);
+await ui.click('school-f24'); await waitFor(() => ui.id('back'));
+check('the school page repeats it with the time of day', ui.id('page-drive')?.textContent === `About ${fakeMinutes(st, 'f24', 19.076, 72.878)} min by car, leaving at 7:30 am on a weekday`, ui.id('page-drive')?.textContent);
+await ui.click('back'); await waitFor(() => ui.id('search'));
+await ui.click('drive-mode-now');
+check('switching to "Right now" asks again for the schools on screen, as "now"', await waitFor(() => fnCalls(st).length === 3, 3000) && fnCalls(st)[2].body.when === 'now' && selected(ui, 'drive-mode-now') && !selected(ui, 'drive-mode-school_run'));
+await ui.click('drive-mode-now');
+check('tapping the chosen one again hides the drive times and asks nothing more', await waitFor(() => ui.all('drivetime-').length === 0, 2000) && (await sleep(200), fnCalls(st).length === 3));
+await ui.click('drive-mode-school_run');
+await sleep(250);
+check('...and choosing the school run again shows the times it already had, without a new lookup', fnCalls(st).length === 3 && !!driveOf(ui, 'f24'), fnCalls(st).length);
+await ui.click('stop-location');
+check('turning the location off removes drive times and the choice', await waitFor(() => !ui.id('drive-mode-school_run') && ui.all('drivetime-').length === 0, 2000));
+await locationOn(ui);
+check('turning it back on does not start asking Google by itself', (await sleep(250), fnCalls(st).length === 3) && !selected(ui, 'drive-mode-school_run'));
+await ui.unmount();
+
+console.log('\n=== drive times: when it cannot help ===');
+st = seed(); st.fnMode = 'user_limit'; ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+await locationOn(ui);
+await ui.click('drive-mode-school_run');
+check('over the daily allowance: says so with the number, and stops asking', await waitFor(() => /used today's 20 drive-time lookups/.test(ui.id('drive-note')?.textContent ?? ''), 3000) && !selected(ui, 'drive-mode-school_run') && (await sleep(250), fnCalls(st).length === 1), ui.id('drive-note')?.textContent);
+check('...the distances are still there', /km away/.test(distanceOf(ui, 'f24')));
+await ui.unmount();
+
+st = seed(); st.fnMode = 'not_deployed'; ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+await locationOn(ui);
+await ui.click('drive-mode-now');
+check('function not deployed yet: "not switched on yet", no technical words', await waitFor(() => /not switched on yet/.test(ui.id('drive-note')?.textContent ?? ''), 3000) && !/404|Edge Function|commute/i.test(ui.text()), ui.id('drive-note')?.textContent);
+st.fnMode = 'ok'; await settle();
+await ui.click('drive-mode-now');
+check('...and once it is deployed, the same chip works and the note goes away', await waitFor(() => !!driveOf(ui, 'f24'), 3000) && !ui.id('drive-note'));
+await ui.unmount();
+
+st = seed(); st.fnMode = 'network'; ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+await locationOn(ui);
+await ui.click('drive-mode-school_run');
+check('no connection: a "try again" message, not a crash', await waitFor(() => /try again/.test(ui.id('drive-note')?.textContent ?? ''), 3000) && ui.cards() === 20);
+await ui.unmount();
+
+st = seed(); st.lookupsLeft = 3; ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+await locationOn(ui);
+await ui.click('drive-mode-school_run');
+check('when a parent is nearly out of lookups, they are told how many are left', await waitFor(() => /2 drive-time lookups left today/.test(ui.id('drive-note')?.textContent ?? ''), 3000) && !!driveOf(ui, 'f24'), ui.id('drive-note')?.textContent);
+await ui.click('more'); await waitFor(() => ui.cards() === 35, 3000);
+check('...counting down, and "1 lookup" in the singular', await waitFor(() => /1 drive-time lookup left today/.test(ui.id('drive-note')?.textContent ?? ''), 3000), ui.id('drive-note')?.textContent);
 await ui.unmount();
 
 console.log(`\n${pass} passed, ${fail} failed`);

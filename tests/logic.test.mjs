@@ -8,7 +8,10 @@ const src = fs.readFileSync(process.env.APP_FILE ?? path.join(here, '..', 'App.j
 const a = src.indexOf('// ==== BEGIN pure logic'), b = src.indexOf('// ==== END pure logic');
 if (a < 0 || b < 0) throw new Error('markers not found in App.js');
 fs.mkdirSync(path.join(here, '.tmp'), { recursive: true });
-const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'levelBadges', 'googleRatingText', 'communityText', 'stars', 'safeUrl', 'validateAuth', 'validateReview', 'statusLine', 'cleanName', 'friendlyError', 'loadStats', 'loadSchools', 'loadReviews', 'loadMyReview', 'submitReview', 'updateReview', 'deleteReview', 'reportReview', 'DEFAULT_FILTERS', 'PAGE_SIZE', 'monthYear', 'SCHOOL_COLUMNS', 'NEARBY_COLUMNS', 'DISTANCE_CHOICES', 'SERVICE_AREA', 'validPlace', 'inServiceArea', 'defaultSort', 'normalizeFilters', 'distanceText', 'cleanAddress', 'isMissingNearby', 'locateMe', 'locationProblemText', 'OUTSIDE_AREA_TEXT', 'NEARBY_MISSING_TEXT'];
+const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'levelBadges', 'googleRatingText', 'communityText', 'stars', 'safeUrl', 'validateAuth', 'validateReview', 'statusLine', 'cleanName', 'friendlyError', 'loadStats', 'loadSchools', 'loadReviews', 'loadMyReview', 'submitReview', 'updateReview', 'deleteReview', 'reportReview', 'DEFAULT_FILTERS', 'PAGE_SIZE', 'monthYear', 'SCHOOL_COLUMNS', 'NEARBY_COLUMNS', 'DISTANCE_CHOICES', 'SERVICE_AREA', 'validPlace', 'inServiceArea', 'defaultSort', 'normalizeFilters', 'distanceText', 'cleanAddress', 'isMissingNearby', 'locateMe', 'locationProblemText', 'OUTSIDE_AREA_TEXT', 'NEARBY_MISSING_TEXT',
+  'ENQUIRY_COLUMNS', 'MESSAGE_COLUMNS', 'MAX_ENQUIRY', 'MIN_ENQUIRY', 'GRADE_CHOICES', 'startYearChoices', 'validateEnquiry', 'enquirySubject',
+  'enquiryStatusText', 'enquiryAbout', 'unreadCount', 'fromMe', 'isMissingEnquiries', 'ENQUIRIES_MISSING_TEXT', 'sendEnquiry', 'loadEnquiries',
+  'loadEnquiryForSchool', 'loadEnquiryMessages', 'replyToEnquiry', 'markEnquiryRead', 'closeEnquiry'];
 fs.writeFileSync(path.join(here, '.tmp', 'logic.mjs'), src.slice(a, b) + `\nexport { ${names.join(', ')} };\n`);
 const L = await import(pathToFileURL(path.join(here, '.tmp', 'logic.mjs')).href);
 
@@ -217,6 +220,61 @@ for (const [why, pos] of [['no coordinates', {}], ['a null latitude (must not be
 }
 check('each problem has its own plain-words message, and none blames the parent', ['denied', 'blocked', 'timeout', 'unavailable'].every((r) => L.locationProblemText(r).length > 30) && new Set(['denied', 'blocked', 'timeout', 'unavailable'].map(L.locationProblemText)).size === 4 && /settings/.test(L.locationProblemText('blocked')) && /search by school name/.test(L.locationProblemText('denied')));
 check('the outside-Mumbai notice names the area', /Mumbai/.test(L.OUTSIDE_AREA_TEXT));
+
+console.log('\n=== asking a school about admissions ===');
+check('a question has to say something, but not an essay', L.validateEnquiry({ message: 'x'.repeat(10) }) === null && /at least 10 characters, 9 so far/.test(L.validateEnquiry({ message: 'x'.repeat(9) })) && L.validateEnquiry({ message: 'x'.repeat(2000) }) === null && /under 2000/.test(L.validateEnquiry({ message: 'x'.repeat(2001) })));
+check('spaces do not count towards the minimum', /at least 10/.test(L.validateEnquiry({ message: '  hi  ' + ' '.repeat(30) })));
+check('the class chosen goes into the subject the school sees, and it is never over-long', L.enquirySubject('Class 1') === 'Admission enquiry - Class 1' && L.enquirySubject('') === 'Admission enquiry' && L.enquirySubject(null) === 'Admission enquiry' && L.enquirySubject('x'.repeat(300)).length === 120);
+check('the classes offered run from nursery to class 12', L.GRADE_CHOICES.includes('Nursery') && L.GRADE_CHOICES.includes('Class 11 to 12') && L.GRADE_CHOICES.length >= 5);
+check('the years offered are this year and the two after it', eq(L.startYearChoices(new Date('2026-09-19T00:00:00Z')), [2026, 2027, 2028]) && eq(L.startYearChoices(new Date('2030-01-01T00:00:00Z')), [2030, 2031, 2032]));
+check('the state of an enquiry is put in words a parent understands', L.enquiryStatusText('open') === 'Waiting for a reply' && L.enquiryStatusText('replied') === 'They have replied' && L.enquiryStatusText('closed') === 'Closed' && L.enquiryStatusText('nonsense') === '');
+check('what it is about reads as a phrase, and is empty when nothing was chosen', L.enquiryAbout({ grade_of_interest: 'Class 1', start_year: 2027 }) === 'Class 1, starting 2027' && L.enquiryAbout({ grade_of_interest: 'Nursery' }) === 'Nursery' && L.enquiryAbout({ start_year: 2027 }) === 'starting 2027' && L.enquiryAbout({}) === '' && L.enquiryAbout(null) === '');
+check('unread enquiries are counted for the badge', L.unreadCount([{ unread_for_parent: true }, { unread_for_parent: false }, { unread_for_parent: true }]) === 2 && L.unreadCount([]) === 0 && L.unreadCount(null) === 0);
+check('a message is mine only when the sender is me; with no user id nothing is mine', L.fromMe({ sender_id: 'u1' }, 'u1') === true && L.fromMe({ sender_id: 'staff' }, 'u1') === false && L.fromMe({ sender_id: 'u1' }, null) === false && L.fromMe(null, 'u1') === false);
+
+console.log('\n=== asking a school: what is sent ===');
+let edb = fakeDb(() => ({ data: [], error: null }));
+await L.sendEnquiry(edb, 'school-1', { grade: 'Class 1', startYear: 2027, message: '  Do you have places?  ' });
+check('the question goes through the send_enquiry function with the school, subject, message, class and year', edb.recs[0].table === 'rpc:send_enquiry' && eq(edb.recs[0].args, { p_school: 'school-1', p_subject: 'Admission enquiry - Class 1', p_message: 'Do you have places?', p_grade: 'Class 1', p_start_year: 2027 }), JSON.stringify(edb.recs[0]));
+edb = fakeDb(() => ({ data: [], error: null }));
+await L.sendEnquiry(edb, 'school-1', { grade: '', startYear: null, message: 'Just a question.' });
+check('no class and no year are sent as nothing, not as empty text', edb.recs[0].args.p_grade === null && edb.recs[0].args.p_start_year === null && edb.recs[0].args.p_subject === 'Admission enquiry');
+check('a child\'s name or date of birth is never part of what is sent', !JSON.stringify(edb.recs[0].args).match(/dob|birth|child_name|ward/i));
+edb = fakeDb(() => ({ data: [], error: null }));
+await L.replyToEnquiry(edb, 'th-1', '  Thank you!  ');
+check('a reply is trimmed and goes to the right conversation', edb.recs[0].table === 'ticket_messages' && eq(edb.recs[0].ops[0], ['insert', { ticket_id: 'th-1', message: 'Thank you!' }]), JSON.stringify(edb.recs[0].ops));
+edb = fakeDb(() => ({ data: [], error: null }));
+await L.markEnquiryRead(edb, 'th-1');
+await L.closeEnquiry(edb, 'th-1');
+check('reading and closing go through the database functions', edb.recs[0].table === 'rpc:mark_ticket_read' && eq(edb.recs[0].args, { p_ticket: 'th-1' }) && edb.recs[1].table === 'rpc:set_ticket_status' && eq(edb.recs[1].args, { p_ticket: 'th-1', p_status: 'closed' }), JSON.stringify(edb.recs.map((r) => [r.table, r.args])));
+
+console.log('\n=== asking a school: reading them back ===');
+const threadRows = [{ id: 'th-1', school_name: 'Sunrise', status: 'replied', unread_for_parent: true }];
+edb = fakeDb(() => ({ data: threadRows, error: null }));
+res = await L.loadEnquiries(edb);
+check('the list asks for the newest movement first and the columns the screen shows', edb.recs[0].table === 'enquiry_threads' && ops(edb.recs[0]).includes('order("last_message_at",{"ascending":false})') && edb.recs[0].ops[0][1] === L.ENQUIRY_COLUMNS && /unread_for_parent/.test(L.ENQUIRY_COLUMNS) && res.rows.length === 1, JSON.stringify(ops(edb.recs[0])));
+edb = fakeDb(() => ({ data: threadRows, error: null }));
+res = await L.loadEnquiryForSchool(edb, 'school-9');
+check('a school page asks only for its own enquiry, and gets one or nothing', ops(edb.recs[0]).includes('eq("school_id","school-9")') && res.thread.id === 'th-1', JSON.stringify(ops(edb.recs[0])));
+edb = fakeDb(() => ({ data: [], error: null }));
+res = await L.loadEnquiryForSchool(edb, 'school-9');
+check('...nothing means no enquiry yet, not an error', res.thread === null && !res.error);
+edb = fakeDb(() => ({ data: null, error: { message: 'boom' } }));
+res = await L.loadEnquiries(edb);
+check('a failure comes back as an error, not a crash, with an empty list', !!res.error && eq(res.rows, []));
+edb = fakeDb(() => ({ data: [{ id: 'm1' }], error: null }));
+res = await L.loadEnquiryMessages(edb, 'th-1');
+check('a conversation is read oldest first, for that thread only', edb.recs[0].table === 'ticket_messages' && ops(edb.recs[0]).includes('eq("ticket_id","th-1")') && ops(edb.recs[0]).includes('order("created_at",{"ascending":true})') && res.rows.length === 1, JSON.stringify(ops(edb.recs[0])));
+check('the app never asks for who the staff member is, only the sender id', !/first_name|last_name|email/.test(L.MESSAGE_COLUMNS) && /sender_id/.test(L.MESSAGE_COLUMNS), L.MESSAGE_COLUMNS);
+
+console.log('\n=== asking a school: when it goes wrong ===');
+check('a database that has not been set up is recognised, by code or by name', L.isMissingEnquiries({ code: 'PGRST202' }) && L.isMissingEnquiries({ code: 'PGRST205' }) && L.isMissingEnquiries({ message: 'Could not find the table public.enquiry_threads in the schema cache' }) && !L.isMissingEnquiries({ message: 'Network request failed' }) && !L.isMissingEnquiries(null));
+check('...and explained plainly, without database words', fe({ code: 'PGRST202', message: 'send_enquiry not found' }, 'enquiry') === L.ENQUIRIES_MISSING_TEXT && !/PGRST|schema cache|enquiry_threads/.test(L.ENQUIRIES_MISSING_TEXT));
+check('asking the same school twice points the parent at the conversation they already have', /already have an open enquiry/.test(fe({ message: 'an enquiry with this school is already open' }, 'enquiry')) && /Enquiries/.test(fe({ message: 'an enquiry with this school is already open' }, 'enquiry')));
+check('the daily limit is explained in plain words', /sent 10 enquiries today/.test(fe({ message: 'daily enquiry limit reached' }, 'enquiry')));
+check('sending too fast is explained without blaming the parent', /wait a few minutes/.test(fe({ message: 'too many messages just now, please wait a little' }, 'enquiry')));
+check('an unconfirmed account is told to confirm their email, as for reviews', /confirm your email address/.test(fe({ code: '42501' }, 'enquiry')));
+check('the older messages (near me, reviews) are unchanged by all this', fe({ code: 'PGRST202', message: 'schools_nearby missing' }) === L.NEARBY_MISSING_TEXT && /do not match/.test(fe({ message: 'Invalid login credentials' })));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

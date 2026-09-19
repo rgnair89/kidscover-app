@@ -69,6 +69,37 @@ const mutations = [
   ['sharing a location does not switch the list to nearest first', String.raw`    set({ sort: 'distance' }); // they asked for schools near them, so show the nearest first`, ''],
   ['nearest first is counted as a filter even though it is the normal order', String.raw`(g.sort !== defaultSort(hasPlace) ? 1 : 0)`, String.raw`(g.sort !== 'name' ? 1 : 0)`],
   ['a broken position object is accepted (no finite / range check)', String.raw`Number.isFinite(p.lat) && Number.isFinite(p.lng) && Math.abs(p.lat) <= 90 && Math.abs(p.lng) <= 180;`, String.raw`true;`],
+  // ---- asking a school about admissions ----
+  ['a one-word question is sent to the school', String.raw`if (len < MIN_ENQUIRY) return `, String.raw`if (false) return `],
+  ['a question longer than the database allows is sent anyway', String.raw`  if (len > MAX_ENQUIRY) return `, String.raw`  if (false) return `],
+  ['the class chosen never reaches the school', String.raw`  const g = (grade ?? '').trim();`, String.raw`  const g = '';`],
+  ['a very long class name makes a subject the database will refuse', String.raw`.slice(0, 120);`, String.raw`;`],
+  ['the years offered start in the past', String.raw`  return [y, y + 1, y + 2];`, String.raw`  return [y - 1, y, y + 1];`],
+  ['the question is sent untrimmed', String.raw`p_message: (form.message ?? '').trim(),`, String.raw`p_message: form.message ?? '',`],
+  ['no class chosen is sent as empty text instead of nothing', String.raw`p_grade: form.grade ? form.grade : null,`, String.raw`p_grade: form.grade,`],
+  ['every enquiry looks unread', String.raw`const unreadCount = (threads) => (threads ?? []).filter((t) => t.unread_for_parent).length;`, String.raw`const unreadCount = (threads) => (threads ?? []).length;`],
+  ['the school\'s messages look like the parent\'s own', String.raw`const fromMe = (message, myId) => !!myId && message?.sender_id === myId;`, String.raw`const fromMe = () => true;`],
+  ['the state of an enquiry is described wrongly', String.raw`  if (status === 'replied') return 'They have replied';`, String.raw`  if (status === 'replied') return 'Waiting for a reply';`],
+  ['the enquiry list is oldest first', String.raw`.order('last_message_at', { ascending: false }).limit(100);`, String.raw`.order('last_message_at', { ascending: true }).limit(100);`],
+  ['a school page looks up every enquiry, not just its own', String.raw`.eq('school_id', schoolId).order('last_message_at', { ascending: false }).limit(1);`, String.raw`.order('last_message_at', { ascending: false }).limit(1);`],
+  ['a conversation is shown newest message first', String.raw`.eq('ticket_id', ticketId).order('created_at', { ascending: true }).limit(200);`, String.raw`.eq('ticket_id', ticketId).order('created_at', { ascending: false }).limit(200);`],
+  ['a reply is sent untrimmed', String.raw`db.from('ticket_messages').insert({ ticket_id: ticketId, message: (text ?? '').trim() });`, String.raw`db.from('ticket_messages').insert({ ticket_id: ticketId, message: text ?? '' });`],
+  ['closing an enquiry sends the wrong status', String.raw`db.rpc('set_ticket_status', { p_ticket: ticketId, p_status: 'closed' });`, String.raw`db.rpc('set_ticket_status', { p_ticket: ticketId, p_status: 'open' });`],
+  ['the app asks the database who the staff member is', String.raw`const MESSAGE_COLUMNS = 'id,sender_id,message,created_at';`, String.raw`const MESSAGE_COLUMNS = 'id,sender_id,message,created_at,profiles(first_name,last_name,email)';`],
+  ['the unread mark is never asked for', String.raw`const ENQUIRY_COLUMNS = 'id,school_id,school_name,subject,grade_of_interest,start_year,status,created_at,last_message_at,message_count,last_message,unread_for_parent';`, String.raw`const ENQUIRY_COLUMNS = 'id,school_id,school_name,subject,grade_of_interest,start_year,status,created_at,last_message_at,message_count,last_message';`],
+  ['asking the same school twice shows a raw database message', String.raw`  if (/an enquiry with this school is already open/i.test(msg)) return 'You already have an open enquiry with this school. Open it under Enquiries to carry on there.';`, ''],
+  ['a missing enquiry function is reported as the near-me one', [[String.raw`  // the enquiry screens ask first: a "function not found" from them must not be reported as the near-me one
+  if (context === 'enquiry' && isMissingEnquiries(error)) return ENQUIRIES_MISSING_TEXT;
+  if (isMissingNearby(error)) return NEARBY_MISSING_TEXT;`, String.raw`  if (isMissingNearby(error)) return NEARBY_MISSING_TEXT;
+  if (context === 'enquiry' && isMissingEnquiries(error)) return ENQUIRIES_MISSING_TEXT;`]]],
+  ['the question is sent without being checked first', String.raw`    const problem = validateEnquiry({ message });
+    if (problem) { setError(problem); return; }`, ''],
+  ['opening a conversation does not mark it read', String.raw`if (thread.unread_for_parent) { await markEnquiryRead(supabase, thread.id); onChanged?.(); }`, ''],
+  ['the reply box keeps what was already sent', String.raw`    setReply('');
+    const again = await loadEnquiryMessages(supabase, thread.id);`, String.raw`    const again = await loadEnquiryMessages(supabase, thread.id);`],
+  ['the school page offers the form again even when an enquiry is open', String.raw`{(!enquiry || enquiry.status === 'closed') && !askForm && (`, String.raw`{!askForm && (`],
+  ['the top bar never shows how many replies are waiting', String.raw`label={unread > 0 ? `, String.raw`label={false ? `],
+  ['signing out leaves the last person\'s unread count on screen', String.raw`if (!next) { setSchool(null); setShowEnquiries(false); setUnread(0); }`, String.raw`if (!next) { setSchool(null); setShowEnquiries(false); }`],
 ];
 
 const run = (file) => { try { return execSync(`node tests/${file}`, { cwd: root, encoding: 'utf8', env: { ...process.env, APP_FILE: out }, stdio: ['ignore', 'pipe', 'pipe'], timeout: 200000 }); } catch (e) { return (e.stdout || '') + (e.stderr || ''); } };
@@ -76,7 +107,11 @@ const failsOf = (o) => o.split('\n').filter((l) => l.startsWith('FAIL'));
 const summary = (o) => o.split('\n').find((l) => /\d+ passed, \d+ failed/.test(l)) || 'no summary (crashed)';
 
 fs.mkdirSync(path.join(here, '.tmp'), { recursive: true });
-for (const [name, from, to] of mutations) {
+// The whole run takes a while (every breakage runs the test suites). MUT_RANGE=1-25 runs part of it, so several
+// copies of the repo can share the work: MUT_RANGE=1-25, MUT_RANGE=26-50, and so on.
+const [lo, hi] = (process.env.MUT_RANGE ?? '1-9999').split('-').map(Number);
+for (const [i, [name, from, to]] of mutations.entries()) {
+  if (i + 1 < lo || i + 1 > hi) continue;
   const pairs = Array.isArray(from) ? from : [[from, to]]; // one breakage may touch several places
   if (!pairs.every(([a]) => src.includes(a))) { console.log('NOT APPLIED  ' + name); continue; }
   let mutated = src;

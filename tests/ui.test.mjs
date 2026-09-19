@@ -93,7 +93,31 @@ function seed() {
     ],
     private: [{ review_id: 'rv1', school_id: 's1', author_id: 'u2', moderation_note: null }, { review_id: 'rv2', school_id: 's1', author_id: 'u9', moderation_note: null }, { review_id: 'rv3', school_id: 's1', author_id: 'u9', moderation_note: null }],
     reports: [], failNext: null,
+    threads: [], tmsgs: [], nextT: 1, rpcCalls: [], clock: Date.now(),
   };
+}
+
+// a clock that always moves forward, so "which is newest" is never a coin toss between two calls in the same moment
+const tick = (st) => new Date((st.clock += 1000)).toISOString();
+
+// what the enquiry_threads view works out for each thread
+const threadRows = (st) => st.threads.map((t) => {
+  const mine = st.tmsgs.filter((m) => m.ticket_id === t.id);
+  return {
+    ...t,
+    message_count: mine.length,
+    last_message: mine[mine.length - 1]?.message ?? null,
+    unread_for_parent: new Date(t.last_message_at) > new Date(t.parent_read_at ?? 0),
+  };
+});
+
+// the school answering, as the database trigger would record it
+function staffReply(st, ticketId, message) {
+  const now = tick(st);
+  st.tmsgs.push({ id: 'staff' + st.nextT++, ticket_id: ticketId, sender_id: 'kidscover-staff', message, created_at: now });
+  const t = st.threads.find((x) => x.id === ticketId);
+  t.last_message_at = now;
+  t.status = 'replied';
 }
 // great-circle distance in km, written here on its own (the app never calculates distance; the database does)
 const hav = (a, b, c, d) => { const rad = (x) => (x * Math.PI) / 180; const h = Math.sin(rad(c - a) / 2) ** 2 + Math.cos(rad(a)) * Math.cos(rad(c)) * Math.sin(rad(d - b) / 2) ** 2; return 2 * 6371.0088 * Math.asin(Math.min(1, Math.sqrt(h))); };
@@ -176,6 +200,54 @@ class Query {
       }
       st.reviews = st.reviews.filter((r) => !target.includes(r)); st.private = st.private.filter((p) => !target.some((r) => r.id === p.review_id));
       return { error: null };
+    }
+    if (this.table.startsWith('rpc:') && this.table !== 'rpc:schools_nearby') {
+      const fn = this.table.slice(4);
+      const args = this.args ?? {};
+      st.rpcCalls.push({ fn, args });
+      const own = (id) => st.threads.find((t) => t.id === id && t.parent_id === me?.id);
+      if (fn === 'send_enquiry') {
+        if (!me || !st.users[me.email].verified) return { data: null, error: { code: '42501', message: 'confirm your email address first' } };
+        if (st.threads.some((t) => t.parent_id === me.id && t.school_id === args.p_school && t.status !== 'closed')) {
+          return { data: null, error: { code: 'P0001', message: 'an enquiry with this school is already open' } };
+        }
+        const now = tick(st);
+        const id = 'th' + st.nextT++;
+        st.threads.push({
+          id, school_id: args.p_school, school_name: st.schools.find((x) => x.id === args.p_school)?.name ?? null,
+          parent_id: me.id, subject: args.p_subject, grade_of_interest: args.p_grade, start_year: args.p_start_year,
+          status: 'open', created_at: now, last_message_at: now, parent_read_at: now,
+        });
+        st.tmsgs.push({ id: 'tm' + st.nextT++, ticket_id: id, sender_id: me.id, message: args.p_message, created_at: now });
+        return { data: id, error: null };
+      }
+      if (fn === 'mark_ticket_read') {
+        const t = own(args.p_ticket);
+        if (!t) return { data: null, error: { code: '42501', message: 'this enquiry is not yours' } };
+        t.parent_read_at = tick(st);
+        return { data: null, error: null };
+      }
+      if (fn === 'set_ticket_status') {
+        const t = own(args.p_ticket);
+        if (!t) return { data: null, error: { code: '42501', message: 'this enquiry is not yours' } };
+        t.status = args.p_status;
+        return { data: null, error: null };
+      }
+      return { data: null, error: { code: 'PGRST202', message: `Could not find the function public.${fn} in the schema cache` } };
+    }
+    if (this.table === 'enquiry_threads') return this.finish(all(threadRows(st).filter((t) => t.parent_id === me?.id)));
+    if (this.table === 'ticket_messages') {
+      const mineThread = (id) => st.threads.find((t) => t.id === id && t.parent_id === me?.id);
+      if (this.op === 'insert') {
+        if (!me || !st.users[me.email].verified) return { error: { code: '42501', message: 'confirm your email address first' } };
+        if (!mineThread(this.payload.ticket_id)) return { error: { code: '42501', message: 'this enquiry is not yours' } };
+        const now = tick(st);
+        st.tmsgs.push({ id: 'tm' + st.nextT++, ticket_id: this.payload.ticket_id, sender_id: me.id, message: this.payload.message, created_at: now });
+        const t = st.threads.find((x) => x.id === this.payload.ticket_id);
+        t.last_message_at = now; t.status = 'open'; t.parent_read_at = now;   // writing counts as reading, as the trigger does
+        return { error: null };
+      }
+      return this.finish(all(st.tmsgs.filter((m) => mineThread(m.ticket_id))));
     }
     if (this.table === 'review_reports' && this.op === 'insert') {
       const rev = st.reviews.find((r) => r.id === this.payload.review_id);
@@ -589,6 +661,156 @@ await ui.click('near-5'); await waitFor(() => ui.id('discover-error'), 3000);
 check('a connection failure while sharing a location shows the usual message and Try again, and keeps the location', /internet connection/.test(ui.id('discover-error')?.textContent ?? '') && !!ui.id('retry') && !!ui.id('near-me-on'));
 await ui.click('retry');
 check('Try again works, with the distance limit applied', await waitFor(() => !ui.id('discover-error') && ui.cards() === 20 && !!ui.id('more'), 3000) && ui.all('distance-').every((e) => parseFloat(e.textContent) <= 5.05));
+await ui.unmount();
+
+// =============================================================================================================
+console.log('\n=== asking a school about admissions ===');
+const openSchool = async (u, term, id) => { await u.type('search', term); await waitFor(() => u.cards() >= 1 && !!u.id('school-' + id), 3000); await u.click('school-' + id); await waitFor(() => u.id('back')); };
+st = seed(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+check('the top bar offers Enquiries, with no unread count to start with', ui.id('enquiries').textContent === 'Enquiries', ui.id('enquiries')?.textContent);
+await ui.click('enquiries');
+check('with none asked yet, the screen says how to start one', await waitFor(() => !!ui.id('enquiries-empty')) && /Ask about admissions/.test(ui.id('enquiries-empty').textContent), ui.id('enquiries-empty')?.textContent);
+await ui.click('enquiries-back');
+await waitFor(() => ui.id('search'));
+await openSchool(ui, 'sunrise', 's1');
+check('a school page offers to ask about admissions and explains what happens', !!ui.id('ask-school') && /Kidscover passes your question on/.test(ui.text()));
+await ui.click('ask-school');
+check('the form asks for a class, a year and the question', await waitFor(() => !!ui.id('enquiry-message')) && !!ui.id('grade-Nursery') && !!ui.id(`year-${new Date().getFullYear()}`));
+check('...and says not to include a child\'s name or date of birth', /do not include your child's name or date of birth/.test(ui.id('enquiry-form').textContent), ui.id('enquiry-form')?.textContent.slice(0, 200));
+await ui.click('enquiry-send');
+check('sending an empty question asks for more, and nothing is sent', /at least 10 characters/.test(ui.id('enquiry-error')?.textContent ?? '') && st.rpcCalls.filter((c) => c.fn === 'send_enquiry').length === 0, ui.id('enquiry-error')?.textContent);
+await ui.type('enquiry-message', 'Too short');
+await ui.click('enquiry-send');
+check('a very short question says how much is missing', /at least 10 characters, 9 so far/.test(ui.id('enquiry-error')?.textContent ?? ''), ui.id('enquiry-error')?.textContent);
+await ui.click('grade-Class 1 to 5');
+await ui.click(`year-${new Date().getFullYear() + 1}`);
+await ui.type('enquiry-message', 'Do you have places for next year, and how do we arrange a visit?');
+await ui.click('enquiry-send');
+check('a good question is sent', await waitFor(() => st.rpcCalls.some((c) => c.fn === 'send_enquiry'), 3000), JSON.stringify(st.rpcCalls));
+{
+  const call = st.rpcCalls.find((c) => c.fn === 'send_enquiry');
+  check('...to the right school, with the class and year chosen and a subject the school will understand', call.args.p_school === 's1' && call.args.p_grade === 'Class 1 to 5' && call.args.p_start_year === new Date().getFullYear() + 1 && call.args.p_subject === 'Admission enquiry - Class 1 to 5', JSON.stringify(call.args));
+  check('...and nothing about a child is sent', !/dob|birth|ward|child_name/i.test(JSON.stringify(call.args)));
+}
+check('the parent is told where the reply will appear', await waitFor(() => /find the reply under Enquiries/.test(ui.id('enquiry-sent')?.textContent ?? '')), ui.id('enquiry-sent')?.textContent);
+check('the school page now shows the enquiry instead of the form, and says it is waiting', await waitFor(() => !!ui.id('enquiry-existing')) && /Waiting for a reply/.test(ui.id('enquiry-existing').textContent) && !ui.id('ask-school'), ui.id('enquiry-existing')?.textContent);
+await ui.click('open-enquiry');
+check('"Open the conversation" goes to the enquiries screen', await waitFor(() => !!ui.id('enquiries-screen') && !!ui.all('thread-').length));
+{
+  const tid = st.threads[0].id;
+  check('the enquiry is listed with the school, what it is about and the question', /Sunrise Preschool/.test(ui.id(`thread-${tid}`).textContent) && /Class 1 to 5, starting/.test(ui.id(`thread-${tid}`).textContent) && /arrange a visit/.test(ui.id(`thread-${tid}`).textContent), ui.id(`thread-${tid}`)?.textContent);
+  check('...and it is not marked unread, because the parent wrote it', !/●/.test(ui.id(`thread-${tid}`).textContent));
+  await ui.click(`thread-${tid}`);
+  check('opening it shows the question, marked as yours', await waitFor(() => !!ui.id(`conversation-${tid}`)) && /You/.test(ui.text()) && /arrange a visit/.test(ui.text()));
+  await ui.click('conversation-back');
+  await waitFor(() => !!ui.id('enquiries-back'));
+}
+await ui.click('enquiries-back');
+await waitFor(() => ui.id('search'));
+await openSchool(ui, 'sunrise', 's1');
+check('going back to the school still shows the existing enquiry, not the form', await waitFor(() => !!ui.id('enquiry-existing')) && !ui.id('ask-school'));
+await ui.unmount();
+
+console.log('\n=== the school replies ===');
+st = seed(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+await openSchool(ui, 'sunrise', 's1');
+await ui.click('ask-school'); await waitFor(() => !!ui.id('enquiry-message'));
+await ui.type('enquiry-message', 'Are there places in the pre-primary class this year?');
+await ui.click('enquiry-send');
+await waitFor(() => !!ui.id('enquiry-existing'), 3000);
+const TID = st.threads[0].id;
+staffReply(st, TID, 'Yes, we have a few places. Please visit any weekday between 10am and noon.');
+await ui.click('back'); await waitFor(() => ui.id('search'));
+await ui.click('enquiries'); await waitFor(() => !!ui.id('enquiries-screen'));
+check('a reply from the school shows the enquiry as answered, with a dot', await waitFor(() => /They have replied/.test(ui.id(`thread-${TID}`)?.textContent ?? '')) && /●/.test(ui.id(`thread-${TID}`).textContent), ui.id(`thread-${TID}`)?.textContent);
+await ui.click('enquiries-back'); await waitFor(() => ui.id('search'));
+check('...and the top bar shows there is 1 unread', await waitFor(() => ui.id('enquiries').textContent === 'Enquiries (1)', 3000), ui.id('enquiries')?.textContent);
+await ui.click('enquiries'); await waitFor(() => !!ui.id('enquiries-screen'));
+await ui.click(`thread-${TID}`);
+check('the conversation shows both sides, the school\'s answer labelled as the school', await waitFor(() => !!ui.id(`conversation-${TID}`) && ui.all('msg-').length === 2) && /The school/.test(ui.text()) && /weekday between 10am/.test(ui.text()));
+check('...and never a staff member\'s name or id', !/kidscover-staff/.test(ui.text()));
+check('opening it marks it read', await waitFor(() => st.rpcCalls.some((c) => c.fn === 'mark_ticket_read' && c.args.p_ticket === TID)));
+await ui.click('reply-send');
+check('an empty reply is refused', /write your message first/.test(ui.id('conversation-error')?.textContent ?? ''), ui.id('conversation-error')?.textContent);
+await ui.type('reply-box', '  Thank you, we will come on Tuesday.  ');
+await ui.click('reply-send');
+check('a reply is sent, trimmed, and appears in the conversation', await waitFor(() => ui.all('msg-').length === 3, 3000) && st.tmsgs.some((m) => m.message === 'Thank you, we will come on Tuesday.'), st.tmsgs.map((m) => m.message).join(' | '));
+check('...and the box is cleared so it cannot be sent twice by accident', ui.id('reply-box').value === '');
+await ui.click('conversation-back');
+await waitFor(() => !!ui.id('enquiries-back'));
+check('back in the list it is waiting for a reply again, with no unread dot', await waitFor(() => /Waiting for a reply/.test(ui.id(`thread-${TID}`)?.textContent ?? '')) && !/●/.test(ui.id(`thread-${TID}`).textContent), ui.id(`thread-${TID}`)?.textContent);
+await ui.click('enquiries-back'); await waitFor(() => ui.id('search'));
+check('...and the unread count on the top bar is gone', await waitFor(() => ui.id('enquiries').textContent === 'Enquiries', 3000), ui.id('enquiries')?.textContent);
+await ui.click('enquiries'); await waitFor(() => !!ui.id('enquiries-screen'));
+await ui.click(`thread-${TID}`); await waitFor(() => !!ui.id('close-enquiry'));
+await ui.click('close-enquiry');
+check('a parent can close their own enquiry', await waitFor(() => st.threads[0].status === 'closed', 3000) && st.rpcCalls.some((c) => c.fn === 'set_ticket_status' && c.args.p_status === 'closed'));
+await ui.click('conversation-back'); await waitFor(() => !!ui.id('enquiries-back'));
+check('...and it then reads as closed', await waitFor(() => /Closed/.test(ui.id(`thread-${TID}`)?.textContent ?? '')), ui.id(`thread-${TID}`)?.textContent);
+await ui.click('enquiries-back'); await waitFor(() => ui.id('search'));
+await openSchool(ui, 'sunrise', 's1');
+check('with the old one closed, the school page still shows it and offers to ask again', await waitFor(() => !!ui.id('ask-school'), 3000) && /Ask again/.test(ui.id('ask-school').textContent) && !!ui.id('enquiry-existing') && /Closed/.test(ui.id('enquiry-existing').textContent), ui.text().slice(0, 200));
+await ui.click('ask-school');
+await ui.type('enquiry-message', 'One more thing came up: is there a school bus to Bandra?');
+await ui.click('enquiry-send');
+check('...and a second enquiry with that school is accepted', await waitFor(() => st.threads.length === 2, 3000), st.threads.length);
+check('...and once it is open again, the "ask again" button goes away', await waitFor(() => !ui.id('ask-school'), 3000) && /Waiting for a reply/.test(ui.id('enquiry-existing')?.textContent ?? ''), ui.id('enquiry-existing')?.textContent);
+await ui.unmount();
+
+console.log('\n=== asking twice, and other refusals ===');
+st = seed(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+await openSchool(ui, 'sunrise', 's1');
+await ui.click('ask-school'); await waitFor(() => !!ui.id('enquiry-message'));
+await ui.type('enquiry-message', 'A perfectly ordinary first question about admissions.');
+await ui.click('enquiry-send');
+await waitFor(() => !!ui.id('enquiry-existing'), 3000);
+st.threads[0].school_id = 'other';   // pretend the first one was about a different school, so the page offers the form again
+await ui.click('back'); await waitFor(() => ui.id('search'));
+await openSchool(ui, 'sunrise', 's1');
+st.threads[0].school_id = 's1';      // ...but the database still knows it is the same school
+await ui.click('ask-school'); await waitFor(() => !!ui.id('enquiry-message'));
+await ui.type('enquiry-message', 'The very same question, asked a second time.');
+await ui.click('enquiry-send');
+check('asking the same school twice is refused kindly, pointing at the conversation', await waitFor(() => /already have an open enquiry/.test(ui.id('enquiry-error')?.textContent ?? ''), 3000), ui.id('enquiry-error')?.textContent);
+check('...and what was typed is not lost', ui.id('enquiry-message').value.includes('second time'));
+await ui.unmount();
+
+st = seed(); ui = await mount(st); await signIn(ui, 'cat@x.in', 'password3'); await waitFor(() => ui.cards() === 20);
+await openSchool(ui, 'sunrise', 's1');
+await ui.click('ask-school'); await waitFor(() => !!ui.id('enquiry-message'));
+await ui.type('enquiry-message', 'Can we visit the school next week some time?');
+await ui.click('enquiry-send');
+check('an account that has not confirmed its email is told to do that first', await waitFor(() => /confirm your email address/.test(ui.id('enquiry-error')?.textContent ?? ''), 3000), ui.id('enquiry-error')?.textContent);
+check('...and nothing was stored', st.threads.length === 0);
+await ui.unmount();
+
+st = seed(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+await openSchool(ui, 'sunrise', 's1');
+await ui.click('ask-school'); await waitFor(() => !!ui.id('enquiry-message'));
+st.failNext = { message: 'Network request failed' };
+await ui.type('enquiry-message', 'A question that the connection will swallow.');
+await ui.click('enquiry-send');
+check('a connection failure while asking says so in plain words', await waitFor(() => /internet connection/.test(ui.id('enquiry-error')?.textContent ?? ''), 3000), ui.id('enquiry-error')?.textContent);
+await sleep(120);   // the button was disabled while sending; the page needs a moment before it takes another tap
+await ui.click('enquiry-send');
+check('...and trying again works', await waitFor(() => !!ui.id('enquiry-sent'), 3000) && st.threads.length === 1);
+await ui.unmount();
+
+console.log('\n=== signing out forgets the enquiries ===');
+st = seed(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+await openSchool(ui, 'sunrise', 's1');
+await ui.click('ask-school'); await waitFor(() => !!ui.id('enquiry-message'));
+await ui.type('enquiry-message', 'One last question before signing out of the app.');
+await ui.click('enquiry-send');
+await waitFor(() => st.threads.length === 1, 3000);
+staffReply(st, st.threads[0].id, 'A reply nobody else should ever see.');
+await ui.click('back'); await waitFor(() => ui.id('search'));
+await waitFor(() => ui.id('enquiries').textContent === 'Enquiries (1)', 3000);
+await ui.click('sign-out'); await waitFor(() => ui.id('auth-submit'));
+await signIn(ui, 'bob@x.in', 'password2'); await waitFor(() => ui.cards() === 20);
+check('the next person sees no unread count and none of the other family\'s enquiries', ui.id('enquiries').textContent === 'Enquiries', ui.id('enquiries')?.textContent);
+await ui.click('enquiries');
+check('...and an empty enquiries screen', await waitFor(() => !!ui.id('enquiries-empty')) && !/should ever see/.test(ui.text()));
 await ui.unmount();
 
 console.log(`\n${pass} passed, ${fail} failed`);

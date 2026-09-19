@@ -11,7 +11,8 @@ fs.mkdirSync(path.join(here, '.tmp'), { recursive: true });
 const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'levelBadges', 'googleRatingText', 'communityText', 'stars', 'safeUrl', 'validateAuth', 'validateReview', 'statusLine', 'cleanName', 'friendlyError', 'loadStats', 'loadSchools', 'loadReviews', 'loadMyReview', 'submitReview', 'updateReview', 'deleteReview', 'reportReview', 'DEFAULT_FILTERS', 'PAGE_SIZE', 'monthYear', 'SCHOOL_COLUMNS', 'NEARBY_COLUMNS', 'DISTANCE_CHOICES', 'SERVICE_AREA', 'validPlace', 'inServiceArea', 'defaultSort', 'normalizeFilters', 'distanceText', 'cleanAddress', 'isMissingNearby', 'locateMe', 'locationProblemText', 'OUTSIDE_AREA_TEXT', 'NEARBY_MISSING_TEXT',
   'ENQUIRY_COLUMNS', 'MESSAGE_COLUMNS', 'MAX_ENQUIRY', 'MIN_ENQUIRY', 'GRADE_CHOICES', 'startYearChoices', 'validateEnquiry', 'enquirySubject',
   'enquiryStatusText', 'enquiryAbout', 'unreadCount', 'fromMe', 'isMissingEnquiries', 'ENQUIRIES_MISSING_TEXT', 'sendEnquiry', 'loadEnquiries',
-  'loadEnquiryForSchool', 'loadEnquiryMessages', 'replyToEnquiry', 'markEnquiryRead', 'closeEnquiry'];
+  'loadEnquiryForSchool', 'loadEnquiryMessages', 'replyToEnquiry', 'markEnquiryRead', 'closeEnquiry',
+  'DRIVE_MODES', 'MAX_DRIVE_BATCH', 'driveTimeText', 'driveKey', 'needDriveTimes', 'requestDriveTimes', 'driveProblemText'];
 fs.writeFileSync(path.join(here, '.tmp', 'logic.mjs'), src.slice(a, b) + `\nexport { ${names.join(', ')} };\n`);
 const L = await import(pathToFileURL(path.join(here, '.tmp', 'logic.mjs')).href);
 
@@ -275,6 +276,54 @@ check('the daily limit is explained in plain words', /sent 10 enquiries today/.t
 check('sending too fast is explained without blaming the parent', /wait a few minutes/.test(fe({ message: 'too many messages just now, please wait a little' }, 'enquiry')));
 check('an unconfirmed account is told to confirm their email, as for reviews', /confirm your email address/.test(fe({ code: '42501' }, 'enquiry')));
 check('the older messages (near me, reviews) are unchanged by all this', fe({ code: 'PGRST202', message: 'schools_nearby missing' }) === L.NEARBY_MISSING_TEXT && /do not match/.test(fe({ message: 'Invalid login credentials' })));
+
+console.log('\n=== drive times: wording ===');
+const dtt = L.driveTimeText;
+check('minutes under an hour', dtt({ minutes: 25, km: 8 }) === 'About 25 min by car' && dtt({ minutes: 0.4 }) === 'About 1 min by car' && dtt({ minutes: 59.4 }) === 'About 59 min by car');
+check('an hour or more: hours and minutes, and no "0 min"', dtt({ minutes: 60 }) === 'About 1 h by car' && dtt({ minutes: 75 }) === 'About 1 h 15 min by car' && dtt({ minutes: 59.6 }) === 'About 1 h by car' && dtt({ minutes: 130 }) === 'About 2 h 10 min by car');
+check('nothing is shown for no route, no answer or rubbish', [null, undefined, {}, { minutes: null }, { minutes: 'x' }, { minutes: NaN }, { minutes: -3 }].every((t) => dtt(t) === ''));
+check('the two times of day are the weekday school run and right now', eq(L.DRIVE_MODES.map((m) => m.key), ['school_run', 'now']) && /7:30/.test(L.DRIVE_MODES[0].label) && L.MAX_DRIVE_BATCH === 20);
+const dpt = L.driveProblemText;
+check('each problem has a plain message', /used today's 20 drive-time lookups/.test(dpt('user_limit', 20)) && /used today's 30/.test(dpt('user_limit', 30)) && /paused for today/.test(dpt('daily_budget')) && /only in Mumbai and Thane/.test(dpt('outside_area')) && /confirm your email/.test(dpt('confirm_email')) && /try again in a moment/.test(dpt('network')));
+check('every setup problem reads the same to a parent: not switched on yet (the details are for admins)', ['switched_off', 'not_deployed', 'not_configured', 'routes_not_enabled', 'google_key_blocked', 'google_key_invalid'].every((c) => /not switched on yet/.test(dpt(c))) && !/Google key|Routes API/i.test(dpt('google_key_blocked')));
+check('an unknown problem still says something useful', /try again/.test(dpt('something_new')) && /try again/.test(dpt(undefined)));
+
+console.log('\n=== drive times: which schools to ask about ===');
+const spot = { lat: 19.076, lng: 72.878 };
+const dRows = Array.from({ length: 25 }, (_, i) => ({ id: 'r' + i, distance_km: i }));
+dRows[3] = { id: 'r3', distance_km: null };          // no coordinates, so no distance
+check('only schools with a distance, at most 20 in one lookup', eq(L.needDriveTimes(dRows, spot, 'school_run', {}, new Set()), dRows.filter((r) => typeof r.distance_km === 'number').slice(0, 20).map((r) => r.id)));
+const known = { [L.driveKey(spot, 'school_run', 'r0')]: { minutes: 5 }, [L.driveKey(spot, 'school_run', 'r1')]: null };
+check('schools already answered (even "no route") are not asked again', !L.needDriveTimes(dRows, spot, 'school_run', known, new Set()).some((id) => id === 'r0' || id === 'r1'));
+check('...but they are asked again for the other time of day, or from another place', L.needDriveTimes(dRows, spot, 'now', known, new Set()).includes('r0') && L.needDriveTimes(dRows, { lat: 19.1, lng: 72.9 }, 'school_run', known, new Set()).includes('r0'));
+check('schools already being fetched are not asked twice', !L.needDriveTimes(dRows, spot, 'school_run', {}, new Set([L.driveKey(spot, 'school_run', 'r2')])).includes('r2'));
+check('nothing is asked without a place or without a chosen time of day', L.needDriveTimes(dRows, null, 'school_run', {}, new Set()).length === 0 && L.needDriveTimes(dRows, spot, null, {}, new Set()).length === 0 && L.needDriveTimes(dRows, spot, 'midnight', {}, new Set()).length === 0 && L.needDriveTimes(null, spot, 'now', {}, new Set()).length === 0);
+
+console.log('\n=== drive times: asking the function ===');
+const fakeFn = (answer) => { const calls = []; return { calls, invoke: async (name, opts) => { calls.push([name, opts]); if (answer instanceof Error) throw answer; return answer; } }; };
+let fn = fakeFn({ data: { ok: true, times: { a: { minutes: 12, km: 4.1 }, b: null }, lookupsLeft: 7 }, error: null });
+let dres = await L.requestDriveTimes(fn, spot, ['a', 'b', 'c'], 'school_run');
+check('it calls commute-times with the rounded place, the school ids and the time of day, and nothing else', fn.calls.length === 1 && fn.calls[0][0] === 'commute-times' && eq(fn.calls[0][1], { body: { lat: 19.076, lng: 72.878, schoolIds: ['a', 'b', 'c'], when: 'school_run' } }), JSON.stringify(fn.calls));
+check('the answer: a time, "no route", and a school the function left out all come back', dres.ok && eq(dres.times, { a: { minutes: 12, km: 4.1 }, b: null, c: null }) && dres.lookupsLeft === 7, JSON.stringify(dres));
+fn = fakeFn({ data: { ok: true, times: { 'abcdef00-0000-4000-8000-000000000001': { minutes: 3, km: 1 } } }, error: null });
+dres = await L.requestDriveTimes(fn, spot, ['ABCDEF00-0000-4000-8000-000000000001'], 'now');
+check('ids are matched whatever their letter case', eq(dres.times, { 'ABCDEF00-0000-4000-8000-000000000001': { minutes: 3, km: 1 } }) && dres.lookupsLeft === null, JSON.stringify(dres));
+fn = fakeFn({ data: { ok: false, code: 'user_limit', limit: 20 }, error: null });
+dres = await L.requestDriveTimes(fn, spot, ['a'], 'now');
+check('a refusal from the function is passed on with its limit', dres.ok === false && dres.code === 'user_limit' && dres.limit === 20, JSON.stringify(dres));
+fn = fakeFn({ data: null, error: { name: 'FunctionsHttpError', message: 'Edge Function returned a non-2xx status code', context: { status: 404 } } });
+check('a function that has not been deployed is recognised', (await L.requestDriveTimes(fn, spot, ['a'], 'now')).code === 'not_deployed');
+fn = fakeFn({ data: null, error: { name: 'FunctionsFetchError', message: 'Failed to send a request to the Edge Function' } });
+check('no connection is recognised', (await L.requestDriveTimes(fn, spot, ['a'], 'now')).code === 'network');
+fn = fakeFn({ data: null, error: { name: 'FunctionsHttpError', message: 'non-2xx', context: { status: 500 } } });
+check('a crash in the function is a plain failure', (await L.requestDriveTimes(fn, spot, ['a'], 'now')).code === 'failed');
+fn = fakeFn(new Error('boom'));
+check('an exception while calling becomes "network", not a crash', (await L.requestDriveTimes(fn, spot, ['a'], 'now')).code === 'network');
+for (const junk of [{ data: 'hello', error: null }, { data: null, error: null }, undefined, { data: { ok: false }, error: null }]) {
+  fn = fakeFn(junk);
+  const x = await L.requestDriveTimes(fn, spot, ['a'], 'now');
+  check('an odd answer (' + JSON.stringify(junk) + ') is a failure, not a crash', x.ok === false && typeof x.code === 'string');
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

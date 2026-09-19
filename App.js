@@ -10,6 +10,8 @@
 //      "Use my location" button just says it is not switched on yet.
 //   4. Drive times need 20260919000700_drive_times.sql and the commute-times edge function (admin repo), plus the Routes
 //      API switched on in Google Cloud. Without them the app says drive times are not switched on yet.
+//   5. Boards and admission status need 20260919000800_school_website_findings.sql (admin repo) run FIRST: the school
+//      list asks for its columns, so without it the list shows a missing-column error.
 // What it does: sign in / sign up, search schools, filter by level / daycare / Google rating / distance, see how far (and how long a drive) each
 // school is from you, open a school, read parent reviews, write one (anonymous, moderated before it shows), and report a
 // review.
@@ -35,7 +37,8 @@ const supabase = createClient(SUPABASE_URL, KEY_IS_SET ? SUPABASE_KEY : 'key-not
 // ==== BEGIN pure logic (no imports, no React: tested on its own) ====
 
 const PAGE_SIZE = 20;
-const SCHOOL_COLUMNS = 'id,name,address,website,board,levels,google_rating,google_review_count';
+const SCHOOL_COLUMNS = 'id,name,address,website,board,levels,google_rating,google_review_count,'
+  + 'boards,board_source,board_source_url,admissions_open,admissions_year,admissions_source_url,admissions_checked_at';
 const NEARBY_COLUMNS = `${SCHOOL_COLUMNS},distance_km`; // the database function schools_nearby adds the distance
 const LOCATION_TIMEOUT_MS = 15000;
 // The area the schools were collected for (the same box the importer is limited to). Outside it the app still works.
@@ -72,7 +75,28 @@ const REPORT_REASONS = [
   { key: 'personal_info', label: 'Personal details' },
   { key: 'other', label: 'Something else' },
 ];
-const DEFAULT_FILTERS = { search: '', level: null, daycare: false, minRating: 0, includeUnrated: true, sort: 'name', nearKm: null };
+const DEFAULT_FILTERS = { search: '', level: null, daycare: false, minRating: 0, includeUnrated: true, sort: 'name', nearKm: null, board: null, includeUnknownBoard: false };
+
+// ---- boards and admissions: only facts an admin accepted, each with where it came from ----
+const BOARD_CHOICES = ['CBSE', 'ICSE', 'IB', 'IGCSE', 'State Board'];
+
+function boardSourceText(source) {
+  if (source === 'CBSE directory') return "confirmed by CBSE's own record";
+  if (source === 'school website') return "from the school's website";
+  if (source === 'school name') return "from the school's name";
+  if (source === 'admin') return 'checked by Kidscover';
+  return '';
+}
+
+// "Admissions open for 2027-28 (from the school's website, checked Sep 2026)", or '' when nobody has checked. A value
+// without a source (an old default) is never shown: unknown is better than a guess.
+function admissionText(school) {
+  if (!school || !school.admissions_source_url || typeof school.admissions_open !== 'boolean') return '';
+  const what = school.admissions_open ? 'Admissions open' : 'Admissions closed';
+  const year = school.admissions_year ? ` for ${school.admissions_year}` : '';
+  const checked = monthYear(school.admissions_checked_at);
+  return `${what}${year} (from the school's website${checked ? `, checked ${checked}` : ''})`;
+}
 
 // ---- where the parent is. A "place" is { lat, lng }, rounded to about 100 m. It lives only in memory: nothing is saved. ----
 function validPlace(p) {
@@ -221,6 +245,9 @@ function applySchoolFilters(query, f, hasPlace = false) {
   if (f.level === 'none') q = q.eq('levels', '{}');
   else if (f.level) q = q.overlaps('levels', [f.level]);
   if (f.daycare) q = q.contains('levels', ['daycare']);
+  if (BOARD_CHOICES.includes(f.board)) {
+    q = f.includeUnknownBoard ? q.or(`boards.ov.{"${f.board}"},boards.is.null`) : q.overlaps('boards', [f.board]);
+  }
   if (f.minRating > 0) {
     q = f.includeUnrated ? q.or(`google_rating.gte.${f.minRating},google_rating.is.null`) : q.gte('google_rating', f.minRating);
   } else if (!f.includeUnrated) {
@@ -244,7 +271,7 @@ function applySchoolFilters(query, f, hasPlace = false) {
 // How many choices are narrowing or re-ordering the list (for the "Filters (n)" button).
 function activeFilterCount(f, hasPlace = false) {
   const g = normalizeFilters(f, hasPlace);
-  return (g.level ? 1 : 0) + (g.daycare ? 1 : 0) + (g.minRating > 0 ? 1 : 0) + (g.includeUnrated ? 0 : 1)
+  return (g.level ? 1 : 0) + (g.daycare ? 1 : 0) + (g.minRating > 0 ? 1 : 0) + (g.includeUnrated ? 0 : 1) + (g.board ? 1 : 0)
     + (g.sort !== defaultSort(hasPlace) ? 1 : 0) + (hasPlace && g.nearKm > 0 ? 1 : 0);
 }
 
@@ -570,6 +597,7 @@ function SchoolCard({ school, drive, onPress }) {
       <View style={s.badgeRow}>
         {levelBadges(school.levels).map((b) => <Text key={b} style={s.badge}>{b}</Text>)}
         {!!school.board && <Text style={[s.badge, { backgroundColor: C.greenSoft, color: C.green }]}>{school.board}</Text>}
+        {!!admissionText(school) && school.admissions_open && <Text testID={`open-${school.id}`} style={[s.badge, { backgroundColor: C.amberSoft, color: C.amber }]}>{`Admissions open${school.admissions_year ? ` ${school.admissions_year}` : ''}`}</Text>}
       </View>
       <Text style={s.rating}>{googleRatingText(school.google_rating, school.google_review_count)}</Text>
       {!!community && <Text style={[s.rating, { color: C.green }]}>{community}</Text>}
@@ -721,6 +749,19 @@ function DiscoverScreen({ onOpen }) {
             <Text style={s.body}>Daycare available</Text>
             <Switch testID="daycare" value={filters.daycare} onValueChange={(v) => set({ daycare: v })} />
           </View>
+          <Text style={s.label}>Board</Text>
+          <View style={s.wrap}>
+            {BOARD_CHOICES.map((b) => <Chip key={b} testID={`board-${b}`} label={b} selected={filters.board === b} onPress={() => set({ board: filters.board === b ? null : b })} />)}
+          </View>
+          {!!filters.board && (
+            <View style={s.switchRow}>
+              <View style={{ flex: 1, paddingRight: 8 }}>
+                <Text style={s.body}>Also show schools whose board we do not know yet</Text>
+                <Text style={s.muted}>Kidscover is still checking boards with each school, so many are not known yet.</Text>
+              </View>
+              <Switch testID="include-unknown-board" value={filters.includeUnknownBoard} onValueChange={(v) => set({ includeUnknownBoard: v })} />
+            </View>
+          )}
           <Text style={s.label}>Google rating</Text>
           <View style={s.wrap}>
             {RATING_CHOICES.map((r) => <Chip key={r.value} testID={`rating-${r.value}`} label={r.label} selected={filters.minRating === r.value} onPress={() => set({ minRating: r.value })} />)}
@@ -1030,6 +1071,18 @@ function SchoolScreen({ school, onBack, onOpenEnquiries }) {
         {levelBadges(school.levels).map((b) => <Text key={b} style={s.badge}>{b}</Text>)}
         {!!school.board && <Text style={[s.badge, { backgroundColor: C.greenSoft, color: C.green }]}>{school.board}</Text>}
       </View>
+      {!!school.board && !!boardSourceText(school.board_source) && (
+        <Text testID="page-board-source" style={s.muted}>
+          {`Board: ${school.board}, ${boardSourceText(school.board_source)}.`}
+          {!!safeUrl(school.board_source_url) && <Text testID="board-source-link" style={{ color: C.blue }} onPress={() => Linking.openURL(safeUrl(school.board_source_url))}> See where.</Text>}
+        </Text>
+      )}
+      {!!admissionText(school) && (
+        <Text testID="page-admission" style={[s.rating, { color: school.admissions_open ? C.green : C.grey }]}>
+          {admissionText(school)}
+          {!!safeUrl(school.admissions_source_url) && <Text testID="admission-source-link" style={{ color: C.blue }} onPress={() => Linking.openURL(safeUrl(school.admissions_source_url))}> See the page.</Text>}
+        </Text>
+      )}
       <Text style={s.rating}>{googleRatingText(school.google_rating, school.google_review_count)}</Text>
       {!school.google_rating && <Text style={s.muted}>Google does not show ratings for many schools. Parent reviews below fill the gap.</Text>}
       {!!site && <Btn testID="website" kind="outline" label="Visit school website" onPress={() => Linking.openURL(site)} />}

@@ -126,6 +126,20 @@ const mutations = [
   ['a setup problem at Google is shown to parents as a passing failure', String.raw`    case 'routes_not_enabled':
 `, ''],
   ['drive times from one place are reused for another', 'const driveKey = (place, mode, id) => `${place.lat},${place.lng}|${mode}|${id}`;', 'const driveKey = (place, mode, id) => `${mode}|${id}`;'],
+  // ---- boards and admissions ----
+  ['the board filter is ignored', 'if (BOARD_CHOICES.includes(f.board)) {', 'if (false) {'],
+  ['"also show unknown boards" does the opposite', 'q = f.includeUnknownBoard ? q.or(', 'q = !f.includeUnknownBoard ? q.or('],
+  ['a two-word board is sent unquoted', 'boards.ov.{"${f.board}"}', 'boards.ov.{${f.board}}'],
+  ['any text is accepted as a board', 'if (BOARD_CHOICES.includes(f.board)) {', 'if (f.board) {'],
+  ['a chosen board is not counted as a filter', ' + (g.board ? 1 : 0)', ''],
+  ['unknown boards are included by default', 'board: null, includeUnknownBoard: false };', 'board: null, includeUnknownBoard: true };'],
+  ['an admission status without a source is shown', "if (!school || !school.admissions_source_url || typeof school.admissions_open !== 'boolean') return '';", "if (!school || typeof school.admissions_open !== 'boolean') return '';"],
+  ['closed admissions are shown as open', "const what = school.admissions_open ? 'Admissions open' : 'Admissions closed';", "const what = 'Admissions open';"],
+  ['the open badge shows on closed schools', '{!!admissionText(school) && school.admissions_open && ', '{!!admissionText(school) && '],
+  ['a CBSE-confirmed board is described as from the website', "if (source === 'CBSE directory') return \"confirmed by CBSE's own record\";", "if (source === 'CBSE directory') return \"from the school's website\";"],
+  ['a "see where" link is shown with nowhere to go', '{!!safeUrl(school.board_source_url) && <Text testID="board-source-link"', '{true && <Text testID="board-source-link"'],
+  ['the unknown-board switch shows without a board', '{!!filters.board && (', '{true && ('],
+  ['the board facts are not asked for', "+ 'boards,board_source,board_source_url,", "+ 'board_source,board_source_url,"],
 ];
 
 const run = (file) => { try { return execSync(`node tests/${file}`, { cwd: root, encoding: 'utf8', env: { ...process.env, APP_FILE: out }, stdio: ['ignore', 'pipe', 'pipe'], timeout: 200000 }); } catch (e) { return (e.stdout || '') + (e.stderr || ''); } };

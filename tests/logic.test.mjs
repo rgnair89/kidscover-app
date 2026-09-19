@@ -12,7 +12,8 @@ const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'lev
   'ENQUIRY_COLUMNS', 'MESSAGE_COLUMNS', 'MAX_ENQUIRY', 'MIN_ENQUIRY', 'GRADE_CHOICES', 'startYearChoices', 'validateEnquiry', 'enquirySubject',
   'enquiryStatusText', 'enquiryAbout', 'unreadCount', 'fromMe', 'isMissingEnquiries', 'ENQUIRIES_MISSING_TEXT', 'sendEnquiry', 'loadEnquiries',
   'loadEnquiryForSchool', 'loadEnquiryMessages', 'replyToEnquiry', 'markEnquiryRead', 'closeEnquiry',
-  'DRIVE_MODES', 'MAX_DRIVE_BATCH', 'driveTimeText', 'driveKey', 'needDriveTimes', 'requestDriveTimes', 'driveProblemText'];
+  'DRIVE_MODES', 'MAX_DRIVE_BATCH', 'driveTimeText', 'driveKey', 'needDriveTimes', 'requestDriveTimes', 'driveProblemText',
+  'BOARD_CHOICES', 'boardSourceText', 'admissionText'];
 fs.writeFileSync(path.join(here, '.tmp', 'logic.mjs'), src.slice(a, b) + `\nexport { ${names.join(', ')} };\n`);
 const L = await import(pathToFileURL(path.join(here, '.tmp', 'logic.mjs')).href);
 
@@ -325,5 +326,19 @@ for (const junk of [{ data: 'hello', error: null }, { data: null, error: null },
   check('an odd answer (' + JSON.stringify(junk) + ') is a failure, not a crash', x.ok === false && typeof x.code === 'string');
 }
 
+console.log('\n=== boards and admissions ===');
+check('the list asks for the board and admission facts with their sources', ['boards', 'board_source', 'board_source_url', 'admissions_open', 'admissions_year', 'admissions_source_url', 'admissions_checked_at'].every((c) => L.SCHOOL_COLUMNS.split(',').includes(c)) && L.NEARBY_COLUMNS.endsWith(',distance_km'));
+check('the boards offered: CBSE, ICSE, IB, IGCSE, State Board', eq(L.BOARD_CHOICES, ['CBSE', 'ICSE', 'IB', 'IGCSE', 'State Board']));
+check('board CBSE -> only schools known to be CBSE (the default)', filtersOf({ board: 'CBSE' }).includes('overlaps("boards",["CBSE"])') && !filtersOf({ board: 'CBSE' }).some((x) => x.startsWith('or(')));
+check('...with "also show unknown" -> CBSE or not known yet (quoted, so "State Board" works too)', filtersOf({ board: 'State Board', includeUnknownBoard: true }).includes('or("boards.ov.{\\"State Board\\"},boards.is.null")'), JSON.stringify(filtersOf({ board: 'State Board', includeUnknownBoard: true })));
+check('no board chosen -> no board filter, whatever the switch says', !filtersOf({ includeUnknownBoard: true }).some((x) => /boards/.test(x)));
+check('a board that is not on the list is ignored (nothing odd reaches the filter)', !filtersOf({ board: 'Harvard' }).some((x) => /boards/.test(x)) && !filtersOf({ board: 'CBSE},id.eq.1' }).some((x) => /boards/.test(x)));
+check('board works together with level and near me', ['overlaps("boards",["ICSE"])', 'overlaps("levels",["primary"])', 'lte("distance_km",5)'].every((x) => filtersOf({ board: 'ICSE', level: 'primary', sort: 'distance', nearKm: 5 }, true).includes(x)));
+check('a chosen board counts as one filter', L.activeFilterCount({ ...L.DEFAULT_FILTERS, board: 'IB' }) === 1 && L.activeFilterCount({ ...L.DEFAULT_FILTERS, board: 'IB', includeUnknownBoard: true }) === 1 && L.DEFAULT_FILTERS.includeUnknownBoard === false);
+check('where a board came from, in words', L.boardSourceText('CBSE directory') === "confirmed by CBSE's own record" && L.boardSourceText('school website') === "from the school's website" && L.boardSourceText('school name') === "from the school's name" && L.boardSourceText(null) === '' && L.boardSourceText('blog') === '');
+const at = L.admissionText;
+check('admissions open, with the year and when it was checked', at({ admissions_open: true, admissions_year: '2027-28', admissions_source_url: 'https://s.example/a', admissions_checked_at: '2026-09-19T05:00:00Z' }) === "Admissions open for 2027-28 (from the school's website, checked Sep 2026)", at({ admissions_open: true, admissions_year: '2027-28', admissions_source_url: 'https://s.example/a', admissions_checked_at: '2026-09-19T05:00:00Z' }));
+check('admissions closed, and a notice without a year', at({ admissions_open: false, admissions_year: '2026-27', admissions_source_url: 'u', admissions_checked_at: '2026-09-19' }).startsWith('Admissions closed for 2026-27') && at({ admissions_open: true, admissions_source_url: 'u', admissions_checked_at: 'nonsense' }) === "Admissions open (from the school's website)");
+check('nothing is said without a source (an old "closed" default is never shown), or when unknown', at({ admissions_open: false }) === '' && at({ admissions_open: null, admissions_source_url: 'u' }) === '' && at(null) === '' && at({}) === '');
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -14,6 +14,7 @@ fs.mkdirSync(tmp, { recursive: true });
 // (it also remembers everything the app writes to the phone's storage, so a test can check the location is never saved)
 fs.writeFileSync(path.join(tmp, 'stub-storage.mjs'), `globalThis.__stored = []; export default { getItem: async () => null, setItem: async (k, v) => { globalThis.__stored.push([k, String(v)]); }, removeItem: async () => {} };`);
 fs.writeFileSync(path.join(tmp, 'stub-empty.mjs'), `export {};`);
+fs.writeFileSync(path.join(tmp, 'stub-svg.mjs'), `import * as React from 'react';\nconst mk = (tag) => function SvgPart({ testID, children, ...props }) { return React.createElement(tag, { ...props, 'data-testid': testID }, children); };\nexport default mk('svg');\nexport const Circle = mk('circle'), Defs = mk('defs'), Ellipse = mk('ellipse'), G = mk('g'), LinearGradient = mk('linearGradient'), Path = mk('path'), Polygon = mk('polygon'), Rect = mk('rect'), Stop = mk('stop');\n`);
 // the phone's location: each test sets globalThis.__loc to the behaviour it wants
 fs.writeFileSync(path.join(tmp, 'fake-location.mjs'), `export const Accuracy = { Balanced: 3 };\nexport const requestForegroundPermissionsAsync = (...a) => globalThis.__loc.requestForegroundPermissionsAsync(...a);\nexport const getCurrentPositionAsync = (...a) => globalThis.__loc.getCurrentPositionAsync(...a);`);
 // the app creates its client when the file loads, before a test has set up its data, so look the real stand-in up on every use
@@ -32,6 +33,7 @@ async function bundle(name, source) {
       'react-native-url-polyfill/auto': path.join(tmp, 'stub-empty.mjs'),
       '@supabase/supabase-js': path.join(tmp, 'fake-supabase.mjs'),
       'expo-location': path.join(tmp, 'fake-location.mjs'),
+      'react-native-svg': path.join(tmp, 'stub-svg.mjs'),
     },
     define: { 'process.env.NODE_ENV': '"development"', __DEV__: 'true' },
   });
@@ -82,7 +84,8 @@ function seed() {
   schools.push(S('t1', 'Twin Branch School', 'Thane', ['primary'], null, null, { latitude: 19.2183, longitude: 72.9781 }));
   // two real-looking Google names with emoji / search-engine text
   schools.push(S('n1', '\u{1F60A}Smiling Kids Pre-school \u{1F60A} and \u{1F4DA}Eon International School \u{1F4DA}', 'Kalher, Maharashtra', ['preschool'], 5, 21, { latitude: 19.2831, longitude: 73.0546 }));
-  schools.push(S('n2', '270 Degree Kids Preschool Kasarvadavali, Thane | Best Preschool In Kasarvadavali', 'Kasarvadavali, Thane', ['preschool', 'daycare'], 4.9, 139, { latitude: 19.2645, longitude: 72.9694 }));
+  schools.push(S('n2', '270 Degree Kids Preschool Kasarvadavali, Thane | Best Preschool In Kasarvadavali', 'Kasarvadavali, Thane', ['preschool', 'daycare'], 4.9, 139, { latitude: 19.2645, longitude: 72.9694, photo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/270.jpg/800px-270.jpg', photo_source: 'wikimedia', photo_credit: 'Jane Doe', photo_licence: 'CC BY-SA 4.0', photo_page_url: 'https://commons.wikimedia.org/wiki/File:270.jpg' }));
+  Object.assign(schools.find((x) => x.id === 's4'), { photo_url: 'https://proj.supabase.co/storage/v1/object/public/school-photos/s4/photo-1.jpg', photo_source: 'school', photo_credit: null });
   return {
     schools, session: null, log: [], authCalls: [], nextId: 1,
     users: { 'ann@x.in': { password: 'password1', id: 'u1', verified: true }, 'bob@x.in': { password: 'password2', id: 'u2', verified: true }, 'cat@x.in': { password: 'password3', id: 'u3', verified: false } },
@@ -95,6 +98,17 @@ function seed() {
     reports: [], failNext: null,
     threads: [], tmsgs: [], nextT: 1, rpcCalls: [], clock: Date.now(),
     fnCalls: [], fnMode: 'ok', lookupsLeft: undefined,
+    facilities: [
+      { school_id: 'n2', facility: 'teacher_ratio', detail: '1:15', source: 'school' },
+      { school_id: 'n2', facility: 'library', detail: null, source: 'school' },
+      { school_id: 'n2', facility: 'helipad', detail: null, source: 'school' },
+      { school_id: 'n2', facility: 'cafeteria', detail: null, source: 'school website' },
+    ],
+    achievements: [
+      { id: 'a1', school_id: 'n2', kind: 'class12', text: 'All students passed HSC', year: 2025, source: 'school', source_url: null },
+      { id: 'a2', school_id: 'n2', kind: 'class10', text: '100% pass in SSC, topper 97.2%', year: 2025, source: 'school website', source_url: 'https://270degree.example/results' },
+      { id: 'a3', school_id: 'n2', kind: 'class10', text: 'Topper 96.4%', year: 2024, source: 'school', source_url: null },
+    ],
   };
 }
 
@@ -172,6 +186,10 @@ class Query {
     if (st.failNext) { const e = st.failNext; st.failNext = null; return { data: null, error: e }; }
     const mineIds = new Set(st.private.filter((p) => p.author_id === me?.id).map((p) => p.review_id));
     const all = (rows) => rows.filter((r) => this.preds.every((p) => p(r)));
+    if (this.table === 'school_facilities' || this.table === 'school_achievements') {
+      if (st.profilesMissing) return { data: null, error: { code: '42P01', message: `relation "public.${this.table}" does not exist` } };
+      return this.finish(all(this.table === 'school_facilities' ? st.facilities : st.achievements));
+    }
     if (this.table === 'schools') return this.finish(all(st.schools));
     if (this.table === 'rpc:schools_nearby') {
       // the same rules as the database function: only schools with coordinates, distance in km rounded to 0.01, bad input -> nothing
@@ -381,7 +399,7 @@ check('...but search still finds it by the hidden text', ui.cards() === 1 && /27
 await ui.type('search', 'smiling'); await waitFor(() => ui.id('school-n1') && ui.cards() === 1, 3000);
 check('a name with emoji is shown without them', !/[\u{1F300}-\u{1FAFF}]/u.test(cardText(ui, 'n1')) && /Smiling Kids Pre-school and Eon International School/.test(cardText(ui, 'n1')), cardText(ui, 'n1'));
 await ui.click('school-n1'); await waitFor(() => ui.id('back'));
-check('the school page title is tidied too', /Smiling Kids Pre-school and Eon International School/.test(ui.text()) && !/[\u{1F300}-\u{1FAFF}]/u.test(ui.text()));
+check('the school page title is tidied too', /Smiling Kids Pre-school and Eon International School/.test(ui.id('page-title')?.textContent ?? '') && !/[\u{1F300}-\u{1FAFF}]/u.test(ui.id('page-title')?.textContent ?? ''), ui.id('page-title')?.textContent);
 await ui.click('back'); await waitFor(() => ui.id('search')); await ui.type('search', ''); await waitFor(() => ui.cards() === 20, 3000);
 
 console.log('\n=== filters ===');
@@ -515,7 +533,7 @@ const shown = (u) => u.all('school-').map((e) => e.getAttribute('data-testid').s
 const distanceOf = (u, id) => u.id('distance-' + id)?.textContent ?? '';
 const firstCard = (u) => u.all('school-')[0]?.getAttribute('data-testid') ?? '';
 // a chosen chip is the blue one (the app's selected style); read it from the style the page really has
-const selected = (u, t) => !!u.id(t) && w.getComputedStyle(u.id(t)).backgroundColor === 'rgb(37, 99, 235)';
+const selected = (u, t) => !!u.id(t) && w.getComputedStyle(u.id(t)).backgroundColor === 'rgb(91, 75, 219)'; // the app's violet (C.blue)
 const settle = () => sleep(80); // a button re-enabled a moment ago needs the page to finish updating before it takes a tap
 
 console.log('\n=== addresses and tags (cosmetic fixes) ===');
@@ -1034,6 +1052,43 @@ const kms = () => idsShown().map((id) => parseFloat(distanceOf(ui, id)));
 check('"near me" on After-school classes: only the classes, nearest first, with distances', await waitFor(() => !!ui.id('near-me-on') && ui.cards() === 3 && kms().every((k) => k > 0), 4000) && idsShown().every((id) => /^c/.test(id)) && kms().every((k, i, a) => i === 0 || a[i - 1] <= k), idsShown().join() + ' ' + kms().join());
 await ui.click('category-school');
 check('...and on Schools, only schools again', await waitFor(() => ui.cards() === 20 && !idsShown().some((id) => /^[ck]\d/.test(id)), 4000), idsShown().join());
+await ui.unmount();
+
+// =============================================================================================================
+console.log('\n=== the new look: drawings, photos, facilities, achievements ===');
+st = seed(); ui = await mount(st);
+check('the sign-in screen has its drawing (a parent walking a child to school) and the brand', await waitFor(() => !!ui.id('welcome-art')) && ui.id('welcome-art').tagName.toLowerCase() === 'svg' && /Kidscover/.test(ui.text()));
+await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+check('the list opens with a welcome banner', /Find the right school/.test(ui.id('discover-hero')?.textContent ?? ''));
+await ui.click('category-college');
+check('...which changes with the list chosen', await waitFor(() => /Colleges/.test(ui.id('discover-hero')?.textContent ?? '')));
+await ui.click('category-school'); await waitFor(() => ui.cards() === 20);
+check('each card has a picture: the drawn school when there is no photo', !!ui.id('thumb-f01-art') && !ui.id('thumb-f01-photo') && ui.all('thumb-').length === 20, ui.all('thumb-').length);
+await ui.type('search', 'bmc'); await waitFor(() => ui.cards() === 1 && !!ui.id('school-s4'), 3000);
+check('...and the school\'s own photo when it has one', !!ui.id('thumb-s4-photo') && /photo-1\.jpg/.test(ui.id('thumb-s4-photo').outerHTML) && !ui.id('thumb-s4-art'));
+await ui.click('school-s4'); await waitFor(() => ui.id('back'));
+check('an uploaded photo is shown big on the school page, credited to the school', !!ui.id('hero-photo') && ui.id('photo-credit')?.textContent === 'Photo from the school' && !ui.id('photo-source'), ui.id('photo-credit')?.textContent);
+check('...a school with nothing listed shows no Facilities or Achievements section', !ui.id('facilities') && !ui.id('achievements'));
+await ui.click('back'); await waitFor(() => ui.id('search'));
+await ui.type('search', '270 degree'); await waitFor(() => ui.cards() === 1 && !!ui.id('school-n2'), 3000);
+await ui.click('school-n2'); await waitFor(() => ui.id('back'));
+check('a Wikimedia photo is credited with its author and licence, with a link to where it came from', await waitFor(() => !!ui.id('hero-photo')) && /Photo: Jane Doe, CC BY-SA 4\.0, via Wikimedia Commons/.test(ui.id('photo-credit').textContent), ui.id('photo-credit')?.textContent);
+await ui.click('photo-source');
+check('..."source" opens the photo\'s Commons page', opened.at(-1) === 'https://commons.wikimedia.org/wiki/File:270.jpg', opened.at(-1));
+const facs = () => ui.all('facility-').map((e) => e.getAttribute('data-testid').slice(9));
+check('facilities are listed in the usual order, each with its detail; an unknown one is left out', await waitFor(() => !!ui.id('facilities')) && facs().join() === 'cafeteria,library,teacher_ratio' && /Teacher-student ratio: 1:15/.test(ui.id('facility-teacher_ratio').textContent), facs().join());
+check('...and the page says where they came from', /Listed from the school's website and from the school\./.test(ui.id('facilities').textContent), ui.id('facilities').textContent);
+const groups = ui.all('achievements-').map((e) => e.getAttribute('data-testid'));
+check('achievements come grouped: class 10 results first, then class 12', groups.join() === 'achievements-class10,achievements-class12', groups.join());
+check('...newest first within a group, each with its year and where it came from', /2025: 100% pass in SSC, topper 97\.2% \(from the school's website\)/.test(ui.id('achievement-a2').textContent) && ui.id('achievements-class10').textContent.indexOf('2025') < ui.id('achievements-class10').textContent.indexOf('2024'), ui.id('achievements-class10').textContent);
+await ui.click('achievement-link-a2');
+check('..."See it" opens the page the school published it on; one with no link has none', opened.at(-1) === 'https://270degree.example/results' && !ui.id('achievement-link-a1'));
+await ui.unmount();
+
+st = seed(); st.profilesMissing = true; ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
+await ui.type('search', '270 degree'); await waitFor(() => ui.cards() === 1 && !!ui.id('school-n2'), 3000);
+await ui.click('school-n2'); await waitFor(() => ui.id('back'));
+check('if facilities and achievements cannot be read, the page just leaves them out (no error)', await waitFor(() => /What parents say/.test(ui.text())) && !ui.id('facilities') && !ui.id('achievements') && !ui.id('school-error'));
 await ui.unmount();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

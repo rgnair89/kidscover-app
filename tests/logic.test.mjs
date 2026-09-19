@@ -14,7 +14,8 @@ const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'lev
   'loadEnquiryForSchool', 'loadEnquiryMessages', 'replyToEnquiry', 'markEnquiryRead', 'closeEnquiry',
   'DRIVE_MODES', 'MAX_DRIVE_BATCH', 'driveTimeText', 'driveKey', 'needDriveTimes', 'requestDriveTimes', 'driveProblemText',
   'BOARD_CHOICES', 'boardSourceText', 'admissionText',
-  'CATEGORY_CHOICES', 'categoryOf', 'categoryFilters', 'isSchoolPlace'];
+  'CATEGORY_CHOICES', 'categoryOf', 'categoryFilters', 'isSchoolPlace',
+  'FACILITY_INFO', 'ACHIEVEMENT_INFO', 'SOURCE_TEXT', 'facilityText', 'sourcesText', 'photoCreditText', 'artColours', 'ART_COLOURS', 'loadFacilities', 'loadAchievements'];
 fs.writeFileSync(path.join(here, '.tmp', 'logic.mjs'), src.slice(a, b) + `\nexport { ${names.join(', ')} };\n`);
 const L = await import(pathToFileURL(path.join(here, '.tmp', 'logic.mjs')).href);
 
@@ -39,6 +40,21 @@ function fakeDb(handler) {
 }
 const ops = (rec) => rec.ops.map((o) => o[0] + '(' + o.slice(1).map((x) => JSON.stringify(x)).join(',') + ')');
 const filtersOf = (f, hasPlace = false) => { const db = fakeDb(() => ({ data: [], error: null })); const rec = { table: 'schools', ops: [] }; const p = new Proxy(function () {}, { get(_, prop) { return (...args) => { rec.ops.push([prop, ...args]); return p; }; } }); L.applySchoolFilters(p, { ...L.DEFAULT_FILTERS, ...f }, hasPlace); return ops(rec); };
+
+console.log('\n=== photos, facilities, achievements ===');
+check('the list asks for the photo and its credit', ['photo_url', 'photo_source', 'photo_credit', 'photo_licence', 'photo_page_url'].every((c) => L.SCHOOL_COLUMNS.split(',').includes(c)));
+check('photo credits: Wikimedia names author and licence; an upload is from the school; no photo, no credit', L.photoCreditText({ photo_url: 'u', photo_source: 'wikimedia', photo_credit: 'Jane', photo_licence: 'CC0' }) === 'Photo: Jane, CC0, via Wikimedia Commons' && L.photoCreditText({ photo_url: 'u', photo_source: 'school', photo_credit: 'Ravi' }) === 'Photo: Ravi' && L.photoCreditText({ photo_url: 'u', photo_source: 'school' }) === 'Photo from the school' && L.photoCreditText({}) === '' && L.photoCreditText(null) === '');
+check('the same school is always drawn in the same colours; schools differ', L.artColours('s1') === L.artColours('s1') && new Set(['s1', 's2', 's3', 's4', 's5', 'n1', 'n2', 'f01'].map((x) => L.ART_COLOURS.indexOf(L.artColours(x)))).size >= 3 && L.ART_COLOURS.includes(L.artColours(undefined)));
+check('the 20 facilities the portal knows, each with a label and an icon', Object.keys(L.FACILITY_INFO).length === 20 && Object.values(L.FACILITY_INFO).every(([label, icon]) => label && icon));
+check('a facility with a detail reads "Label: detail"', L.facilityText({ facility: 'teacher_ratio', detail: '1:20' }) === 'Teacher-student ratio: 1:20' && L.facilityText({ facility: 'library' }) === 'Library');
+check('where facts came from, once each', L.sourcesText([{ source: 'school' }, { source: 'school' }, { source: 'kidscover' }]) === 'Listed from the school and checked by Kidscover.' && L.sourcesText([]) === '');
+const fdb = (rows, error = null) => ({ from: () => { const q = { eq: () => q, order: () => q, select: () => q, then: (r) => Promise.resolve({ data: rows, error }).then(r) }; return q; } });
+const f1 = await L.loadFacilities(fdb([{ facility: 'transport' }, { facility: 'nope' }, { facility: 'cafeteria' }]), 's');
+check('facilities come back in the usual order, unknown ones dropped', f1.rows.map((r) => r.facility).join() === 'cafeteria,transport' && f1.error === null);
+const f2 = await L.loadFacilities(fdb(null, { message: 'relation does not exist' }), 's');
+check('...and an error is an empty list with the error, not a crash', f2.rows.length === 0 && !!f2.error);
+const a1 = await L.loadAchievements(fdb([{ id: 1, kind: 'award', text: 'x' }, { id: 2, kind: 'class10', text: 'y' }, { id: 3, kind: 'mystery', text: 'z' }]), 's');
+check('achievements come back grouped in the usual order (class 10 before awards), unknown kinds dropped', a1.groups.map((g) => g.kind).join() === 'class10,award' && a1.groups[0].label === 'Class 10 results' && !!a1.groups[0].icon);
 
 console.log('\n=== search text is made safe ===');
 check('filter-syntax characters are removed', L.sanitizeSearch('a,b(c)*d"e\\f%g') === 'a b c d e f g', L.sanitizeSearch('a,b(c)*d"e\\f%g'));

@@ -8,11 +8,16 @@ The whole app is one file, `App.js`, so it can be pasted straight into [snack.ex
 - Search schools by name or area, filter by **level** (Preschool / Primary / Secondary / not stated), **daycare available**, **Google rating** (with an "include schools with no rating" switch, on by default because most K-12 schools have none), and sort
 - **Schools near me**: a "Use my location" button (the phone asks permission), the distance on every school, "Nearest first", and "Within 2 / 5 / 10 km"
 - **Drive time by car** (after "Use my location"): "Weekday 7:30 am" (school-run traffic) or "Right now", from Google Maps, shown on each school
-- School page: address, level badges, Google rating, website link, **parent reviews**
+- A friendlier look: a drawing of a parent walking a child to school on the sign-in screen, warm colours, a welcome banner, and a picture on every school (its photo, or a drawn school in its own colours)
+- School page: photo (with its credit), address, level badges, Google rating, website link, **facilities** (library, labs, pool, school bus, teacher-student ratio ...), **achievements** (class 10 / 12 results, placements, alumni, awards, each saying where it came from), **parent reviews**
 - Write a review (anonymous, checked by a moderator before it shows), edit or delete your own, report someone else's
 - **Ask a school about admissions**: a short form (which class, roughly when, your question), then a conversation with the school under **Enquiries**, with a count of unread replies
 
 Not in this version: compare, Google / Microsoft / phone sign-in, push notifications. Those come next.
+
+## Photos, facilities and achievements
+- A school's photo is one the school uploaded, or a free-licensed Wikimedia Commons photo shown with its author and licence. With no photo (or one that does not load) the app shows a drawn school, in colours of its own. The drawings are made in code, so there is nothing to license.
+- Facilities and achievements come from the school's own staff, from Kidscover, or from the school's website once an admin accepts them; each says where it came from. If they cannot be read the page simply leaves them out.
 
 ## Schools, after-school classes and colleges
 - Every place has a category, worked out in the database from its name and Google's type: **school** (preschools, schools, junior colleges), **after-school class** (music, dance, karate, swimming, sports, art, abacus, tuition) or **college** (degree colleges, universities, engineering, business / management, law, medicine, teacher training). A name like "School of Music" or "School of Business" goes by what it teaches, not by the word "school".
@@ -57,6 +62,7 @@ Run these in the Supabase SQL Editor (they live in the kidscover-admin repo, `su
 - `20260919000800_school_website_findings.sql` - boards and admission status (and deploy `read-school-websites` for the School Data tab). Run it **before** pasting this version: the app asks for the new columns
 - `20260919000900_enquiry_read_marks_for_old_threads.sql` - enquiries made before 600 no longer count as unread for the parent who wrote them
 - `20260919001000_school_categories.sql` - sorts every place into school / after-school class / college. Run it and paste this version **together**: the app asks for the category, and an older app would show the newly visible classes and colleges in its one list
+- `20260919001200_school_profiles.sql` - photos, facilities and achievements (edited by schools and Kidscover in the Partner Portal, every change logged). Run it **before** pasting this version: the list asks for the photo columns
 
 If the app shows an error mentioning a missing column, one of these has not been run yet.
 
@@ -64,7 +70,7 @@ If the app shows an error mentioning a missing column, one of these has not been
 1. Open <https://snack.expo.dev> (no account needed).
 2. Open `App.js` from this folder, select everything, copy it, and paste it over the Snack's `App.js`.
 3. Near the top, replace `PASTE_YOUR_PUBLISHABLE_KEY_HERE` with your **publishable** key (`sb_publishable_...`, the same value as `NEXT_PUBLIC_SUPABASE_ANON_KEY` in the admin project's `.env.local`). Never a secret key.
-4. Snack notices the packages the file imports and shows an "Add dependency" prompt for each. Accept them: `@supabase/supabase-js`, `@react-native-async-storage/async-storage`, `react-native-url-polyfill`, `expo-location`.
+4. Snack notices the packages the file imports and shows an "Add dependency" prompt for each. Accept them: `@supabase/supabase-js`, `@react-native-async-storage/async-storage`, `react-native-url-polyfill`, `expo-location`, `react-native-svg` (the drawings).
 5. Use the **Web** preview, or scan the QR code with the Expo Go app on a phone.
 
 Snack has no way to keep a secret, so the key is pasted into the code. That is fine for the publishable key (it is meant to be public; the database rules protect the data), and it is the reason a secret key must never go there.
@@ -80,8 +86,8 @@ Snack has no way to keep a secret, so the key is pasted into the code. That is f
 ## Tests
 ```
 npm install
-npm test          # 190 logic checks + 229 screen checks
-node tests/mutate.mjs   # breaks the app 123 ways on purpose and checks the tests notice (takes a while;
+npm test          # 199 logic checks + 244 screen checks
+node tests/mutate.mjs   # breaks the app 141 ways on purpose and checks the tests notice (takes a while;
                         # MUT_RANGE=1-25 runs part of it, so several copies can share the work)
 ```
 The screen tests run the real `App.js` in a simulated browser against a stand-in database that follows the same rules as the real one (unverified accounts blocked, one review per school, pending reviews hidden, distances from schools that have coordinates) a stand-in for the phone's location (allowed, refused, blocked, switched off, never answers, outside Mumbai), and a stand-in for the drive-time function (answers, no road, daily limit, not deployed, no connection). The database side was tested separately against an in-memory Postgres engine &mdash; `schools_nearby` (63 checks), the enquiries rules (88 checks) and the categories (87 checks); those tests are not part of this repo.

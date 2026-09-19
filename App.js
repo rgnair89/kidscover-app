@@ -14,19 +14,22 @@
 //      list asks for its columns, so without it the list shows a missing-column error.
 //   6. Schools / After-school classes / Colleges need 20260919001000_school_categories.sql (admin repo) run FIRST, for
 //      the same reason. Paste this app straight after running it: the older app does not know the categories.
+//   7. Photos, facilities and achievements need 20260919001200_school_profiles.sql (admin repo) run FIRST: the school
+//      list asks for the photo columns. The drawings are made with react-native-svg (Snack offers to add it).
 // What it does: sign in / sign up, search schools, filter by level / daycare / Google rating / distance, see how far (and how long a drive) each
-// school is from you, open a school, read parent reviews, write one (anonymous, moderated before it shows), and report a
-// review.
+// school is from you, open a school (its photo, facilities and achievements), read parent reviews, write one (anonymous,
+// moderated before it shows), and report a review.
 // =====================================================================================================
 import 'react-native-url-polyfill/auto';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, AppState, BackHandler, Linking, Platform, Pressable, ScrollView, StatusBar,
+  ActivityIndicator, AppState, BackHandler, Image, Linking, Platform, Pressable, ScrollView, StatusBar,
   StyleSheet, Switch, Text, TextInput, View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import { createClient } from '@supabase/supabase-js';
+import Svg, { Circle, Defs, Ellipse, G, LinearGradient, Path, Polygon, Rect, Stop } from 'react-native-svg';
 
 const SUPABASE_URL = 'https://twpcjrpknsqlycdvwtsj.supabase.co';
 const SUPABASE_KEY = 'PASTE_YOUR_PUBLISHABLE_KEY_HERE';
@@ -40,7 +43,8 @@ const supabase = createClient(SUPABASE_URL, KEY_IS_SET ? SUPABASE_KEY : 'key-not
 
 const PAGE_SIZE = 20;
 const SCHOOL_COLUMNS = 'id,name,address,website,board,levels,google_rating,google_review_count,category,'
-  + 'boards,board_source,board_source_url,admissions_open,admissions_year,admissions_source_url,admissions_checked_at';
+  + 'boards,board_source,board_source_url,admissions_open,admissions_year,admissions_source_url,admissions_checked_at,'
+  + 'photo_url,photo_source,photo_credit,photo_licence,photo_page_url';
 const NEARBY_COLUMNS = `${SCHOOL_COLUMNS},distance_km`; // the database function schools_nearby adds the distance
 const LOCATION_TIMEOUT_MS = 15000;
 // The area the schools were collected for (the same box the importer is limited to). Outside it the app still works.
@@ -117,6 +121,56 @@ function admissionText(school) {
   const year = school.admissions_year ? ` for ${school.admissions_year}` : '';
   const checked = monthYear(school.admissions_checked_at);
   return `${what}${year} (from the school's website${checked ? `, checked ${checked}` : ''})`;
+}
+
+// ---- a school's photo, facilities and achievements (kept by the school's staff and Kidscover, every change logged) ----
+const FACILITY_INFO = {
+  cafeteria: ['Cafeteria', '\ud83c\udf7d\ufe0f'], outdoor_playground: ['Open playground', '\ud83c\udf33'], indoor_play: ['Indoor play', '\ud83e\udd38'],
+  swimming_pool: ['Swimming pool', '\ud83c\udfca'], sports_courts: ['Sports courts', '\ud83c\udfc0'], library: ['Library', '\ud83d\udcda'],
+  science_labs: ['Science labs', '\ud83d\udd2c'], computer_lab: ['Computer lab', '\ud83d\udcbb'], maths_lab: ['Maths lab', '\u2797'],
+  stem_lab: ['STEM / robotics lab', '\ud83e\udd16'], ai_lab: ['AI / coding lab', '\ud83e\udde0'], smart_classes: ['Smart classrooms', '\ud83d\udda5\ufe0f'],
+  auditorium: ['Auditorium', '\ud83c\udfad'], art_music: ['Art and music rooms', '\ud83c\udfa8'], transport: ['School bus', '\ud83d\ude8c'],
+  medical_room: ['Nurse / medical room', '\ud83e\ude7a'], cctv: ['CCTV and security', '\ud83d\udcf9'], air_conditioned: ['Air-conditioned classrooms', '\u2744\ufe0f'],
+  special_needs: ['Special needs support', '\ud83e\udd1d'], teacher_ratio: ['Teacher-student ratio', '\ud83d\udc69\u200d\ud83c\udfeb'],
+};
+const FACILITY_ORDER = Object.keys(FACILITY_INFO);
+const ACHIEVEMENT_INFO = {
+  class10: ['Class 10 results', '\ud83d\udcdd'], class12: ['Class 12 results', '\ud83c\udf93'], placements: ['College placements', '\ud83c\udfdb\ufe0f'],
+  alumni: ['Notable alumni', '\ud83c\udf1f'], award: ['Awards and rankings', '\ud83c\udfc6'], other: ['Other achievements', '\u2728'],
+};
+const SOURCE_TEXT = { school: 'from the school', 'school website': "from the school's website", kidscover: 'checked by Kidscover' };
+
+function facilityText(row) {
+  const [label] = FACILITY_INFO[row?.facility] ?? [row?.facility ?? ''];
+  return row?.detail ? `${label}: ${row.detail}` : label;
+}
+
+// Where the facts on a page came from, in one line ("from the school and from the school's website").
+function sourcesText(rows) {
+  const names = [...new Set((rows ?? []).map((r) => SOURCE_TEXT[r.source]).filter(Boolean))];
+  return names.length ? `Listed ${names.join(' and ')}.` : '';
+}
+
+// The credit a photo needs: Wikimedia photos name their author and licence (their licences ask for it).
+function photoCreditText(school) {
+  if (!school?.photo_url) return '';
+  if (school.photo_source === 'wikimedia') return `Photo: ${school.photo_credit}, ${school.photo_licence}, via Wikimedia Commons`;
+  return school.photo_credit ? `Photo: ${school.photo_credit}` : 'Photo from the school';
+}
+
+// The drawn school shown when there is no photo: the same colours for the same school every time, different schools
+// in different colours, so a list does not look like one picture repeated.
+const ART_COLOURS = [
+  { sky: '#DCEBFF', roof: '#FF7A59', wall: '#FFFFFF', door: '#5B4BDB', hill: '#9FDCB4' },
+  { sky: '#FFF1D6', roof: '#5B4BDB', wall: '#FFFFFF', door: '#FF7A59', hill: '#B7E4C7' },
+  { sky: '#E9E4FF', roof: '#2EC4B6', wall: '#FFFDF5', door: '#FF7A59', hill: '#A8DDB5' },
+  { sky: '#FFE4E1', roof: '#FFB23F', wall: '#FFFFFF', door: '#2EC4B6', hill: '#BFE6C8' },
+  { sky: '#DFF7F2', roof: '#E0567A', wall: '#FFFFFF', door: '#5B4BDB', hill: '#9ED9B0' },
+];
+function artColours(seed) {
+  let h = 0;
+  for (const ch of String(seed ?? '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return ART_COLOURS[h % ART_COLOURS.length];
 }
 
 // ---- where the parent is. A "place" is { lat, lng }, rounded to about 100 m. It lives only in memory: nothing is saved. ----
@@ -343,7 +397,7 @@ function cleanName(name) {
   const original = String(name ?? '').trim();
   const stripped = original.replace(/[\u{1F000}-\u{1FAFF}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{200D}]/gu, ' ');
   const first = stripped.split(/(?:^|\s)\|(?:\s|$)/).map((p) => p.trim()).filter(Boolean)[0] ?? '';
-  const cleaned = first.replace(/\s{2,}/g, ' ').replace(/[\s|\-–—,:;]+$/, '').trim();
+  const cleaned = first.replace(/\s{2,}/g, ' ').replace(/[\s|\-\u2013\u2014,:;]+$/, '').trim();
   return cleaned || original;
 }
 
@@ -398,6 +452,24 @@ function friendlyError(error, context) {
 }
 
 // ---- data access. Each takes the database client, so it can be tested with a stand-in. ----
+// A school's facilities and achievements. If they cannot be read (for one, before 20260919001200 is run) the page
+// simply leaves those sections out: they add to a school page and must never break it.
+async function loadFacilities(db, schoolId) {
+  const { data, error } = await db.from('school_facilities').select('facility,detail,source').eq('school_id', schoolId);
+  if (error) return { rows: [], error };
+  const rows = (data ?? []).filter((r) => FACILITY_INFO[r.facility]).sort((a, b) => FACILITY_ORDER.indexOf(a.facility) - FACILITY_ORDER.indexOf(b.facility));
+  return { rows, error: null };
+}
+async function loadAchievements(db, schoolId) {
+  const { data, error } = await db.from('school_achievements').select('id,kind,text,year,source,source_url').eq('school_id', schoolId)
+    .order('year', { ascending: false, nullsFirst: false });
+  if (error) return { groups: [], error };
+  const groups = Object.keys(ACHIEVEMENT_INFO)
+    .map((kind) => ({ kind, label: ACHIEVEMENT_INFO[kind][0], icon: ACHIEVEMENT_INFO[kind][1], items: (data ?? []).filter((a) => a.kind === kind) }))
+    .filter((g) => g.items.length);
+  return { groups, error: null };
+}
+
 async function loadStats(db, ids) {
   if (!ids.length) return {};
   const { data } = await db.from('school_review_stats').select('school_id,review_count,avg_rating').in('school_id', ids);
@@ -524,7 +596,126 @@ const reportReview = (db, reviewId, reason) => db.from('review_reports').insert(
 // ==== END pure logic ====
 
 // ---------------------------------------------------------------------------------------------- small pieces
-const C = { blue: '#2563EB', blueSoft: '#DBEAFE', ink: '#111827', grey: '#6B7280', line: '#E5E7EB', bg: '#F9FAFB', card: '#FFFFFF', red: '#B91C1C', redSoft: '#FEE2E2', green: '#047857', greenSoft: '#D1FAE5', amber: '#B45309', amberSoft: '#FEF3C7' };
+// A friendly palette: violet for actions, coral, sunshine and mint for warmth, on a soft lavender page.
+const C = {
+  blue: '#5B4BDB', blueSoft: '#ECE9FF', ink: '#1F1B3A', grey: '#6B6880', line: '#E7E4F2', bg: '#F7F5FF', card: '#FFFFFF',
+  red: '#B91C1C', redSoft: '#FEE2E2', green: '#0F8A6A', greenSoft: '#D7F5EC', amber: '#B45309', amberSoft: '#FEF3C7',
+  coral: '#FF7A59', coralSoft: '#FFE9E2', sun: '#FFC857', sunSoft: '#FFF4D6', mint: '#2EC4B6', mintSoft: '#DDF6F3',
+};
+const CATEGORY_ICONS = { school: '\ud83c\udfeb', after_school: '\ud83c\udfa8', college: '\ud83c\udf93' };
+
+// ---------------------------------------------------------------------------------------------- drawings
+// Drawn here, in code (react-native-svg), so there is no image to license and nothing to download.
+
+// A parent walking a child to school, for the sign-in screen.
+function WelcomeArt({ height = 200 }) {
+  return (
+    <Svg testID="welcome-art" width="100%" height={height} viewBox="0 0 360 220" preserveAspectRatio="xMidYMid slice">
+      <Defs>
+        <LinearGradient id="kidscover-sky" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#CFE3FF" />
+          <Stop offset="1" stopColor="#F7F5FF" />
+        </LinearGradient>
+      </Defs>
+      <Rect x="0" y="0" width="360" height="220" fill="url(#kidscover-sky)" />
+      <Circle cx="300" cy="46" r="30" fill="#FFE7A8" />
+      <Circle cx="300" cy="46" r="20" fill={C.sun} />
+      <G fill="#FFFFFF">
+        <Ellipse cx="70" cy="44" rx="26" ry="11" />
+        <Ellipse cx="90" cy="38" rx="18" ry="12" />
+        <Ellipse cx="190" cy="30" rx="22" ry="9" />
+        <Ellipse cx="206" cy="25" rx="14" ry="9" />
+      </G>
+      <Path d="M0 168 Q 90 122 180 158 T 360 146 L360 220 L0 220 Z" fill="#BDE8C9" />
+      <Path d="M0 192 Q 120 162 240 186 T 360 178 L360 220 L0 220 Z" fill="#8FD6A6" />
+      <Rect x="196" y="100" width="120" height="82" rx="4" fill="#FFFFFF" stroke={C.line} strokeWidth="2" />
+      <Polygon points="186,104 256,62 326,104" fill={C.coral} />
+      <Circle cx="256" cy="88" r="9" fill="#FFFFFF" stroke={C.blue} strokeWidth="2" />
+      <Path d="M256 83 L256 88 L260 90" stroke={C.blue} strokeWidth="2" fill="none" strokeLinecap="round" />
+      <Rect x="208" y="116" width="24" height="18" rx="2" fill="#CFE3FF" stroke={C.blue} strokeWidth="2" />
+      <Rect x="280" y="116" width="24" height="18" rx="2" fill="#CFE3FF" stroke={C.blue} strokeWidth="2" />
+      <Rect x="208" y="146" width="24" height="18" rx="2" fill="#CFE3FF" stroke={C.blue} strokeWidth="2" />
+      <Rect x="280" y="146" width="24" height="18" rx="2" fill="#CFE3FF" stroke={C.blue} strokeWidth="2" />
+      <Rect x="244" y="142" width="24" height="40" rx="4" fill={C.blue} />
+      <Path d="M256 62 L256 38" stroke={C.grey} strokeWidth="2" />
+      <Polygon points="256,38 274,44 256,50" fill={C.sun} />
+      <Path d="M36 220 C 120 204 200 200 248 182 L 264 182 C 222 206 150 214 96 220 Z" fill="#F4E7CF" />
+      <Rect x="36" y="150" width="7" height="30" rx="2" fill="#8B5E3C" />
+      <Circle cx="40" cy="142" r="18" fill={C.mint} />
+      <Circle cx="28" cy="152" r="11" fill="#27AE9C" />
+      <Rect x="104" y="170" width="7" height="28" rx="3" fill={C.ink} />
+      <Rect x="115" y="170" width="7" height="28" rx="3" fill={C.ink} />
+      <Rect x="98" y="128" width="30" height="46" rx="12" fill={C.blue} />
+      <Circle cx="113" cy="115" r="12" fill="#E0AC69" />
+      <Path d="M101 113 Q 113 94 125 113 Q 119 104 113 104 Q 106 104 101 113 Z" fill="#3B2A20" />
+      <Path d="M126 142 Q 138 150 148 153" stroke="#E0AC69" strokeWidth="5" fill="none" strokeLinecap="round" />
+      <Rect x="147" y="174" width="5" height="20" rx="2" fill={C.ink} />
+      <Rect x="156" y="174" width="5" height="20" rx="2" fill={C.ink} />
+      <Rect x="161" y="152" width="11" height="19" rx="3" fill={C.sun} />
+      <Rect x="143" y="148" width="22" height="30" rx="9" fill={C.coral} />
+      <Circle cx="154" cy="138" r="9" fill="#C68642" />
+      <Path d="M145 136 Q 154 124 163 136 Q 158 131 154 131 Q 149 131 145 136 Z" fill="#2B1B0E" />
+      <Path d="M130 60 q5 -5 10 0 q5 -5 10 0" stroke={C.grey} strokeWidth="2" fill="none" />
+      <Path d="M152 74 q4 -4 8 0 q4 -4 8 0" stroke={C.grey} strokeWidth="2" fill="none" />
+    </Svg>
+  );
+}
+
+// A drawn school, in colours of its own: shown when a school has no photo, big on its page or small on its card.
+function SchoolArt({ seed, height = 180, compact = false, testID }) {
+  const k = artColours(seed);
+  return (
+    <Svg testID={testID} width="100%" height={height} viewBox="0 0 320 180" preserveAspectRatio="xMidYMid slice">
+      <Rect x="0" y="0" width="320" height="180" fill={k.sky} />
+      {!compact && <Circle cx="276" cy="36" r="16" fill={C.sun} />}
+      {!compact && (
+        <G fill="#FFFFFF">
+          <Ellipse cx="60" cy="36" rx="22" ry="9" />
+          <Ellipse cx="76" cy="31" rx="14" ry="9" />
+        </G>
+      )}
+      <Path d="M0 142 Q 80 118 160 138 T 320 132 L320 180 L0 180 Z" fill={k.hill} />
+      <Rect x="96" y="76" width="128" height="80" rx="4" fill={k.wall} stroke={C.line} strokeWidth="2" />
+      <Polygon points="86,80 160,40 234,80" fill={k.roof} />
+      <Circle cx="160" cy="64" r="9" fill="#FFFFFF" />
+      <Rect x="108" y="92" width="24" height="18" rx="2" fill="#CFE3FF" />
+      <Rect x="188" y="92" width="24" height="18" rx="2" fill="#CFE3FF" />
+      <Rect x="108" y="122" width="24" height="18" rx="2" fill="#CFE3FF" />
+      <Rect x="188" y="122" width="24" height="18" rx="2" fill="#CFE3FF" />
+      <Rect x="148" y="118" width="24" height="38" rx="4" fill={k.door} />
+      <Path d="M160 40 L160 18" stroke={C.grey} strokeWidth="2" />
+      <Polygon points="160,18 176,23 160,28" fill={C.sun} />
+      <Rect x="38" y="118" width="6" height="26" rx="2" fill="#8B5E3C" />
+      <Circle cx="41" cy="112" r="15" fill={C.mint} />
+      <Rect x="274" y="120" width="6" height="24" rx="2" fill="#8B5E3C" />
+      <Circle cx="277" cy="114" r="13" fill="#27AE9C" />
+    </Svg>
+  );
+}
+
+function LogoMark({ size = 28 }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 32 32">
+      <Rect x="0" y="0" width="32" height="32" rx="9" fill={C.blue} />
+      <Polygon points="6,15 16,7 26,15" fill={C.sun} />
+      <Rect x="9" y="15" width="14" height="10" rx="1.5" fill="#FFFFFF" />
+      <Rect x="14" y="19" width="4" height="6" rx="1" fill={C.coral} />
+    </Svg>
+  );
+}
+
+// A school's photo, or its drawing when there is none (or the photo does not load).
+function SchoolPicture({ school, height, compact = false, testID }) {
+  const [broken, setBroken] = useState(false);
+  const url = broken ? '' : safeUrl(school.photo_url);
+  if (url) {
+    return (
+      <Image testID={testID ? `${testID}-photo` : undefined} source={{ uri: url }} resizeMode="cover" onError={() => setBroken(true)}
+        accessibilityLabel={`Photo of ${cleanName(school.name)}`} style={{ width: '100%', height, backgroundColor: C.blueSoft }} />
+    );
+  }
+  return <SchoolArt seed={school.id} height={height} compact={compact} testID={testID ? `${testID}-art` : undefined} />;
+}
 
 function Btn({ label, onPress, kind = 'solid', disabled, testID }) {
   return (
@@ -583,9 +774,13 @@ function AuthScreen() {
 
   return (
     <ScrollView contentContainerStyle={s.authWrap} keyboardShouldPersistTaps="handled">
-      <Text style={s.logo}>Kidscover</Text>
+      <View style={s.authArt}><WelcomeArt height={200} /></View>
+      <View style={s.brandRow}>
+        <LogoMark size={36} />
+        <Text style={s.logo}>Kidscover</Text>
+      </View>
       <Text style={s.tagline}>Find the right school for your child, with real information.</Text>
-      <View style={s.card}>
+      <View style={[s.card, s.authCard]}>
         <Text style={s.h2}>{mode === 'signin' ? 'Sign in' : 'Create your account'}</Text>
         {mode === 'signup' && (
           <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -612,7 +807,9 @@ function SchoolCard({ school, drive, onPress }) {
   const address = cleanAddress(school.address);
   const driving = driveTimeText(drive);
   return (
-    <Pressable testID={`school-${school.id}`} accessibilityRole="button" onPress={onPress} style={s.card}>
+    <Pressable testID={`school-${school.id}`} accessibilityRole="button" onPress={onPress} style={[s.card, s.cardRow]}>
+      <View style={s.thumb}><SchoolPicture school={school} height={78} compact testID={`thumb-${school.id}`} /></View>
+      <View style={{ flex: 1, gap: 5 }}>
       <Text style={s.schoolName}>{cleanName(school.name)}</Text>
       {!!distance && <Text testID={`distance-${school.id}`} style={s.distance}>{distance}</Text>}
       {!!driving && <Text testID={`drivetime-${school.id}`} style={s.distance}>{driving}</Text>}
@@ -624,6 +821,7 @@ function SchoolCard({ school, drive, onPress }) {
       </View>
       <Text style={s.rating}>{googleRatingText(school.google_rating, school.google_review_count)}</Text>
       {!!community && <Text style={[s.rating, { color: C.green }]}>{community}</Text>}
+      </View>
     </Pressable>
   );
 }
@@ -731,8 +929,18 @@ function DiscoverScreen({ onOpen }) {
 
   const header = (
     <View>
+      <View style={s.hero} testID="discover-hero">
+        <View style={{ flex: 1, gap: 4 }}>
+          <Text style={s.heroTitle}>{cat.key === 'school' ? 'Find the right school' : cat.key === 'after_school' ? 'Classes after school' : 'Colleges'}</Text>
+          <Text style={s.heroText}>
+            {cat.key === 'school' ? 'Preschool to class 12, with boards, levels, drive times and what parents say.'
+              : cat.key === 'after_school' ? 'Music, dance, sports, art and tuition near you.' : 'Degree, engineering and business colleges.'}
+          </Text>
+        </View>
+        <View style={s.heroArt}><SchoolArt seed={cat.key} height={78} compact /></View>
+      </View>
       <View style={s.wrap}>
-        {CATEGORY_CHOICES.map((c) => <Chip key={c.key} testID={`category-${c.key}`} label={c.label} selected={cat.key === c.key} onPress={() => set({ category: c.key })} />)}
+        {CATEGORY_CHOICES.map((c) => <Chip key={c.key} testID={`category-${c.key}`} label={`${CATEGORY_ICONS[c.key]} ${c.label}`} selected={cat.key === c.key} onPress={() => set({ category: c.key })} />)}
       </View>
       <TextInput testID="search" style={s.search} placeholder={cat.key === 'school' ? 'Search by school name or area' : `Search ${cat.noun} by name or area`} value={typed} onChangeText={setTyped} autoCorrect={false} />
       {hasPlace ? (
@@ -1057,16 +1265,21 @@ function SchoolScreen({ school, onBack, onOpenEnquiries }) {
   const [enquiry, setEnquiry] = useState(undefined); // undefined = still loading, null = none yet
   const [askForm, setAskForm] = useState(false);
   const [askDone, setAskDone] = useState('');
+  const [facilities, setFacilities] = useState([]);
+  const [achievements, setAchievements] = useState([]);
 
   const reload = useCallback(async () => {
-    const [r, m, st, en] = await Promise.all([
+    const [r, m, st, en, fa, ac] = await Promise.all([
       loadReviews(supabase, school.id), loadMyReview(supabase, school.id), loadStats(supabase, [school.id]), loadEnquiryForSchool(supabase, school.id),
+      loadFacilities(supabase, school.id), loadAchievements(supabase, school.id),
     ]);
     if (r.error) setError(friendlyError(r.error));
     setReviews(r.rows);
     setMine(m.review);
     setStats(st[school.id] ?? null);
     setEnquiry(en.error ? null : en.thread);
+    setFacilities(fa.rows);
+    setAchievements(ac.groups);
   }, [school.id]);
   useEffect(() => { reload(); }, [reload]);
 
@@ -1088,7 +1301,14 @@ function SchoolScreen({ school, onBack, onOpenEnquiries }) {
   return (
     <ScrollView contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
       <Btn testID="back" kind="quiet" label="< Back to schools" onPress={onBack} />
-      <Text style={s.title}>{cleanName(school.name)}</Text>
+      <View style={s.heroPhoto}><SchoolPicture school={school} height={190} testID="hero" /></View>
+      {!!photoCreditText(school) && (
+        <Text testID="photo-credit" style={s.credit}>
+          {photoCreditText(school)}
+          {!!safeUrl(school.photo_page_url) && <Text testID="photo-source" style={{ color: C.blue }} onPress={() => Linking.openURL(safeUrl(school.photo_page_url))}> (source)</Text>}
+        </Text>
+      )}
+      <Text testID="page-title" style={s.title}>{cleanName(school.name)}</Text>
       {!!distanceText(school.distance_km) && <Text testID="school-distance" style={s.distance}>{distanceText(school.distance_km)}</Text>}
       {!!driveTimeText(school.drive) && (
         <Text testID="page-drive" style={s.distance}>
@@ -1115,6 +1335,35 @@ function SchoolScreen({ school, onBack, onOpenEnquiries }) {
       <Text style={s.rating}>{googleRatingText(school.google_rating, school.google_review_count)}</Text>
       {!school.google_rating && <Text style={s.muted}>Google does not show ratings for many schools. Parent reviews below fill the gap.</Text>}
       {!!site && <Btn testID="website" kind="outline" label="Visit school website" onPress={() => Linking.openURL(site)} />}
+
+      {facilities.length > 0 && (
+        <View testID="facilities">
+          <Text style={[s.h2, { marginTop: 20 }]}>Facilities</Text>
+          <View style={s.wrap}>
+            {facilities.map((f) => <Text key={f.facility} testID={`facility-${f.facility}`} style={s.facility}>{`${FACILITY_INFO[f.facility][1]} ${facilityText(f)}`}</Text>)}
+          </View>
+          <Text style={s.muted}>{sourcesText(facilities)}</Text>
+        </View>
+      )}
+
+      {achievements.length > 0 && (
+        <View testID="achievements">
+          <Text style={[s.h2, { marginTop: 20 }]}>Achievements</Text>
+          {achievements.map((g) => (
+            <View key={g.kind} testID={`achievements-${g.kind}`} style={[s.card, s.achievementCard]}>
+              <Text style={s.schoolName}>{`${g.icon} ${g.label}`}</Text>
+              {g.items.map((a) => (
+                <Text key={a.id} testID={`achievement-${a.id}`} style={s.body}>
+                  {a.year ? `${a.year}: ` : ''}{a.text}
+                  <Text style={s.muted}>{` (${SOURCE_TEXT[a.source] ?? 'source not given'})`}</Text>
+                  {!!safeUrl(a.source_url) && <Text testID={`achievement-link-${a.id}`} style={{ color: C.blue }} onPress={() => Linking.openURL(safeUrl(a.source_url))}> See it</Text>}
+                </Text>
+              ))}
+            </View>
+          ))}
+          <Text style={s.muted}>What the school says it has achieved. Each line says where it came from.</Text>
+        </View>
+      )}
 
       {isSchoolPlace(school) && (<>
       <Text style={[s.h2, { marginTop: 20 }]}>Admissions</Text>
@@ -1249,7 +1498,10 @@ export default function App() {
   return (
     <View style={s.root}>
       <View style={s.topBar}>
-        <Text style={s.topTitle}>Kidscover</Text>
+        <View style={s.brandRow}>
+          <LogoMark size={26} />
+          <Text style={s.topTitle}>Kidscover</Text>
+        </View>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <Btn testID="enquiries" kind="quiet" label={unread > 0 ? `Enquiries (${unread})` : 'Enquiries'} onPress={() => setShowEnquiries(true)} />
           <Btn testID="sign-out" kind="quiet" label="Sign out" onPress={() => supabase.auth.signOut()} />
@@ -1282,12 +1534,25 @@ export default function App() {
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg, paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight || 24 : Platform.OS === 'ios' ? 44 : 0 },
   center: { alignItems: 'center', justifyContent: 'center', padding: 24 },
-  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: C.line, backgroundColor: C.card },
-  topTitle: { fontSize: 20, fontWeight: '800', color: C.ink },
-  authWrap: { padding: 20, paddingTop: 48 },
-  logo: { fontSize: 34, fontWeight: '900', color: C.ink, textAlign: 'center' },
-  tagline: { color: C.grey, textAlign: 'center', marginTop: 6, marginBottom: 24 },
-  card: { backgroundColor: C.card, borderRadius: 12, borderWidth: 1, borderColor: C.line, padding: 14, marginBottom: 10, gap: 6 },
+  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: C.line, backgroundColor: C.card },
+  topTitle: { fontSize: 20, fontWeight: '900', color: C.blue, letterSpacing: 0.3 },
+  brandRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  authWrap: { padding: 20, paddingTop: 28 },
+  authArt: { borderRadius: 24, overflow: 'hidden', marginBottom: 18, backgroundColor: C.blueSoft },
+  authCard: { borderRadius: 20, padding: 18, shadowColor: C.blue, shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 2 },
+  logo: { fontSize: 34, fontWeight: '900', color: C.blue, textAlign: 'center' },
+  tagline: { color: C.grey, textAlign: 'center', marginTop: 6, marginBottom: 20, fontSize: 15 },
+  card: { backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.line, padding: 14, marginBottom: 10, gap: 6 },
+  cardRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  thumb: { width: 78, height: 78, borderRadius: 14, overflow: 'hidden', backgroundColor: C.blueSoft },
+  hero: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.sunSoft, borderRadius: 20, padding: 14, marginBottom: 12 },
+  heroTitle: { fontSize: 19, fontWeight: '900', color: C.ink },
+  heroText: { fontSize: 13, color: C.grey },
+  heroArt: { width: 110, height: 78, borderRadius: 14, overflow: 'hidden' },
+  heroPhoto: { borderRadius: 20, overflow: 'hidden', marginTop: 4, marginBottom: 4, backgroundColor: C.blueSoft },
+  credit: { fontSize: 11, color: C.grey, marginBottom: 6 },
+  facility: { backgroundColor: C.mintSoft, color: C.ink, fontSize: 13, fontWeight: '600', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 12, overflow: 'hidden' },
+  achievementCard: { marginTop: 8, backgroundColor: '#FFFDF7', borderColor: C.sunSoft },
   h2: { fontSize: 18, fontWeight: '700', color: C.ink },
   title: { fontSize: 24, fontWeight: '800', color: C.ink, marginTop: 4 },
   schoolName: { fontSize: 16, fontWeight: '700', color: C.ink },
@@ -1297,13 +1562,13 @@ const s = StyleSheet.create({
   rating: { fontSize: 14, fontWeight: '600', color: C.ink },
   stars: { fontSize: 18, color: '#F59E0B' },
   empty: { textAlign: 'center', color: C.grey, marginTop: 24 },
-  input: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 10, padding: 12, fontSize: 15, backgroundColor: '#fff', color: C.ink, marginVertical: 4 },
-  search: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 12, padding: 12, fontSize: 16, backgroundColor: '#fff', color: C.ink, marginBottom: 10 },
-  btn: { backgroundColor: C.blue, borderRadius: 10, paddingVertical: 11, paddingHorizontal: 16, alignItems: 'center', marginVertical: 4 },
+  input: { borderWidth: 1, borderColor: C.line, borderRadius: 12, padding: 12, fontSize: 15, backgroundColor: '#fff', color: C.ink, marginVertical: 4 },
+  search: { borderWidth: 1, borderColor: C.line, borderRadius: 16, padding: 13, fontSize: 16, backgroundColor: '#fff', color: C.ink, marginBottom: 10 },
+  btn: { backgroundColor: C.blue, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center', marginVertical: 4 },
   btnOutline: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.blue },
   btnQuiet: { backgroundColor: 'transparent' },
   btnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  chip: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 999, paddingVertical: 7, paddingHorizontal: 12, backgroundColor: '#fff' },
+  chip: { borderWidth: 1, borderColor: C.line, borderRadius: 999, paddingVertical: 7, paddingHorizontal: 12, backgroundColor: '#fff' },
   chipOn: { backgroundColor: C.blue, borderColor: C.blue },
   chipText: { color: C.ink, fontSize: 14 },
   chipTextOn: { color: '#fff', fontWeight: '700' },

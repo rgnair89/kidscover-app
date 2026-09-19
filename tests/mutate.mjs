@@ -156,6 +156,25 @@ const mutations = [
   ["the search box always says \"school name\"", "placeholder={cat.key === 'school' ? 'Search by school name or area' : `Search ${cat.noun} by name or area`}", "placeholder=\"Search by school name or area\""],
   ["the app opens on After-school classes", "includeUnknownBoard: false, category: 'school' };", "includeUnknownBoard: false, category: 'after_school' };"],
   ["the chosen category is not shown as chosen", "selected={cat.key === c.key}", "selected={c.key === 'school'}"],
+  // ---- the new look ----
+  ["the photo columns are not asked for", "+ 'photo_url,photo_source,photo_credit,photo_licence,photo_page_url';", "+ 'photo_source';"],
+  ["a Wikimedia photo is not credited to its author and licence", "  if (school.photo_source === 'wikimedia') return `Photo: ${school.photo_credit}, ${school.photo_licence}, via Wikimedia Commons`;\n", ""],
+  ["every school is drawn in the same colours", "  return ART_COLOURS[h % ART_COLOURS.length];", "  return ART_COLOURS[0];"],
+  ["unknown facilities are shown", ".filter((r) => FACILITY_INFO[r.facility])", ".filter(() => true)"],
+  ["facilities come in the database's order", ".sort((a, b) => FACILITY_ORDER.indexOf(a.facility) - FACILITY_ORDER.indexOf(b.facility))", ""],
+  ["achievement groups come in the wrong order", "  const groups = Object.keys(ACHIEVEMENT_INFO)", "  const groups = Object.keys(ACHIEVEMENT_INFO).reverse()"],
+  ["achievements oldest first", ".order('year', { ascending: false, nullsFirst: false });\n  if (error) return { groups: [], error };", ".order('year', { ascending: true, nullsFirst: false });\n  if (error) return { groups: [], error };"],
+  ["a facility's detail is left out", "  return row?.detail ? `${label}: ${row.detail}` : label;", "  return label;"],
+  ["where the facilities came from is not said", "<Text style={s.muted}>{sourcesText(facilities)}</Text>", "<Text style={s.muted}>{''}</Text>"],
+  ["the cards have no picture", "      <View style={s.thumb}><SchoolPicture school={school} height={78} compact testID={`thumb-${school.id}`} /></View>\n", ""],
+  ["a school's own photo is never shown", "  const url = broken ? '' : safeUrl(school.photo_url);", "  const url = '';"],
+  ["the photo credit is not shown", "      {!!photoCreditText(school) && (", "      {false && ("],
+  ["the photo's source cannot be opened", "{!!safeUrl(school.photo_page_url) && <Text testID=\"photo-source\"", "{false && <Text testID=\"photo-source\""],
+  ["an achievement's link cannot be opened", "{!!safeUrl(a.source_url) && <Text testID={`achievement-link-${a.id}`}", "{false && <Text testID={`achievement-link-${a.id}`}"],
+  ["where an achievement came from is not said", "{` (${SOURCE_TEXT[a.source] ?? 'source not given'})`}", "{''}"],
+  ["facilities that cannot be read break the page with an error", "    setFacilities(fa.rows);", "    if (fa.error) setError(friendlyError(fa.error));\n    setFacilities(fa.rows);"],
+  ["the sign-in screen has no drawing", "      <View style={s.authArt}><WelcomeArt height={200} /></View>\n", ""],
+  ["the welcome banner does not change with the list", "{cat.key === 'school' ? 'Find the right school' : cat.key === 'after_school' ? 'Classes after school' : 'Colleges'}", "{'Find the right school'}"],
 ];
 
 const run = (file) => { try { return execSync(`node tests/${file}`, { cwd: root, encoding: 'utf8', env: { ...process.env, APP_FILE: out }, stdio: ['ignore', 'pipe', 'pipe'], timeout: 200000 }); } catch (e) { return (e.stdout || '') + (e.stderr || ''); } };

@@ -9,11 +9,19 @@ Kidscover Standard form and follow it, and read all of it in their own language.
 
 ---
 
-## Before anything: the key
+## The key
 
-Open `App.js` and replace `PASTE_YOUR_PUBLISHABLE_KEY_HERE` with your Supabase **publishable** key
-(`sb_publishable_…`). Never a secret key: everything the app can do is limited by the database's own rules, which is
-why the publishable key is safe to ship.
+`SUPABASE_KEY` near the top of `App.js` holds this project's Supabase **publishable** key, and it is committed on
+purpose. That key is meant to be in the app: every installed copy carries it and anyone can read it out of one. What
+keeps data safe is row level security in the database, not hiding the key.
+
+It also has to be committed for a real build to work. `eas build` uploads what git has, not what is on your laptop, so
+a key that only exists in your working copy produces an app that opens on "One quick step" and goes no further.
+
+Never put a **secret** key (`sb_secret_…`, `service_role`) here. That one grants everything and belongs only in
+Supabase's own secrets, where the edge functions read it.
+
+Pointing this app at a different Supabase project means changing `SUPABASE_URL` and `SUPABASE_KEY` together.
 
 ## What the database needs first
 

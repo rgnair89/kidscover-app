@@ -4,7 +4,9 @@
 // This is an Expo project. Two ways to run it:
 //   * On your own phone, as an installable app: see README.md ("Building the app for your phone").
 //   * In a browser or Expo Go: npx expo start   (or paste this project into snack.expo.dev)
-// Set SUPABASE_KEY below to your Supabase publishable key (sb_publishable_...). NEVER a secret key.
+// SUPABASE_KEY below is the Supabase *publishable* key. It is meant to be in the app: every copy of the app carries
+// it, and anyone can read it out of an installed one. What keeps data safe is row level security in the database,
+// not hiding this. NEVER put a secret key (sb_secret_..., service_role) here - that one grants everything.
 //
 // What it does: sign in (with a fingerprint next time), find schools near you, filter by level, board, rating,
 // distance and cost, see the drive time (including when to leave to be there for the start of school), open a school
@@ -32,7 +34,7 @@ import Svg, { Circle, Defs, Ellipse, G, LinearGradient, Path, Polygon, Rect, Sto
 import { LANGUAGES, languageName, makeTranslator, isRightToLeft, localeFor } from './i18n';
 
 const SUPABASE_URL = 'https://twpcjrpknsqlycdvwtsj.supabase.co';
-const SUPABASE_KEY = 'PASTE_YOUR_PUBLISHABLE_KEY_HERE';
+const SUPABASE_KEY = 'sb_publishable_Jm7k8r7chSvR2k1bOAXNcw_66M64fGI';
 const KEY_IS_SET = !SUPABASE_KEY.startsWith('PASTE');
 
 // ---- where the sign-in is kept on the phone -------------------------------------------------------------------------

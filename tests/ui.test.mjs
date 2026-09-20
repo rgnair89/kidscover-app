@@ -54,9 +54,13 @@ async function bundle(name, source) {
   });
   return pathToFileURL(path.join(tmp, `${name}.bundle.mjs`)).href;
 }
-const keyedSource = appSource.replace('PASTE_YOUR_PUBLISHABLE_KEY_HERE', 'sb_publishable_test');
+// App.js ships with a real publishable key, so the app as committed is the keyed one. To test what someone sees who
+// has pointed the app at their own project and not put their key in yet, the key is taken back out here.
+const keyedSource = appSource;
+const unkeyedSource = appSource.replace(/const SUPABASE_KEY = '[^']*';/, "const SUPABASE_KEY = 'PASTE_YOUR_PUBLISHABLE_KEY_HERE';");
+if (unkeyedSource === appSource) throw new Error('could not take the key back out: the SUPABASE_KEY line changed');
 const keyedUrl = await bundle('keyed', keyedSource);
-const unkeyedUrl = await bundle('unkeyed', appSource);
+const unkeyedUrl = await bundle('unkeyed', unkeyedSource);
 // the same app with a 60 ms wait for the phone's position instead of 15 s, so a "phone never answers" case can be tested
 const quickSource = keyedSource.replace('const LOCATION_TIMEOUT_MS = 15000;', 'const LOCATION_TIMEOUT_MS = 60;');
 if (quickSource === keyedSource) throw new Error('could not shorten the location wait: the constant changed');

@@ -1,16 +1,36 @@
 {
   "name": "kidscover-app",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
-  "description": "Kidscover parent app. The app itself is App.js (paste it into snack.expo.dev). This package.json only exists to run the tests.",
+  "description": "Kidscover, the parent app: an Expo (React Native) app. App.js is the whole app; i18n/ holds its words in 31 languages.",
+  "main": "index.js",
   "scripts": {
-    "test": "node tests/logic.test.mjs && node tests/ui.test.mjs"
+    "start": "expo start",
+    "android": "expo start --android",
+    "web": "expo start --web",
+    "test": "node tests/logic.test.mjs && node tests/ui.test.mjs && node i18n/check.cjs",
+    "languages": "node i18n/check.cjs"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "^3.1.1",
+    "@supabase/supabase-js": "^2.58.0",
+    "aes-js": "^3.1.2",
+    "expo": "~57.0.24",
+    "expo-constants": "~57.0.19",
+    "expo-crypto": "~57.0.3",
+    "expo-local-authentication": "~57.0.3",
+    "expo-location": "~57.0.19",
+    "expo-notifications": "~57.0.20",
+    "expo-secure-store": "~57.0.4",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-svg": "~15.15.5",
+    "react-native-url-polyfill": "^2.0.0"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",
     "jsdom": "^26.0.0",
-    "react": "19.1.0",
-    "react-dom": "19.1.0",
+    "react-dom": "19.2.3",
     "react-native-web": "^0.21.0"
   }
 }

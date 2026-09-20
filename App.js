@@ -1,154 +1,210 @@
 // =====================================================================================================
-// Kidscover - parent app, first version.
+// Kidscover - the parent app.
 //
-// ONE FILE ON PURPOSE: paste all of this into snack.expo.dev as App.js.
-//   1. Set SUPABASE_KEY below to your publishable key (sb_publishable_...). NEVER a secret key.
-//   2. Snack offers to add the packages this file imports (@supabase/supabase-js, @react-native-async-storage/
-//      async-storage, react-native-url-polyfill, expo-location). Accept them.
-//   3. "Schools near me" needs the database function from supabase/migrations/20260919000500_schools_nearby.sql (in the
-//      admin repo). Run that in the Supabase SQL Editor BEFORE using the new app. Without it the app still works; the
-//      "Use my location" button just says it is not switched on yet.
-//   4. Drive times need 20260919000700_drive_times.sql and the commute-times edge function (admin repo), plus the Routes
-//      API switched on in Google Cloud. Without them the app says drive times are not switched on yet.
-//   5. Boards and admission status need 20260919000800_school_website_findings.sql (admin repo) run FIRST: the school
-//      list asks for its columns, so without it the list shows a missing-column error.
-//   6. Schools / After-school classes / Colleges need 20260919001000_school_categories.sql (admin repo) run FIRST, for
-//      the same reason. Paste this app straight after running it: the older app does not know the categories.
-//   7. Photos, facilities and achievements need 20260919001200_school_profiles.sql (admin repo) run FIRST: the school
-//      list asks for the photo columns. The drawings are made with react-native-svg (Snack offers to add it).
-// What it does: sign in / sign up, search schools, filter by level / daycare / Google rating / distance, see how far (and how long a drive) each
-// school is from you, open a school (its photo, facilities and achievements), read parent reviews, write one (anonymous,
-// moderated before it shows), and report a review.
+// This is an Expo project. Two ways to run it:
+//   * On your own phone, as an installable app: see README.md ("Building the app for your phone").
+//   * In a browser or Expo Go: npx expo start   (or paste this project into snack.expo.dev)
+// Set SUPABASE_KEY below to your Supabase publishable key (sb_publishable_...). NEVER a secret key.
+//
+// What it does: sign in (with a fingerprint next time), find schools near you, filter by level, board, rating,
+// distance and cost, see the drive time (including when to leave to be there for the start of school), open a school
+// (photo, levels, board, fees, facilities, achievements, reviews), compare up to four schools, ask a school about
+// admissions, apply with the Kidscover Standard form, follow the application, and read it all in 31 languages.
+//
+// The database work it needs, in order: supabase/migrations up to 20260920000600 in the admin repository.
 // =====================================================================================================
 import 'react-native-url-polyfill/auto';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator, AppState, BackHandler, Image, Linking, Platform, Pressable, ScrollView, StatusBar,
+  ActivityIndicator, AppState, BackHandler, I18nManager, Image, Linking, Platform, Pressable, ScrollView, StatusBar,
   StyleSheet, Switch, Text, TextInput, View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
+import * as SecureStore from 'expo-secure-store';
+import * as LocalAuthentication from 'expo-local-authentication';
+import * as Notifications from 'expo-notifications';
+import * as Crypto from 'expo-crypto';
+import Constants from 'expo-constants';
+import aesjs from 'aes-js';
 import { createClient } from '@supabase/supabase-js';
 import Svg, { Circle, Defs, Ellipse, G, LinearGradient, Path, Polygon, Rect, Stop } from 'react-native-svg';
+import { LANGUAGES, languageName, makeTranslator, isRightToLeft, localeFor } from './i18n';
 
 const SUPABASE_URL = 'https://twpcjrpknsqlycdvwtsj.supabase.co';
 const SUPABASE_KEY = 'PASTE_YOUR_PUBLISHABLE_KEY_HERE';
 const KEY_IS_SET = !SUPABASE_KEY.startsWith('PASTE');
 
+// ---- where the sign-in is kept on the phone -------------------------------------------------------------------------
+// The sign-in token is not left lying about in plain text. It is encrypted with a key that lives in the phone's own
+// keystore (Keychain on iOS, Keystore on Android), and only the encrypted text goes into ordinary storage. On the web
+// (Snack, a browser) there is no keystore, so it falls back to ordinary storage, as any website does.
+const secureStoreAvailable = Platform.OS !== 'web' && !!SecureStore?.setItemAsync;
+
+const randomKey = async () => {
+  const bytes = await Crypto.getRandomBytesAsync(32);
+  return aesjs.utils.hex.fromBytes(Array.from(bytes));
+};
+
+const LockedStorage = {
+  async getItem(key) {
+    const stored = await AsyncStorage.getItem(key);
+    if (stored === null) return null;
+    if (!secureStoreAvailable) return stored;
+    try {
+      const hexKey = await SecureStore.getItemAsync(`kidscover_key_${key}`);
+      if (!hexKey) return null;
+      const cipher = new aesjs.ModeOfOperation.ctr(aesjs.utils.hex.toBytes(hexKey), new aesjs.Counter(1));
+      return aesjs.utils.utf8.fromBytes(cipher.decrypt(aesjs.utils.hex.toBytes(stored)));
+    } catch {
+      return null;   // a key that has gone (the app was reinstalled): sign in again
+    }
+  },
+  async setItem(key, value) {
+    if (!secureStoreAvailable) { await AsyncStorage.setItem(key, String(value)); return; }
+    const hexKey = await randomKey();
+    const cipher = new aesjs.ModeOfOperation.ctr(aesjs.utils.hex.toBytes(hexKey), new aesjs.Counter(1));
+    const encrypted = aesjs.utils.hex.fromBytes(cipher.encrypt(aesjs.utils.utf8.toBytes(String(value))));
+    await SecureStore.setItemAsync(`kidscover_key_${key}`, hexKey);
+    await AsyncStorage.setItem(key, encrypted);
+  },
+  async removeItem(key) {
+    await AsyncStorage.removeItem(key);
+    if (secureStoreAvailable) { try { await SecureStore.deleteItemAsync(`kidscover_key_${key}`); } catch { /* already gone */ } }
+  },
+};
+
 const supabase = createClient(SUPABASE_URL, KEY_IS_SET ? SUPABASE_KEY : 'key-not-set', {
-  auth: { storage: AsyncStorage, autoRefreshToken: true, persistSession: true, detectSessionInUrl: false },
+  auth: { storage: LockedStorage, autoRefreshToken: true, persistSession: true, detectSessionInUrl: false },
 });
 
 // ==== BEGIN pure logic (no imports, no React: tested on its own) ====
 
+// The words of the app. The language pack is put in place as soon as it is known (see setTranslator); until then, and
+// in tests, English is used. Everything a parent reads goes through t(), so the whole app changes language at once.
+let translate = (key) => key;
+function setTranslator(fn) { translate = fn; }
+const t = (key, values) => translate(key, values);
+
 const PAGE_SIZE = 20;
 const SCHOOL_COLUMNS = 'id,name,address,website,board,levels,google_rating,google_review_count,category,'
   + 'boards,board_source,board_source_url,admissions_open,admissions_year,admissions_source_url,admissions_checked_at,'
-  + 'photo_url,photo_source,photo_credit,photo_licence,photo_page_url';
+  + 'photo_url,photo_source,photo_credit,photo_licence,photo_page_url,'
+  + 'fee_daycare,fee_preschool,fee_primary,fee_secondary,fees_from,fees_year,start_time,start_time_source';
 const NEARBY_COLUMNS = `${SCHOOL_COLUMNS},distance_km`; // the database function schools_nearby adds the distance
 const LOCATION_TIMEOUT_MS = 15000;
 // The area the schools were collected for (the same box the importer is limited to). Outside it the app still works.
 const SERVICE_AREA = { latMin: 18.5, latMax: 19.7, lngMin: 72.5, lngMax: 73.5 };
+const MAX_COMPARE = 4;
 
 const LEVEL_CHOICES = [
-  { key: 'preschool', label: 'Preschool' },
-  { key: 'primary', label: 'Primary' },
-  { key: 'secondary', label: 'Secondary' },
-  { key: 'none', label: 'Level not stated' },
+  { key: 'preschool', label: 'level.preschool' },
+  { key: 'primary', label: 'level.primary' },
+  { key: 'secondary', label: 'level.secondary' },
+  { key: 'none', label: 'level.none' },
 ];
 const RATING_CHOICES = [
-  { value: 0, label: 'Any' },
-  { value: 3.5, label: '3.5+' },
-  { value: 4, label: '4+' },
-  { value: 4.5, label: '4.5+' },
+  { value: 0, label: 'rating.any' },
+  { value: 3.5, label: 'rating.3_5' },
+  { value: 4, label: 'rating.4' },
+  { value: 4.5, label: 'rating.4_5' },
 ];
 const DISTANCE_CHOICES = [
-  { km: null, label: 'Any distance' },
-  { km: 2, label: 'Within 2 km' },
-  { km: 5, label: 'Within 5 km' },
-  { km: 10, label: 'Within 10 km' },
+  { km: null, label: 'distance.any' },
+  { km: 2, label: 'distance.2' },
+  { km: 5, label: 'distance.5' },
+  { km: 10, label: 'distance.10' },
 ];
+// What a family can spend in the first year, all fees counted.
+const BUDGET_CHOICES = [null, 50000, 100000, 200000, 300000, 500000, 1000000];
 const RELATIONSHIPS = [
-  { key: 'current_parent', label: 'Current parent' },
-  { key: 'former_parent', label: 'Former parent' },
-  { key: 'applicant', label: 'Applied / visited' },
-  { key: 'other', label: 'Other' },
+  { key: 'current_parent', label: 'relationship.current_parent' },
+  { key: 'former_parent', label: 'relationship.former_parent' },
+  { key: 'applicant', label: 'relationship.applicant' },
+  { key: 'other', label: 'relationship.other' },
 ];
 const REPORT_REASONS = [
-  { key: 'spam', label: 'Spam' },
-  { key: 'abusive', label: 'Abusive' },
-  { key: 'fake', label: 'Looks fake' },
-  { key: 'personal_info', label: 'Personal details' },
-  { key: 'other', label: 'Something else' },
+  { key: 'spam', label: 'report.spam' },
+  { key: 'abusive', label: 'report.abusive' },
+  { key: 'fake', label: 'report.fake' },
+  { key: 'personal_info', label: 'report.personal_info' },
+  { key: 'other', label: 'report.other' },
 ];
-const DEFAULT_FILTERS = { search: '', level: null, daycare: false, minRating: 0, includeUnrated: true, sort: 'name', nearKm: null, board: null, includeUnknownBoard: false, category: 'school' };
+const DEFAULT_FILTERS = {
+  search: '', level: null, daycare: false, minRating: 0, includeUnrated: true, sort: 'name', nearKm: null,
+  board: null, includeUnknownBoard: false, category: 'school', maxFee: null, includeUnknownFees: false, admissionsOpen: false,
+};
 
 // What kind of place. The main list is schools (preschool to class 12, junior colleges included); after-school classes
-// (music, dance, sports, tuition) and colleges are kept apart so they do not crowd it. The database sorts every place
-// into one of these (school_category), and an admin can move any single place.
+// (music, dance, sports, tuition) and colleges are kept apart so they do not crowd it.
 const CATEGORY_CHOICES = [
-  { key: 'school', label: 'Schools', noun: 'schools' },
-  { key: 'after_school', label: 'After-school classes', noun: 'after-school classes' },
-  { key: 'college', label: 'Colleges', noun: 'colleges' },
+  { key: 'school', label: 'category.school', noun: 'category.school.noun' },
+  { key: 'after_school', label: 'category.after_school', noun: 'category.after_school.noun' },
+  { key: 'college', label: 'category.college', noun: 'category.college.noun' },
 ];
 const categoryOf = (key) => CATEGORY_CHOICES.find((c) => c.key === key) ?? CATEGORY_CHOICES[0];
-// Levels ("Level not stated") and admission enquiries are about schools; a dance class or a college shows neither.
 const isSchoolPlace = (school) => categoryOf(school?.category).key === 'school';
 
-// Level, daycare and board describe schools, so for classes and colleges they are set aside. Not cleared: they are
-// still there on going back to Schools.
+// Level, daycare, board and fees describe schools, so for classes and colleges they are set aside. Not cleared: they
+// are still there on going back to Schools.
 function categoryFilters(f) {
   const category = categoryOf(f.category).key;
-  return category === 'school' ? { ...f, category } : { ...f, category, level: null, daycare: false, board: null, includeUnknownBoard: false };
+  return category === 'school' ? { ...f, category }
+    : { ...f, category, level: null, daycare: false, board: null, includeUnknownBoard: false, maxFee: null, admissionsOpen: false };
 }
 
 // ---- boards and admissions: only facts an admin accepted, each with where it came from ----
 const BOARD_CHOICES = ['CBSE', 'ICSE', 'IB', 'IGCSE', 'State Board'];
 
 function boardSourceText(source) {
-  if (source === 'CBSE directory') return "confirmed by CBSE's own record";
-  if (source === 'school website') return "from the school's website";
-  if (source === 'school name') return "from the school's name";
-  if (source === 'admin') return 'checked by Kidscover';
+  if (source === 'CBSE directory') return t('source.cbse');
+  if (source === 'school website') return t('source.website');
+  if (source === 'school name') return t('source.name');
+  if (source === 'admin') return t('source.kidscover');
   return '';
 }
 
-// "Admissions open for 2027-28 (from the school's website, checked Sep 2026)", or '' when nobody has checked. A value
-// without a source (an old default) is never shown: unknown is better than a guess.
+// "Admissions open for 2027-28 (from the school's website, checked Sep 2026)", or '' when nobody has checked.
 function admissionText(school) {
   if (!school || !school.admissions_source_url || typeof school.admissions_open !== 'boolean') return '';
-  const what = school.admissions_open ? 'Admissions open' : 'Admissions closed';
-  const year = school.admissions_year ? ` for ${school.admissions_year}` : '';
   const checked = monthYear(school.admissions_checked_at);
-  return `${what}${year} (from the school's website${checked ? `, checked ${checked}` : ''})`;
+  return t(school.admissions_open ? 'admissions.open' : 'admissions.closed', {
+    year: school.admissions_year ? t('admissions.forYear', { year: school.admissions_year }) : '',
+    checked: checked ? t('admissions.checked', { month: checked }) : '',
+  });
 }
 
-// ---- a school's photo, facilities and achievements (kept by the school's staff and Kidscover, every change logged) ----
+// ---- a school's photo, facilities and achievements ----
 const FACILITY_INFO = {
-  cafeteria: ['Cafeteria', '\ud83c\udf7d\ufe0f'], outdoor_playground: ['Open playground', '\ud83c\udf33'], indoor_play: ['Indoor play', '\ud83e\udd38'],
-  swimming_pool: ['Swimming pool', '\ud83c\udfca'], sports_courts: ['Sports courts', '\ud83c\udfc0'], library: ['Library', '\ud83d\udcda'],
-  science_labs: ['Science labs', '\ud83d\udd2c'], computer_lab: ['Computer lab', '\ud83d\udcbb'], maths_lab: ['Maths lab', '\u2797'],
-  stem_lab: ['STEM / robotics lab', '\ud83e\udd16'], ai_lab: ['AI / coding lab', '\ud83e\udde0'], smart_classes: ['Smart classrooms', '\ud83d\udda5\ufe0f'],
-  auditorium: ['Auditorium', '\ud83c\udfad'], art_music: ['Art and music rooms', '\ud83c\udfa8'], transport: ['School bus', '\ud83d\ude8c'],
-  medical_room: ['Nurse / medical room', '\ud83e\ude7a'], cctv: ['CCTV and security', '\ud83d\udcf9'], air_conditioned: ['Air-conditioned classrooms', '\u2744\ufe0f'],
-  special_needs: ['Special needs support', '\ud83e\udd1d'], teacher_ratio: ['Teacher-student ratio', '\ud83d\udc69\u200d\ud83c\udfeb'],
+  cafeteria: ['facility.cafeteria', '\ud83c\udf7d\ufe0f'], outdoor_playground: ['facility.outdoor_playground', '\ud83c\udf33'],
+  indoor_play: ['facility.indoor_play', '\ud83e\udd38'], swimming_pool: ['facility.swimming_pool', '\ud83c\udfca'],
+  sports_courts: ['facility.sports_courts', '\ud83c\udfc0'], library: ['facility.library', '\ud83d\udcda'],
+  science_labs: ['facility.science_labs', '\ud83d\udd2c'], computer_lab: ['facility.computer_lab', '\ud83d\udcbb'],
+  maths_lab: ['facility.maths_lab', '\u2797'], stem_lab: ['facility.stem_lab', '\ud83e\udd16'],
+  ai_lab: ['facility.ai_lab', '\ud83e\udde0'], smart_classes: ['facility.smart_classes', '\ud83d\udda5\ufe0f'],
+  auditorium: ['facility.auditorium', '\ud83c\udfad'], art_music: ['facility.art_music', '\ud83c\udfa8'],
+  transport: ['facility.transport', '\ud83d\ude8c'], medical_room: ['facility.medical_room', '\ud83e\ude7a'],
+  cctv: ['facility.cctv', '\ud83d\udcf9'], air_conditioned: ['facility.air_conditioned', '\u2744\ufe0f'],
+  special_needs: ['facility.special_needs', '\ud83e\udd1d'], teacher_ratio: ['facility.teacher_ratio', '\ud83d\udc69\u200d\ud83c\udfeb'],
 };
 const FACILITY_ORDER = Object.keys(FACILITY_INFO);
 const ACHIEVEMENT_INFO = {
-  class10: ['Class 10 results', '\ud83d\udcdd'], class12: ['Class 12 results', '\ud83c\udf93'], placements: ['College placements', '\ud83c\udfdb\ufe0f'],
-  alumni: ['Notable alumni', '\ud83c\udf1f'], award: ['Awards and rankings', '\ud83c\udfc6'], other: ['Other achievements', '\u2728'],
+  class10: ['achievement.class10', '\ud83d\udcdd'], class12: ['achievement.class12', '\ud83c\udf93'],
+  placements: ['achievement.placements', '\ud83c\udfdb\ufe0f'], alumni: ['achievement.alumni', '\ud83c\udf1f'],
+  award: ['achievement.award', '\ud83c\udfc6'], other: ['achievement.other', '\u2728'],
 };
-const SOURCE_TEXT = { school: 'from the school', 'school website': "from the school's website", kidscover: 'checked by Kidscover' };
+const SOURCE_TEXT = { school: 'source.school', 'school website': 'source.website', kidscover: 'source.kidscover' };
 
 function facilityText(row) {
-  const [label] = FACILITY_INFO[row?.facility] ?? [row?.facility ?? ''];
+  const key = FACILITY_INFO[row?.facility]?.[0];
+  const label = key ? t(key) : (row?.facility ?? '');
   return row?.detail ? `${label}: ${row.detail}` : label;
 }
 
-// Where the facts on a page came from, in one line ("Listed by the school; found on the school's website.").
-const SOURCE_LINE = { school: 'listed by the school', 'school website': "found on the school's website", kidscover: 'checked by Kidscover' };
+// Where the facts on a page came from, in one line.
+const SOURCE_LINE = { school: 'sourceline.school', 'school website': 'sourceline.website', kidscover: 'sourceline.kidscover' };
 function sourcesText(rows) {
-  const parts = [...new Set((rows ?? []).map((r) => SOURCE_LINE[r.source]).filter(Boolean))];
+  const parts = [...new Set((rows ?? []).map((r) => SOURCE_LINE[r.source]).filter(Boolean))].map((key) => t(key));
   if (!parts.length) return '';
   const line = parts.join('; ');
   return `${line[0].toUpperCase()}${line.slice(1)}.`;
@@ -157,12 +213,11 @@ function sourcesText(rows) {
 // The credit a photo needs: Wikimedia photos name their author and licence (their licences ask for it).
 function photoCreditText(school) {
   if (!school?.photo_url) return '';
-  if (school.photo_source === 'wikimedia') return `Photo: ${school.photo_credit}, ${school.photo_licence}, via Wikimedia Commons`;
-  return school.photo_credit ? `Photo: ${school.photo_credit}` : 'Photo from the school';
+  if (school.photo_source === 'wikimedia') return t('photo.wikimedia', { credit: school.photo_credit, licence: school.photo_licence });
+  return school.photo_credit ? t('photo.credit', { credit: school.photo_credit }) : t('photo.fromSchool');
 }
 
-// The drawn school shown when there is no photo: the same colours for the same school every time, different schools
-// in different colours, so a list does not look like one picture repeated.
+// The drawn school shown when there is no photo: the same colours for the same school every time.
 const ART_COLOURS = [
   { sky: '#DCEBFF', roof: '#FF7A59', wall: '#FFFFFF', door: '#5B4BDB', hill: '#9FDCB4' },
   { sky: '#FFF1D6', roof: '#5B4BDB', wall: '#FFFFFF', door: '#FF7A59', hill: '#B7E4C7' },
@@ -176,7 +231,51 @@ function artColours(seed) {
   return ART_COLOURS[h % ART_COLOURS.length];
 }
 
-// ---- where the parent is. A "place" is { lat, lng }, rounded to about 100 m. It lives only in memory: nothing is saved. ----
+// ---- money ----------------------------------------------------------------------------------------------------------
+// Whole rupees, grouped the way the reader's language groups them (2,19,000 in India; 219,000 elsewhere).
+let moneyLocale = 'en-IN';
+function setMoneyLocale(locale) { moneyLocale = locale || 'en-IN'; }
+function rupees(amount) {
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return '';
+  try {
+    return new Intl.NumberFormat(moneyLocale, { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
+  } catch {
+    return `\u20b9${Math.round(n)}`;
+  }
+}
+// "Up to 2 lakh" for the budget chips, in plain numbers for languages that do not count in lakhs.
+function budgetLabel(amount) {
+  if (!amount) return t('fees.anyBudget');
+  return t('fees.upTo', { amount: rupees(amount) });
+}
+
+const FEE_PARTS = [
+  ['tuition', 'fees.tuition', 'year'],
+  ['transport', 'fees.transport', 'year'],
+  ['meals', 'fees.meals', 'year'],
+  ['uniform_books', 'fees.uniform_books', 'year'],
+  ['activities', 'fees.activities', 'year'],
+  ['other_annual', 'fees.other_annual', 'year'],
+  ['admission_fee', 'fees.admission_fee', 'once'],
+  ['registration_fee', 'fees.registration_fee', 'once'],
+];
+
+// The fee row a family should see: the level they filtered on, else the cheapest one the school gave.
+function feeForLevel(school, level) {
+  const byLevel = { daycare: school?.fee_daycare, preschool: school?.fee_preschool, primary: school?.fee_primary, secondary: school?.fee_secondary };
+  const chosen = level && level !== 'none' ? byLevel[level] : null;
+  return typeof chosen === 'number' ? chosen : (typeof school?.fees_from === 'number' ? school.fees_from : null);
+}
+
+function feeSummaryText(school, level) {
+  const amount = feeForLevel(school, level);
+  if (amount === null) return '';
+  const exact = level && level !== 'none' && typeof { daycare: school?.fee_daycare, preschool: school?.fee_preschool, primary: school?.fee_primary, secondary: school?.fee_secondary }[level] === 'number';
+  return t(exact ? 'fees.firstYear' : 'fees.firstYearFrom', { amount: rupees(amount) });
+}
+
+// ---- where the parent is. A "place" is { lat, lng }, rounded to about 100 m. It lives only in memory. ----
 function validPlace(p) {
   return !!p && typeof p.lat === 'number' && typeof p.lng === 'number'
     && Number.isFinite(p.lat) && Number.isFinite(p.lng) && Math.abs(p.lat) <= 90 && Math.abs(p.lng) <= 180;
@@ -186,10 +285,8 @@ function inServiceArea(p) {
   return validPlace(p) && p.lat >= SERVICE_AREA.latMin && p.lat <= SERVICE_AREA.latMax && p.lng >= SERVICE_AREA.lngMin && p.lng <= SERVICE_AREA.lngMax;
 }
 
-// The order a parent gets when they have not chosen one: nearest first once we know where they are, A to Z before.
 const defaultSort = (hasPlace) => (hasPlace ? 'distance' : 'name');
 
-// Distance choices only make sense with a place. Without one they fall back to what a parent without a place can have.
 function normalizeFilters(f, hasPlace) {
   if (hasPlace) return f;
   return { ...f, nearKm: null, sort: f.sort === 'distance' ? 'name' : f.sort };
@@ -197,16 +294,15 @@ function normalizeFilters(f, hasPlace) {
 
 function distanceText(km) {
   if (typeof km !== 'number' || !Number.isFinite(km) || km < 0) return '';
-  if (km < 0.1) return 'Under 100 m away';
+  if (km < 0.1) return t('distance.under100m');
   const tenth = Math.round(km * 10) / 10;
-  return tenth < 10 ? `${tenth.toFixed(1)} km away` : `${Math.round(km)} km away`;
+  return t('distance.away', { km: tenth < 10 ? tenth.toFixed(1) : String(Math.round(km)) });
 }
 
-// Google puts a "Plus Code" first in some addresses ("3W9C+9VX, Mumbai, ..."). It means nothing to a parent. Display only.
+// Google puts a "Plus Code" first in some addresses ("3W9C+9VX, Mumbai, ..."). It means nothing to a parent.
 function cleanAddress(address) {
   const a = String(address ?? '').trim();
-  const rest = a.replace(/^[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}(?:\s*,\s*|\s+|$)/, '').trim();
-  return rest;
+  return a.replace(/^[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}(?:\s*,\s*|\s+|$)/, '').trim();
 }
 
 const isMissingNearby = (error) => error?.code === 'PGRST202' || /schools_nearby/i.test(String(error?.message ?? ''));
@@ -218,7 +314,6 @@ function withTimeout(promise, ms) {
 }
 
 // Asks the phone for permission and its position. `loc` is expo-location (or a stand-in in tests).
-// Returns { ok: true, place } or { ok: false, reason: 'denied' | 'blocked' | 'timeout' | 'unavailable' }.
 async function locateMe(loc, timeoutMs = LOCATION_TIMEOUT_MS) {
   try {
     const perm = await loc.requestForegroundPermissionsAsync();
@@ -235,33 +330,47 @@ async function locateMe(loc, timeoutMs = LOCATION_TIMEOUT_MS) {
 }
 
 function locationProblemText(reason) {
-  if (reason === 'blocked') return 'Location is switched off for this app. Turn it on in your phone settings, then try again. You can still search by school name or area.';
-  if (reason === 'denied') return 'We did not get permission to use your location. You can still search by school name or area, or tap the button to try again.';
-  if (reason === 'timeout') return 'Finding your location took too long. Check that location is switched on for your phone, then try again.';
-  return 'We could not find your location. Check that location is switched on for your phone, then try again.';
+  if (reason === 'blocked') return t('location.blocked');
+  if (reason === 'denied') return t('location.denied');
+  if (reason === 'timeout') return t('location.timeout');
+  return t('location.unavailable');
 }
-const OUTSIDE_AREA_TEXT = 'You seem to be outside Mumbai and Thane, where Kidscover has schools so far. Distances are measured from where you are.';
 
-// ---- drive time by car, from Google through the commute-times function (it counts each parent's daily lookups) ----
+// ---- drive time by car, from Google through the commute-times function ----
 const DRIVE_MODES = [
-  { key: 'school_run', label: 'Weekday 7:30 am', long: 'leaving at 7:30 am on a weekday' },
-  { key: 'now', label: 'Right now', long: 'leaving now' },
+  { key: 'school_run', label: 'drive.schoolRun', long: 'drive.schoolRunLong' },
+  { key: 'arrive', label: 'drive.arrive', long: 'drive.arriveLong' },
+  { key: 'now', label: 'drive.now', long: 'drive.nowLong' },
 ];
-const MAX_DRIVE_BATCH = 20; // the function's limit per lookup, and one page of the list
+const MAX_DRIVE_BATCH = 20;
 
-function driveTimeText(t) {
-  if (!t || typeof t.minutes !== 'number' || !Number.isFinite(t.minutes) || t.minutes < 0) return '';
-  const m = Math.max(1, Math.round(t.minutes));
-  if (m < 60) return `About ${m} min by car`;
+function driveTimeText(time) {
+  if (!time || typeof time.minutes !== 'number' || !Number.isFinite(time.minutes) || time.minutes < 0) return '';
+  const m = Math.max(1, Math.round(time.minutes));
+  if (m < 60) return t('drive.minutes', { minutes: m });
   const h = Math.floor(m / 60);
   const rest = m % 60;
-  return `About ${h} h${rest ? ` ${rest} min` : ''} by car`;
+  return rest ? t('drive.hoursMinutes', { hours: h, minutes: rest }) : t('drive.hours', { hours: h });
+}
+
+// "Leave by 07:35 to be there for 08:15" - only for the "arrive" mode, which knows the school's own start time.
+function leaveByText(time) {
+  if (!time?.leaveBy) return '';
+  const leave = clockText(time.leaveBy);
+  if (!leave) return '';
+  return t(time.assumedStart ? 'drive.leaveByAssumed' : 'drive.leaveBy', { leave, start: time.startTime ?? '' });
+}
+
+function clockText(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  // India time, where the schools are, whatever the phone is set to
+  const ist = new Date(d.getTime() + 330 * 60 * 1000);
+  return `${String(ist.getUTCHours()).padStart(2, '0')}:${String(ist.getUTCMinutes()).padStart(2, '0')}`;
 }
 
 const driveKey = (place, mode, id) => `${place.lat},${place.lng}|${mode}|${id}`;
 
-// Which schools on screen still need a drive time: ones with a distance (so they have coordinates), not already known
-// for this place and time of day, and not already being fetched. At most one lookup's worth.
 function needDriveTimes(rows, place, mode, known, pending, max = MAX_DRIVE_BATCH) {
   if (!validPlace(place) || !DRIVE_MODES.some((m) => m.key === mode)) return [];
   return (rows ?? [])
@@ -270,7 +379,6 @@ function needDriveTimes(rows, place, mode, known, pending, max = MAX_DRIVE_BATCH
     .slice(0, max);
 }
 
-// Asks the commute-times function. Returns { ok: true, times, lookupsLeft } or { ok: false, code, limit }.
 async function requestDriveTimes(fn, place, ids, mode) {
   let res;
   try {
@@ -293,32 +401,30 @@ async function requestDriveTimes(fn, place, ids, mode) {
 
 function driveProblemText(code, limit) {
   switch (code) {
-    case 'user_limit': return `You have used today's ${limit || 20} drive-time lookups. They start again tomorrow.`;
-    case 'daily_budget': return 'Drive times are paused for today because of high demand. Please try again tomorrow.';
-    case 'outside_area': return 'Drive times work only in Mumbai and Thane for now.';
-    case 'confirm_email': return 'Please confirm your email address first, then try again.';
-    case 'sign_in': return 'Please sign out and in again to see drive times.';
+    case 'user_limit': return t('drive.limitReached', { limit: limit || 20 });
+    case 'daily_budget': return t('drive.paused');
+    case 'outside_area': return t('drive.outsideArea');
+    case 'confirm_email': return t('error.confirmEmail');
+    case 'sign_in': return t('drive.signInAgain');
     case 'switched_off':
     case 'not_deployed':
     case 'not_configured':
     case 'routes_not_enabled':
     case 'google_key_blocked':
-    case 'google_key_invalid': return 'Drive times are not switched on yet. Distances still work.';
-    default: return 'Could not get drive times just now. Please try again in a moment.';
+    case 'google_key_invalid': return t('drive.notOn');
+    default: return t('drive.tryAgain');
   }
 }
-const NEARBY_MISSING_TEXT = 'Schools near you is not switched on yet. You can still search by school name or area.';
 
 // Text typed into the search box goes into a filter string, so remove the characters that filter syntax uses.
 function sanitizeSearch(text) {
   return String(text ?? '').replace(/[,()*"\\%]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
 }
 
-// Applies the parent's choices to a query on the schools table (or, with a place, on the schools_nearby function, whose
-// rows also carry distance_km). Without a place the distance choices are ignored.
+// Applies the parent's choices to a query on the schools table (or on schools_nearby, whose rows carry distance_km).
 function applySchoolFilters(query, choices, hasPlace = false) {
   const f = categoryFilters(choices);
-  let q = query.eq('is_hidden', false); // the database already hides non-schools from parents; this also keeps an admin's view the same
+  let q = query.eq('is_hidden', false);
   q = q.eq('category', f.category);
   const term = sanitizeSearch(f.search);
   if (term) q = q.or(`name.ilike.*${term}*,address.ilike.*${term}*`);
@@ -333,15 +439,19 @@ function applySchoolFilters(query, choices, hasPlace = false) {
   } else if (!f.includeUnrated) {
     q = q.not('google_rating', 'is', null);
   }
+  if (f.maxFee > 0) {
+    const column = f.level && f.level !== 'none' ? `fee_${f.level}` : 'fees_from';
+    q = f.includeUnknownFees ? q.or(`${column}.lte.${f.maxFee},${column}.is.null`) : q.lte(column, f.maxFee);
+  }
+  if (f.admissionsOpen) q = q.eq('admissions_open', true).not('admissions_source_url', 'is', null);
   if (hasPlace && f.nearKm > 0) q = q.lte('distance_km', f.nearKm);
-  // name_sort is the name without emoji, brackets or punctuation, in lower case (a database column), so the list is
-  // truly A to Z. The final "id" makes the order the same every time: schools with equal names, ratings or distances
-  // would otherwise be free to swap places between pages, so "Show more" could repeat one school and skip another.
   const sort = f.sort === 'distance' && !hasPlace ? 'name' : f.sort;
   if (sort === 'distance') {
     q = q.order('distance_km', { ascending: true });
   } else if (sort === 'rating') {
     q = q.order('google_rating', { ascending: false, nullsFirst: false }).order('google_review_count', { ascending: false, nullsFirst: false });
+  } else if (sort === 'cost') {
+    q = q.order(f.level && f.level !== 'none' ? `fee_${f.level}` : 'fees_from', { ascending: true, nullsFirst: false });
   } else {
     q = q.order('name_sort', { ascending: true });
   }
@@ -352,28 +462,31 @@ function applySchoolFilters(query, choices, hasPlace = false) {
 function activeFilterCount(f, hasPlace = false) {
   const g = categoryFilters(normalizeFilters(f, hasPlace));
   return (g.level ? 1 : 0) + (g.daycare ? 1 : 0) + (g.minRating > 0 ? 1 : 0) + (g.includeUnrated ? 0 : 1) + (g.board ? 1 : 0)
+    + (g.maxFee ? 1 : 0) + (g.admissionsOpen ? 1 : 0)
     + (g.sort !== defaultSort(hasPlace) ? 1 : 0) + (hasPlace && g.nearKm > 0 ? 1 : 0);
 }
 
 function levelBadges(levels) {
   if (!levels) return [];
   const out = [];
-  if (levels.includes('preschool')) out.push('Preschool');
-  if (levels.includes('primary')) out.push('Primary');
-  if (levels.includes('secondary')) out.push('Secondary');
-  if (levels.includes('daycare')) out.push('Daycare available');
-  if (levels.length === 0) out.push('Level not stated');
+  if (levels.includes('preschool')) out.push(t('level.preschool'));
+  if (levels.includes('primary')) out.push(t('level.primary'));
+  if (levels.includes('secondary')) out.push(t('level.secondary'));
+  if (levels.includes('daycare')) out.push(t('level.daycareAvailable'));
+  if (levels.length === 0) out.push(t('level.none'));
   return out;
 }
 
 function googleRatingText(rating, count) {
-  if (rating === null || rating === undefined) return 'No Google rating yet';
-  return `Google ${Number(rating).toFixed(1)} \u2605${count ? ` (${count})` : ''}`;
+  if (rating === null || rating === undefined) return t('rating.none');
+  return t(count ? 'rating.google' : 'rating.googleNoCount', { rating: Number(rating).toFixed(1), count });
 }
 
 function communityText(stats) {
   if (!stats || !stats.review_count) return null;
-  return `Parents ${Number(stats.avg_rating).toFixed(1)} \u2605 (${stats.review_count} ${stats.review_count === 1 ? 'review' : 'reviews'})`;
+  return t(stats.review_count === 1 ? 'reviews.summaryOne' : 'reviews.summary', {
+    rating: Number(stats.avg_rating).toFixed(1), count: stats.review_count,
+  });
 }
 
 function stars(n) {
@@ -381,10 +494,19 @@ function stars(n) {
   return '\u2605'.repeat(k) + '\u2606'.repeat(5 - k);
 }
 
+let dateLocale = 'en-US';
+function setDateLocale(locale) { dateLocale = locale || 'en-US'; }
 function monthYear(iso) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+  try { return d.toLocaleString(dateLocale, { month: 'short', year: 'numeric' }); }
+  catch { return d.toLocaleString('en-US', { month: 'short', year: 'numeric' }); }
+}
+function dayText(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  try { return d.toLocaleDateString(dateLocale, { day: 'numeric', month: 'short', year: 'numeric' }); }
+  catch { return d.toISOString().slice(0, 10); }
 }
 
 function safeUrl(url) {
@@ -394,8 +516,7 @@ function safeUrl(url) {
   return /^https?:\/\/[^\s]+\.[^\s]+/i.test(full) ? full : null;
 }
 
-// Google business names often carry emoji and search-engine text ("Best Preschool In ... | ..."). Show the part a
-// parent would call the name. This is display only: search still matches the original text.
+// Google business names often carry emoji and search-engine text. Show the part a parent would call the name.
 function cleanName(name) {
   const original = String(name ?? '').trim();
   const stripped = original.replace(/[\u{1F000}-\u{1FAFF}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{200D}]/gu, ' ');
@@ -405,27 +526,27 @@ function cleanName(name) {
 }
 
 function validateAuth({ mode, first, last, email, password }) {
-  if (mode === 'signup' && (!first.trim() || !last.trim())) return 'Please enter your first and last name.';
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return 'Please enter a valid email address.';
-  if (mode === 'signup' && password.length < 8) return 'Choose a password with at least 8 characters.';
-  if (!password) return 'Please enter your password.';
+  if (mode === 'signup' && (!first.trim() || !last.trim())) return t('auth.needName');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return t('auth.needEmail');
+  if (mode === 'signup' && password.length < 8) return t('auth.needPassword');
+  if (!password) return t('auth.needPasswordAny');
   return null;
 }
 
 function validateReview({ rating, title, body }) {
-  if (!rating || rating < 1 || rating > 5) return 'Tap the stars to give a rating.';
-  if ((title ?? '').length > 120) return 'Keep the title under 120 characters.';
+  if (!rating || rating < 1 || rating > 5) return t('review.needRating');
+  if ((title ?? '').length > 120) return t('review.titleTooLong');
   const len = (body ?? '').trim().length;
-  if (len < 20) return `Please write at least 20 characters (${len} so far).`;
-  if (len > 2000) return 'Please keep the review under 2000 characters.';
+  if (len < 20) return t('review.tooShort', { count: len });
+  if (len > 2000) return t('review.tooLong');
   return null;
 }
 
 function statusLine(status, note) {
-  if (status === 'pending') return 'Waiting for a moderator to check it. Only you can see it until then.';
-  if (status === 'published') return 'Published. Other parents can read it, without your name.';
-  if (status === 'rejected') return `Not published${note ? `: ${note}` : '.'} Edit it and it will be checked again.`;
-  if (status === 'removed') return 'A moderator removed this review.';
+  if (status === 'pending') return t('review.pending');
+  if (status === 'published') return t('review.published');
+  if (status === 'rejected') return note ? t('review.rejectedWithNote', { note }) : t('review.rejected');
+  if (status === 'removed') return t('review.removed');
   return '';
 }
 
@@ -433,30 +554,29 @@ function statusLine(status, note) {
 function friendlyError(error, context) {
   const msg = typeof error === 'string' ? error : String(error?.message ?? '');
   const code = error?.code;
-  // the enquiry screens ask first: a "function not found" from them must not be reported as the near-me one
-  if (context === 'enquiry' && isMissingEnquiries(error)) return ENQUIRIES_MISSING_TEXT;
-  if (isMissingNearby(error)) return NEARBY_MISSING_TEXT;
-  if (/an enquiry with this school is already open/i.test(msg)) return 'You already have an open enquiry with this school. Open it under Enquiries to carry on there.';
-  if (/daily enquiry limit/i.test(msg)) return 'You have sent 10 enquiries today. Please carry on tomorrow.';
-  if (/too many messages/i.test(msg)) return 'That is a lot of messages at once. Please wait a few minutes and try again.';
-  if (/invalid login credentials/i.test(msg)) return 'That email and password do not match.';
-  if (/email not confirmed/i.test(msg)) return 'Please confirm your email first: open the link we sent you, then sign in.';
-  if (/already registered|already been registered/i.test(msg)) return 'That email already has an account. Try signing in instead.';
-  if (/rate limit|too many/i.test(msg)) return 'Too many attempts. Please wait a minute and try again.';
-  if (/network request failed|failed to fetch|networkerror|load failed/i.test(msg)) return 'Cannot reach the server. Check your internet connection and try again.';
-  if (/daily review limit/i.test(msg)) return 'You have reached today\u2019s limit of 10 reviews. Try again tomorrow.';
+  if (context === 'enquiry' && isMissingEnquiries(error)) return t('error.enquiriesOff');
+  if (isMissingNearby(error)) return t('error.nearbyOff');
+  if (/an enquiry with this school is already open/i.test(msg)) return t('error.enquiryOpen');
+  if (/daily enquiry limit/i.test(msg)) return t('error.enquiryLimit');
+  if (/daily application limit/i.test(msg)) return t('error.applicationLimit');
+  if (/already applied to this school/i.test(msg)) return t('error.alreadyApplied');
+  if (/too many messages/i.test(msg)) return t('error.tooManyMessages');
+  if (/invalid login credentials/i.test(msg)) return t('error.badLogin');
+  if (/email not confirmed/i.test(msg)) return t('error.notConfirmed');
+  if (/already registered|already been registered/i.test(msg)) return t('error.alreadyRegistered');
+  if (/rate limit|too many/i.test(msg)) return t('error.rateLimit');
+  if (/network request failed|failed to fetch|networkerror|load failed/i.test(msg)) return t('error.network');
+  if (/daily review limit/i.test(msg)) return t('error.reviewLimit');
   if (code === '23505' || /duplicate key|unique/i.test(msg)) {
-    return context === 'report' ? 'You already reported this review.' : 'You have already reviewed this school. You can edit your review below.';
+    return context === 'report' ? t('error.alreadyReported') : t('error.alreadyReviewed');
   }
   if (code === '42501' || /row-level security|permission denied/i.test(msg)) {
-    return context === 'report' ? 'This review cannot be reported.' : 'Please confirm your email address first, then try again.';
+    return context === 'report' ? t('error.cannotReport') : t('error.confirmEmail');
   }
-  return msg || 'Something went wrong. Please try again.';
+  return msg || t('error.general');
 }
 
 // ---- data access. Each takes the database client, so it can be tested with a stand-in. ----
-// A school's facilities and achievements. If they cannot be read (for one, before 20260919001200 is run) the page
-// simply leaves those sections out: they add to a school page and must never break it.
 async function loadFacilities(db, schoolId) {
   const { data, error } = await db.from('school_facilities').select('facility,detail,source').eq('school_id', schoolId);
   if (error) return { rows: [], error };
@@ -468,9 +588,19 @@ async function loadAchievements(db, schoolId) {
     .order('year', { ascending: false, nullsFirst: false });
   if (error) return { groups: [], error };
   const groups = Object.keys(ACHIEVEMENT_INFO)
-    .map((kind) => ({ kind, label: ACHIEVEMENT_INFO[kind][0], icon: ACHIEVEMENT_INFO[kind][1], items: (data ?? []).filter((a) => a.kind === kind) }))
+    .map((kind) => ({ kind, label: t(ACHIEVEMENT_INFO[kind][0]), icon: ACHIEVEMENT_INFO[kind][1], items: (data ?? []).filter((a) => a.kind === kind) }))
     .filter((g) => g.items.length);
   return { groups, error: null };
+}
+
+// Every fee a family pays at this school, per level, for the breakdown on the school page.
+async function loadFeeSchedules(db, schoolId) {
+  const { data, error } = await db.from('school_fee_schedules')
+    .select('level,academic_year,tuition,transport,meals,uniform_books,activities,other_annual,admission_fee,registration_fee,deposit,annual_total,first_year_total,note,source,source_url')
+    .eq('school_id', schoolId);
+  if (error) return { rows: [], error };
+  const order = ['daycare', 'preschool', 'primary', 'secondary'];
+  return { rows: (data ?? []).sort((a, b) => order.indexOf(a.level) - order.indexOf(b.level)), error: null };
 }
 
 async function loadStats(db, ids) {
@@ -493,6 +623,17 @@ async function loadSchools(db, filters, page, place = null) {
   return { rows: rows.map((r) => ({ ...r, community: stats[r.id] ?? null })), hasMore: rows.length === PAGE_SIZE, error: null };
 }
 
+// The counts on the dashboard: how many schools, how many with admissions open or closed.
+async function loadTiles(db, place, km) {
+  const { data, error } = await db.rpc('school_tiles', {
+    p_lat: validPlace(place) ? place.lat : null,
+    p_lng: validPlace(place) ? place.lng : null,
+    p_km: validPlace(place) && km > 0 ? km : null,
+  });
+  if (error || !data) return { tiles: null, error: error ?? null };
+  return { tiles: data, error: null };
+}
+
 async function loadReviews(db, schoolId) {
   const { data, error } = await db.from('school_reviews')
     .select('id,rating,title,body,relationship,created_at')
@@ -501,7 +642,6 @@ async function loadReviews(db, schoolId) {
   return { rows: data ?? [], error };
 }
 
-// The signed-in parent's own review of this school (any status), or null. Row level security shows them only their own.
 async function loadMyReview(db, schoolId) {
   const own = await db.from('school_review_private').select('review_id,moderation_note').eq('school_id', schoolId).maybeSingle();
   if (own.error || !own.data) return { review: null, error: own.error ?? null };
@@ -510,15 +650,20 @@ async function loadMyReview(db, schoolId) {
   return { review: { ...rev.data, moderation_note: own.data.moderation_note }, error: null };
 }
 
+// Counts as "the parent went to the school's own site", so a school can see how much interest Kidscover sends it.
+// It is only a count: which parent is never shown to the school.
+async function noteOutboundClick(db, schoolId, kind = 'website') {
+  try { await db.rpc('log_outbound_click', { p_school: schoolId, p_kind: kind }); } catch { /* never in the way of opening the link */ }
+}
+
 // ---- admissions enquiries: a parent asks a school about joining, and the conversation that follows ----
 const ENQUIRY_COLUMNS = 'id,school_id,school_name,subject,grade_of_interest,start_year,status,created_at,last_message_at,message_count,last_message,unread_for_parent';
-const MESSAGE_COLUMNS = 'id,sender_id,message,created_at';
+const MESSAGE_COLUMNS = 'id,sender_id,sender_role,message,created_at';
 const MAX_ENQUIRY = 2000;
 const MIN_ENQUIRY = 10;
 
-const GRADE_CHOICES = ['Nursery', 'Jr KG', 'Sr KG', 'Class 1 to 5', 'Class 6 to 8', 'Class 9 to 10', 'Class 11 to 12'];
+const GRADE_CHOICES = ['grade.nursery', 'grade.jrkg', 'grade.srkg', 'grade.1to5', 'grade.6to8', 'grade.9to10', 'grade.11to12'];
 
-// This year and the two after it: nobody plans a school admission further ahead than that.
 function startYearChoices(today = new Date()) {
   const y = today.getFullYear();
   return [y, y + 1, y + 2];
@@ -526,46 +671,49 @@ function startYearChoices(today = new Date()) {
 
 function validateEnquiry({ message }) {
   const len = (message ?? '').trim().length;
-  if (len < MIN_ENQUIRY) return `Please write a little more (at least ${MIN_ENQUIRY} characters, ${len} so far).`;
-  if (len > MAX_ENQUIRY) return `Please keep your question under ${MAX_ENQUIRY} characters.`;
+  if (len < MIN_ENQUIRY) return t('enquiry.tooShort', { min: MIN_ENQUIRY, count: len });
+  if (len > MAX_ENQUIRY) return t('enquiry.tooLong', { max: MAX_ENQUIRY });
   return null;
 }
 
-// The subject is what the school sees first in its inbox.
-function enquirySubject(grade) {
-  const g = (grade ?? '').trim();
-  return (g ? `Admission enquiry - ${g}` : 'Admission enquiry').slice(0, 120);
+// The subject is what the school sees first in its inbox. It is stored in English so every school reads it the same.
+function enquirySubject(gradeKey) {
+  const grade = gradeKey ? EN_GRADES[gradeKey] ?? '' : '';
+  return (grade ? `Admission enquiry - ${grade}` : 'Admission enquiry').slice(0, 120);
 }
+const EN_GRADES = {
+  'grade.nursery': 'Nursery', 'grade.jrkg': 'Jr KG', 'grade.srkg': 'Sr KG', 'grade.1to5': 'Class 1 to 5',
+  'grade.6to8': 'Class 6 to 8', 'grade.9to10': 'Class 9 to 10', 'grade.11to12': 'Class 11 to 12',
+};
 
 function enquiryStatusText(status) {
-  if (status === 'open') return 'Waiting for a reply';
-  if (status === 'replied') return 'They have replied';
-  if (status === 'closed') return 'Closed';
+  if (status === 'open') return t('enquiry.waiting');
+  if (status === 'replied') return t('enquiry.replied');
+  if (status === 'closed') return t('enquiry.closed');
   return '';
 }
 
 function enquiryAbout(thread) {
   const bits = [];
   if (thread?.grade_of_interest) bits.push(thread.grade_of_interest);
-  if (thread?.start_year) bits.push(`starting ${thread.start_year}`);
+  if (thread?.start_year) bits.push(t('enquiry.starting', { year: thread.start_year }));
   return bits.join(', ');
 }
 
-const unreadCount = (threads) => (threads ?? []).filter((t) => t.unread_for_parent).length;
+const unreadCount = (threads) => (threads ?? []).filter((t2) => t2.unread_for_parent).length;
 
-// A message is "yours" when you sent it; anything else came from the school side. The app never learns who a staff
-// member is: it only compares against its own user id.
+// A message is "yours" when you sent it; anything else came from the school side.
 const fromMe = (message, myId) => !!myId && message?.sender_id === myId;
+const messageFrom = (message, myId) => (fromMe(message, myId) ? t('enquiry.you') : message?.sender_role === 'school' ? t('enquiry.theSchool') : t('enquiry.kidscover'));
 
 const isMissingEnquiries = (error) => error?.code === 'PGRST202' || error?.code === 'PGRST205' || /enquiry_threads|send_enquiry|ticket_messages/i.test(String(error?.message ?? ''));
-const ENQUIRIES_MISSING_TEXT = 'Asking schools is not switched on yet. Please try again later.';
 
 async function sendEnquiry(db, schoolId, form) {
   return db.rpc('send_enquiry', {
     p_school: schoolId,
     p_subject: enquirySubject(form.grade),
     p_message: (form.message ?? '').trim(),
-    p_grade: form.grade ? form.grade : null,
+    p_grade: form.grade ? EN_GRADES[form.grade] ?? null : null,
     p_start_year: form.startYear ?? null,
   });
 }
@@ -575,7 +723,6 @@ async function loadEnquiries(db) {
   return { rows: data ?? [], error };
 }
 
-// The parent's own enquiry about one school, if there is one, so the school page can offer to open it instead.
 async function loadEnquiryForSchool(db, schoolId) {
   const { data, error } = await db.from('enquiry_threads').select(ENQUIRY_COLUMNS).eq('school_id', schoolId).order('last_message_at', { ascending: false }).limit(1);
   return { thread: (data ?? [])[0] ?? null, error };
@@ -595,6 +742,221 @@ const submitReview = (db, schoolId, f) => db.from('school_reviews').insert({ sch
 const updateReview = (db, id, f) => db.from('school_reviews').update(reviewFields(f)).eq('id', id);
 const deleteReview = (db, id) => db.from('school_reviews').delete().eq('id', id);
 const reportReview = (db, reviewId, reason) => db.from('review_reports').insert({ review_id: reviewId, reason });
+
+// ---- applying: the Kidscover Standard form -----------------------------------------------------------------------------
+const APPLY_CLASSES = ['playgroup', 'nursery', 'jr_kg', 'sr_kg', 'class_1', 'class_2', 'class_3', 'class_4', 'class_5',
+  'class_6', 'class_7', 'class_8', 'class_9', 'class_10', 'class_11', 'class_12'];
+const APPLY_RELATIONS = ['mother', 'father', 'guardian'];
+const APPLY_GENDERS = ['girl', 'boy', 'other'];
+const APPLICATION_STAGES = ['submitted', 'in_review', 'visit_scheduled', 'offered', 'waitlisted', 'accepted', 'declined', 'withdrawn'];
+const APPLICATION_COLUMNS = 'id,school_id,status,status_note,child_first_name,child_last_name,child_dob,child_gender,'
+  + 'class_applying,academic_year,current_school,parent_name,parent_relation,parent_phone,parent_email,address,pincode,'
+  + 'notes,consent_at,created_at,updated_at,schools(name)';
+
+const classLabel = (key) => t(`class.${key}`);
+const stageText = (status) => t(`stage.${status}`);
+
+// The two school years a family can apply for, written the way schools do: 2027-28.
+function academicYearChoices(today = new Date()) {
+  const start = today.getMonth() >= 3 ? today.getFullYear() : today.getFullYear() - 1;
+  return [start, start + 1, start + 2].map((y) => `${y}-${String((y + 1) % 100).padStart(2, '0')}`);
+}
+
+const EMPTY_APPLICATION = {
+  child_first_name: '', child_last_name: '', child_dob: '', child_gender: '', class_applying: '', academic_year: '',
+  current_school: '', parent_name: '', parent_relation: 'mother', parent_phone: '', parent_email: '', address: '',
+  pincode: '', notes: '', consent: false,
+};
+
+// Everything the form must have before it is worth sending. The database checks all of this again.
+function validateApplication(form, today = new Date()) {
+  const need = (value, min, max) => { const s = String(value ?? '').trim(); return s.length >= min && s.length <= max; };
+  if (!need(form.child_first_name, 1, 60) || !need(form.child_last_name, 1, 60)) return t('apply.needChildName');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(form.child_dob ?? '').trim())) return t('apply.needDob');
+  const dob = new Date(`${form.child_dob}T00:00:00Z`);
+  const age = (today.getTime() - dob.getTime()) / (365.25 * 24 * 3600 * 1000);
+  if (Number.isNaN(dob.getTime()) || age < 0.5 || age > 20) return t('apply.dobLooksWrong');
+  if (form.child_gender && !APPLY_GENDERS.includes(form.child_gender)) return t('apply.needGender');
+  if (!APPLY_CLASSES.includes(form.class_applying)) return t('apply.needClass');
+  if (!/^20\d\d-\d\d$/.test(String(form.academic_year ?? ''))) return t('apply.needYear');
+  if (!need(form.parent_name, 2, 120)) return t('apply.needParentName');
+  if (!APPLY_RELATIONS.includes(form.parent_relation)) return t('apply.needRelation');
+  if (!/^\+?[0-9]{10,15}$/.test(String(form.parent_phone ?? '').replace(/[\s()-]/g, ''))) return t('apply.needPhone');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(form.parent_email ?? '').trim())) return t('apply.needEmail');
+  if (!need(form.address, 5, 300)) return t('apply.needAddress');
+  if (!/^[1-9][0-9]{5}$/.test(String(form.pincode ?? '').trim())) return t('apply.needPincode');
+  if (String(form.notes ?? '').length > 1000) return t('apply.notesTooLong');
+  if (!form.consent) return t('apply.needConsent');
+  return null;
+}
+
+async function submitApplication(db, schoolId, form) {
+  const problem = validateApplication(form);
+  if (problem) return { error: { message: problem } };
+  const clean = {
+    child_first_name: form.child_first_name.trim(), child_last_name: form.child_last_name.trim(),
+    child_dob: form.child_dob.trim(), class_applying: form.class_applying, academic_year: form.academic_year,
+    parent_name: form.parent_name.trim(), parent_relation: form.parent_relation,
+    parent_phone: String(form.parent_phone).replace(/[\s()-]/g, ''), parent_email: form.parent_email.trim().toLowerCase(),
+    address: form.address.trim(), pincode: form.pincode.trim(), consent: true,
+  };
+  if (form.child_gender) clean.child_gender = form.child_gender;
+  if (String(form.current_school ?? '').trim()) clean.current_school = form.current_school.trim();
+  if (String(form.notes ?? '').trim()) clean.notes = form.notes.trim();
+  const { data, error } = await db.rpc('submit_admission_application', { p_school: schoolId, p_form: clean });
+  return { id: data ?? null, error: error ?? null };
+}
+
+async function loadApplications(db) {
+  const { data, error } = await db.from('admission_applications').select(APPLICATION_COLUMNS).order('created_at', { ascending: false }).limit(50);
+  const rows = (data ?? []).map((r) => ({ ...r, school_name: (Array.isArray(r.schools) ? r.schools[0] : r.schools)?.name ?? '' }));
+  return { rows, error: error ?? null };
+}
+
+async function loadApplicationEvents(db, applicationId) {
+  const { data, error } = await db.from('admission_application_events').select('id,status,note,by_role,at')
+    .eq('application_id', applicationId).order('at', { ascending: true }).limit(50);
+  return { rows: data ?? [], error: error ?? null };
+}
+
+const withdrawApplication = (db, id) => db.rpc('withdraw_admission_application', { p_app: id });
+const deleteApplication = (db, id) => db.rpc('delete_admission_application', { p_app: id });
+
+const isMissingApplications = (error) => error?.code === 'PGRST202' || error?.code === 'PGRST205'
+  || /admission_application|submit_admission/i.test(String(error?.message ?? ''));
+
+// Which of a parent's applications are still moving, for the badge on the button.
+const liveApplications = (rows) => (rows ?? []).filter((r) => !['withdrawn', 'declined', 'accepted'].includes(r.status)).length;
+
+// ---- comparing schools ---------------------------------------------------------------------------------------------
+function toggleCompare(list, school, max = MAX_COMPARE) {
+  const ids = list.map((s) => s.id);
+  if (ids.includes(school.id)) return { list: list.filter((s) => s.id !== school.id), full: false };
+  if (list.length >= max) return { list, full: true };
+  return { list: [...list, school], full: false };
+}
+
+// The rows of the comparison table, in the order a family cares about.
+function compareRows(schools, level) {
+  const value = (fn) => schools.map(fn);
+  return [
+    { key: 'fees', label: t('compare.cost'), values: value((s) => feeSummaryText(s, level) || t('compare.notKnown')) },
+    { key: 'distance', label: t('compare.distance'), values: value((s) => distanceText(s.distance_km) || t('compare.notKnown')) },
+    { key: 'drive', label: t('compare.drive'), values: value((s) => driveTimeText(s.drive) || t('compare.notKnown')) },
+    { key: 'levels', label: t('compare.levels'), values: value((s) => (levelBadges(s.levels).join(', ') || t('compare.notKnown'))) },
+    { key: 'board', label: t('compare.board'), values: value((s) => s.board || t('compare.notKnown')) },
+    { key: 'admissions', label: t('compare.admissions'), values: value((s) => (admissionText(s) ? (s.admissions_open ? t('compare.open') : t('compare.closed')) : t('compare.notKnown'))) },
+    { key: 'google', label: t('compare.google'), values: value((s) => (s.google_rating ? Number(s.google_rating).toFixed(1) : t('compare.notKnown'))) },
+    { key: 'parents', label: t('compare.parents'), values: value((s) => (s.community?.review_count ? Number(s.community.avg_rating).toFixed(1) : t('compare.notKnown'))) },
+    { key: 'start', label: t('compare.start'), values: value((s) => (s.start_time ? String(s.start_time).slice(0, 5) : t('compare.notKnown'))) },
+  ];
+}
+
+// ---- notifications on the phone ---------------------------------------------------------------------------------------
+// `notifications` is expo-notifications (or a stand-in in tests). Returns what happened, so the settings screen can say.
+async function registerForPush(notifications, db, platform = 'android', projectId = null) {
+  try {
+    if (!notifications?.getPermissionsAsync) return { ok: false, reason: 'unavailable' };
+    const current = await notifications.getPermissionsAsync();
+    let granted = current?.granted || current?.status === 'granted';
+    if (!granted) {
+      const asked = await notifications.requestPermissionsAsync();
+      granted = asked?.granted || asked?.status === 'granted';
+    }
+    if (!granted) return { ok: false, reason: 'denied' };
+    const token = await notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
+    const value = token?.data ?? '';
+    if (!/^Expo(nent)?PushToken\[/.test(value)) return { ok: false, reason: 'no_token' };
+    const { error } = await db.rpc('register_push_device', { p_token: value, p_platform: platform });
+    if (error) return { ok: false, reason: 'not_saved' };
+    return { ok: true, token: value };
+  } catch (_e) {
+    return { ok: false, reason: 'unavailable' };
+  }
+}
+
+async function forgetPush(notifications, db, platform = 'android', projectId = null) {
+  try {
+    const token = await notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
+    if (token?.data) await db.rpc('unregister_push_device', { p_token: token.data });
+  } catch { /* nothing to forget */ }
+}
+
+async function loadNotifications(db) {
+  const { data, error } = await db.from('notifications').select('id,kind,school_id,ticket_id,application_id,status,created_at,read_at')
+    .order('created_at', { ascending: false }).limit(50);
+  return { rows: data ?? [], error: error ?? null };
+}
+const markNotificationsRead = async (db) => { const { error } = await db.rpc('mark_notifications_read', { p_ids: null }); return { error: error ?? null }; };
+
+// ---- each person's own settings ---------------------------------------------------------------------------------------
+async function loadSettings(db, userId) {
+  const { data, error } = await db.from('profiles').select('language,notify_push,first_name,last_name,email').eq('id', userId).maybeSingle();
+  return { settings: data ?? null, error: error ?? null };
+}
+// These run the moment they are called: a query that is only built and never waited for is never sent.
+async function saveLanguage(db, userId, language) {
+  const { error } = await db.from('profiles').update({ language }).eq('id', userId);
+  return { error: error ?? null };
+}
+async function savePushChoice(db, userId, on) {
+  const { error } = await db.from('profiles').update({ notify_push: !!on }).eq('id', userId);
+  return { error: error ?? null };
+}
+
+// Deleting the account: the app asks the person to type their password again first, so a phone left unlocked on a
+// table cannot wipe someone's account.
+async function deleteAccount(db, email, password) {
+  const again = await db.auth.signInWithPassword({ email, password });
+  if (again.error) return { error: { message: t('settings.wrongPassword') } };
+  let res;
+  try {
+    res = await db.functions.invoke('delete-account', { body: {} });
+  } catch (_e) {
+    return { error: { message: t('error.network') } };
+  }
+  const data = res?.data;
+  if (res?.error || !data?.ok) {
+    if (data?.code === 'reauth') return { error: { message: t('settings.signInAgain') } };
+    if (data?.code === 'not_configured') return { error: { message: t('settings.deleteNotReady') } };
+    return { error: { message: t('error.general') } };
+  }
+  return { error: null };
+}
+
+// ---- unlocking with a fingerprint ---------------------------------------------------------------------------------------
+// `auth` is expo-local-authentication (or a stand-in in tests).
+async function biometricKind(auth) {
+  try {
+    if (!auth?.hasHardwareAsync) return 'none';
+    const [hardware, enrolled, types] = await Promise.all([
+      auth.hasHardwareAsync(), auth.isEnrolledAsync(), auth.supportedAuthenticationTypesAsync?.() ?? Promise.resolve([]),
+    ]);
+    if (!hardware || !enrolled) return 'none';
+    const list = types ?? [];
+    if (list.includes(auth.AuthenticationType?.FACIAL_RECOGNITION)) return 'face';
+    if (list.includes(auth.AuthenticationType?.IRIS)) return 'iris';
+    return 'fingerprint';
+  } catch {
+    return 'none';
+  }
+}
+
+async function unlockWithBiometrics(auth, promptMessage) {
+  try {
+    const res = await auth.authenticateAsync({ promptMessage, disableDeviceFallback: false, cancelLabel: t('lock.usePassword') });
+    return { ok: !!res?.success, error: res?.error ?? null };
+  } catch (e) {
+    return { ok: false, error: e?.message ?? 'failed' };
+  }
+}
+
+const BIOMETRIC_SETTING = 'kidscover.unlockWithBiometrics';
+const LANGUAGE_SETTING = 'kidscover.language';
+// How long the app may sit in the background before it asks for the fingerprint again.
+const LOCK_AFTER_MS = 2 * 60 * 1000;
+
+const shouldLock = (enabled, leftAt, now = Date.now(), after = LOCK_AFTER_MS) => !!enabled && !!leftAt && now - leftAt >= after;
 
 // ==== END pure logic ====
 
@@ -664,7 +1026,7 @@ function WelcomeArt({ height = 200 }) {
   );
 }
 
-// A drawn school, in colours of its own: shown when a school has no photo, big on its page or small on its card.
+// A drawn school, in colours of its own: shown when a school has no photo.
 function SchoolArt({ seed, height = 180, compact = false, testID }) {
   const k = artColours(seed);
   return (
@@ -714,7 +1076,7 @@ function SchoolPicture({ school, height, compact = false, testID }) {
   if (url) {
     return (
       <Image testID={testID ? `${testID}-photo` : undefined} source={{ uri: url }} resizeMode="cover" onError={() => setBroken(true)}
-        accessibilityLabel={`Photo of ${cleanName(school.name)}`} style={{ width: '100%', height, backgroundColor: C.blueSoft }} />
+        accessibilityLabel={t('photo.of', { name: cleanName(school.name) })} style={{ width: '100%', height, backgroundColor: C.blueSoft }} />
     );
   }
   return <SchoolArt seed={school.id} height={height} compact={compact} testID={testID ? `${testID}-art` : undefined} />;
@@ -743,8 +1105,34 @@ const Notice = ({ tone = 'red', text, testID }) => (
   </View>
 );
 
+const Field = ({ label, hint, children }) => (
+  <View style={{ marginBottom: 6 }}>
+    <Text style={s.label}>{label}</Text>
+    {children}
+    {!!hint && <Text style={s.muted}>{hint}</Text>}
+  </View>
+);
+
+// ---------------------------------------------------------------------------------------------- language
+function LanguageScreen({ current, onPick, onClose }) {
+  return (
+    <ScrollView testID="language-screen" contentContainerStyle={{ padding: 16 }}>
+      <Btn testID="language-back" kind="quiet" label={t('back')} onPress={onClose} />
+      <Text style={s.title}>{t('settings.language')}</Text>
+      <Text style={s.muted}>{t('settings.languageHelp')}</Text>
+      {LANGUAGES.map((l) => (
+        <Pressable key={l.code} testID={`language-${l.code}`} accessibilityRole="button" onPress={() => onPick(l.code)}
+          style={[s.card, current === l.code && { borderColor: C.blue, backgroundColor: C.blueSoft }]}>
+          <Text style={s.schoolName}>{l.endonym}</Text>
+          <Text style={s.muted}>{l.name}{l.rtl ? ' \u00b7 right to left' : ''}</Text>
+        </Pressable>
+      ))}
+    </ScrollView>
+  );
+}
+
 // ---------------------------------------------------------------------------------------------- sign in / sign up
-function AuthScreen() {
+function AuthScreen({ language, onPickLanguage }) {
   const [mode, setMode] = useState('signin');
   const [first, setFirst] = useState('');
   const [last, setLast] = useState('');
@@ -764,10 +1152,14 @@ function AuthScreen() {
       const { error: e } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
       if (e) setError(friendlyError(e));
     } else {
-      const { data, error: e } = await supabase.auth.signUp({ email: email.trim(), password, options: { data: { first_name: first.trim(), last_name: last.trim() } } });
+      const { data, error: e } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: { data: { first_name: first.trim(), last_name: last.trim(), language } },
+      });
       if (e) setError(friendlyError(e));
       else if (!data?.session) {
-        setInfo('Almost there! We sent you an email. Open the link in it to confirm your account, then sign in here.');
+        setInfo(t('auth.checkEmail'));
         setMode('signin');
         setPassword('');
       }
@@ -782,54 +1174,104 @@ function AuthScreen() {
         <LogoMark size={36} />
         <Text style={s.logo}>Kidscover</Text>
       </View>
-      <Text style={s.tagline}>Find the right school for your child, with real information.</Text>
+      <Text style={s.tagline}>{t('auth.tagline')}</Text>
+      <View style={{ alignItems: 'center' }}>
+        <Btn testID="auth-language" kind="quiet" label={`\ud83c\udf10 ${languageName(language)}`} onPress={onPickLanguage} />
+      </View>
       <View style={[s.card, s.authCard]}>
-        <Text style={s.h2}>{mode === 'signin' ? 'Sign in' : 'Create your account'}</Text>
+        <Text style={s.h2}>{mode === 'signin' ? t('auth.signIn') : t('auth.createAccount')}</Text>
         {mode === 'signup' && (
           <View style={{ flexDirection: 'row', gap: 8 }}>
-            <TextInput testID="first-name" style={[s.input, { flex: 1 }]} placeholder="First name" value={first} onChangeText={setFirst} />
-            <TextInput testID="last-name" style={[s.input, { flex: 1 }]} placeholder="Last name" value={last} onChangeText={setLast} />
+            <TextInput testID="first-name" style={[s.input, { flex: 1 }]} placeholder={t('auth.firstName')} value={first} onChangeText={setFirst} />
+            <TextInput testID="last-name" style={[s.input, { flex: 1 }]} placeholder={t('auth.lastName')} value={last} onChangeText={setLast} />
           </View>
         )}
-        <TextInput testID="email" style={s.input} placeholder="Email address" autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} />
-        <TextInput testID="password" style={s.input} placeholder="Password" secureTextEntry value={password} onChangeText={setPassword} />
+        <TextInput testID="email" style={s.input} placeholder={t('auth.email')} autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} />
+        <TextInput testID="password" style={s.input} placeholder={t('auth.password')} secureTextEntry value={password} onChangeText={setPassword} />
         {!!error && <Notice text={error} testID="auth-error" />}
         {!!info && <Notice tone="green" text={info} testID="auth-info" />}
-        <Btn testID="auth-submit" label={busy ? 'Please wait...' : mode === 'signin' ? 'Sign in' : 'Create account'} onPress={submit} disabled={busy} />
-        <Btn testID="auth-switch" kind="quiet" label={mode === 'signin' ? 'New here? Create an account' : 'Already have an account? Sign in'}
+        <Btn testID="auth-submit" label={busy ? t('pleaseWait') : mode === 'signin' ? t('auth.signIn') : t('auth.createAccount')} onPress={submit} disabled={busy} />
+        <Btn testID="auth-switch" kind="quiet" label={mode === 'signin' ? t('auth.newHere') : t('auth.haveAccount')}
           onPress={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(''); setInfo(''); }} />
       </View>
     </ScrollView>
   );
 }
 
+// ---------------------------------------------------------------------------------------------- the lock screen
+function LockScreen({ kind, onUnlock, onSignOut, busy, error }) {
+  return (
+    <View style={[s.root, s.center]} testID="lock-screen">
+      <LogoMark size={44} />
+      <Text style={[s.title, { textAlign: 'center' }]}>{t('lock.title')}</Text>
+      <Text style={[s.body, { textAlign: 'center', marginBottom: 12 }]}>
+        {kind === 'face' ? t('lock.face') : kind === 'iris' ? t('lock.iris') : t('lock.fingerprint')}
+      </Text>
+      {!!error && <Notice text={error} testID="lock-error" />}
+      <Btn testID="lock-unlock" label={busy ? t('pleaseWait') : t('lock.unlock')} onPress={onUnlock} disabled={busy} />
+      <Btn testID="lock-signout" kind="quiet" label={t('lock.usePassword')} onPress={onSignOut} />
+    </View>
+  );
+}
+
 // ---------------------------------------------------------------------------------------------- discover
-function SchoolCard({ school, drive, onPress }) {
+function Tiles({ tiles, onOpenAdmissions }) {
+  if (!tiles) return null;
+  return (
+    <View style={s.tileRow} testID="tiles">
+      <View style={[s.tile, { backgroundColor: C.blueSoft }]}>
+        <Text testID="tile-schools" style={[s.tileNumber, { color: C.blue }]}>{tiles.schools ?? 0}</Text>
+        <Text style={s.tileLabel}>{t('tiles.schools')}</Text>
+      </View>
+      <Pressable testID="tile-open" accessibilityRole="button" onPress={onOpenAdmissions} style={[s.tile, { backgroundColor: C.greenSoft }]}>
+        <Text style={[s.tileNumber, { color: C.green }]}>{tiles.admissions_open ?? 0}</Text>
+        <Text style={s.tileLabel}>{t('tiles.open')}</Text>
+      </Pressable>
+      <View style={[s.tile, { backgroundColor: C.sunSoft }]}>
+        <Text testID="tile-fees" style={[s.tileNumber, { color: C.amber }]}>{tiles.with_fees ?? 0}</Text>
+        <Text style={s.tileLabel}>{t('tiles.withFees')}</Text>
+      </View>
+    </View>
+  );
+}
+
+function SchoolCard({ school, drive, level, comparing, onPress, onCompare }) {
   const community = communityText(school.community);
   const distance = distanceText(school.distance_km);
   const address = cleanAddress(school.address);
   const driving = driveTimeText(drive);
+  const fee = feeSummaryText(school, level);
   return (
-    <Pressable testID={`school-${school.id}`} accessibilityRole="button" onPress={onPress} style={[s.card, s.cardRow]}>
+    <View style={[s.card, { gap: 6 }]}>
+      <Pressable testID={`school-${school.id}`} accessibilityRole="button" onPress={onPress} style={s.cardRow}>
       <View style={s.thumb}><SchoolPicture school={school} height={78} compact testID={`thumb-${school.id}`} /></View>
       <View style={{ flex: 1, gap: 5 }}>
-      <Text style={s.schoolName}>{cleanName(school.name)}</Text>
-      {!!distance && <Text testID={`distance-${school.id}`} style={s.distance}>{distance}</Text>}
-      {!!driving && <Text testID={`drivetime-${school.id}`} style={s.distance}>{driving}</Text>}
-      {!!address && <Text style={s.muted} numberOfLines={2}>{address}</Text>}
-      <View style={s.badgeRow}>
-        {isSchoolPlace(school) && levelBadges(school.levels).map((b) => <Text key={b} style={s.badge}>{b}</Text>)}
-        {!!school.board && <Text style={[s.badge, { backgroundColor: C.greenSoft, color: C.green }]}>{school.board}</Text>}
-        {!!admissionText(school) && school.admissions_open && <Text testID={`open-${school.id}`} style={[s.badge, { backgroundColor: C.amberSoft, color: C.amber }]}>{`Admissions open${school.admissions_year ? ` ${school.admissions_year}` : ''}`}</Text>}
+        <Text style={s.schoolName}>{cleanName(school.name)}</Text>
+        {!!distance && <Text testID={`distance-${school.id}`} style={s.distance}>{distance}</Text>}
+        {!!driving && <Text testID={`drivetime-${school.id}`} style={s.distance}>{driving}</Text>}
+        {!!leaveByText(drive) && <Text testID={`leaveby-${school.id}`} style={s.distance}>{leaveByText(drive)}</Text>}
+        {!!fee && <Text testID={`fee-${school.id}`} style={[s.rating, { color: C.amber }]}>{fee}</Text>}
+        {!!address && <Text style={s.muted} numberOfLines={2}>{address}</Text>}
+        <View style={s.badgeRow}>
+          {isSchoolPlace(school) && levelBadges(school.levels).map((b) => <Text key={b} style={s.badge}>{b}</Text>)}
+          {!!school.board && <Text style={[s.badge, { backgroundColor: C.greenSoft, color: C.green }]}>{school.board}</Text>}
+          {!!admissionText(school) && school.admissions_open && <Text testID={`open-${school.id}`} style={[s.badge, { backgroundColor: C.amberSoft, color: C.amber }]}>{t('admissions.badge', { year: school.admissions_year ?? '' })}</Text>}
+        </View>
+        <Text style={s.rating}>{googleRatingText(school.google_rating, school.google_review_count)}</Text>
+        {!!community && <Text style={[s.rating, { color: C.green }]}>{community}</Text>}
       </View>
-      <Text style={s.rating}>{googleRatingText(school.google_rating, school.google_review_count)}</Text>
-      {!!community && <Text style={[s.rating, { color: C.green }]}>{community}</Text>}
-      </View>
-    </Pressable>
+      </Pressable>
+      {/* outside the card's own tap area, so choosing "compare" never opens the school by mistake */}
+      {isSchoolPlace(school) && (
+        <Pressable testID={`compare-${school.id}`} accessibilityRole="button" accessibilityState={{ selected: comparing }} onPress={onCompare} style={{ alignSelf: 'flex-start' }}>
+          <Text style={[s.compareTag, comparing && { backgroundColor: C.blue, color: '#fff' }]}>{comparing ? t('compare.added') : t('compare.add')}</Text>
+        </Pressable>
+      )}
+    </View>
   );
 }
 
-function DiscoverScreen({ onOpen }) {
+function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare }) {
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [typed, setTyped] = useState('');
   const [search, setSearch] = useState('');
@@ -838,19 +1280,20 @@ function DiscoverScreen({ onOpen }) {
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [place, setPlace] = useState(null); // where the parent is, once they allow it; kept in memory only
+  const [place, setPlace] = useState(null);
   const [locating, setLocating] = useState(false);
-  const [locationNote, setLocationNote] = useState(null); // { tone, text } about the location, kept apart from list errors
-  const [driveMode, setDriveMode] = useState(null); // null until the parent asks: drive times cost a Google lookup
-  const [driveTimes, setDriveTimes] = useState({}); // driveKey -> { minutes, km } | null (no route); in memory only
+  const [locationNote, setLocationNote] = useState(null);
+  const [driveMode, setDriveMode] = useState(null);
+  const [driveTimes, setDriveTimes] = useState({});
   const [driveNote, setDriveNote] = useState(null);
+  const [tiles, setTiles] = useState(null);
   const drivePending = useRef(new Set());
   const latest = useRef(0);
   const pageRef = useRef(0);
 
   useEffect(() => {
-    const t = setTimeout(() => setSearch(typed), 350); // wait until the parent pauses typing
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setSearch(typed), 350);
+    return () => clearTimeout(timer);
   }, [typed]);
 
   const key = JSON.stringify({ ...filters, search, place });
@@ -860,12 +1303,11 @@ function DiscoverScreen({ onOpen }) {
     setLoading(true);
     setError('');
     const res = await loadSchools(supabase, f, page, where);
-    if (id !== latest.current) return; // a newer search has replaced this one
+    if (id !== latest.current) return;
     if (res.error && where && isMissingNearby(res.error)) {
-      // the database function has not been installed: carry on without a position instead of showing a dead list
       setPlace(null);
       setFilters((cur) => normalizeFilters(cur, false));
-      setLocationNote({ tone: 'amber', text: NEARBY_MISSING_TEXT });
+      setLocationNote({ tone: 'amber', text: t('error.nearbyOff') });
     } else if (res.error) setError(friendlyError(res.error));
     else {
       pageRef.current = page;
@@ -876,6 +1318,13 @@ function DiscoverScreen({ onOpen }) {
   }, [key]);
 
   useEffect(() => { run(0, false); }, [run]);
+
+  // the tile counts follow the place and the distance the parent chose
+  useEffect(() => {
+    let alive = true;
+    loadTiles(supabase, place, filters.nearKm).then((res) => { if (alive && !res.error) setTiles(res.tiles); });
+    return () => { alive = false; };
+  }, [place, filters.nearKm]);
 
   const set = (patch) => setFilters((f) => ({ ...f, ...patch }));
   const cat = categoryOf(filters.category);
@@ -889,8 +1338,8 @@ function DiscoverScreen({ onOpen }) {
     setLocating(false);
     if (!res.ok) { setLocationNote({ tone: 'amber', text: locationProblemText(res.reason) }); return; }
     setPlace(res.place);
-    set({ sort: 'distance' }); // they asked for schools near them, so show the nearest first
-    if (!inServiceArea(res.place)) setLocationNote({ tone: 'amber', text: OUTSIDE_AREA_TEXT });
+    set({ sort: 'distance' });
+    if (!inServiceArea(res.place)) setLocationNote({ tone: 'amber', text: t('location.outsideArea') });
   }
 
   function stopUsingLocation() {
@@ -901,8 +1350,6 @@ function DiscoverScreen({ onOpen }) {
     setFilters((f) => normalizeFilters(f, false));
   }
 
-  // Once the parent has asked for drive times, fetch them for the schools on screen that do not have one yet: one
-  // lookup per page of 20. Results are kept per place and time of day, so going back to a list costs nothing.
   useEffect(() => {
     if (!place || !driveMode) return;
     const ids = needDriveTimes(rows, place, driveMode, driveTimes, drivePending.current);
@@ -913,7 +1360,7 @@ function DiscoverScreen({ onOpen }) {
     requestDriveTimes(supabase.functions, where, ids, mode).then((res) => {
       ids.forEach((id) => drivePending.current.delete(driveKey(where, mode, id)));
       if (!res.ok) {
-        setDriveMode(null); // stop asking; the parent can tap again once the problem is gone
+        setDriveMode(null);
         setDriveNote({ tone: 'amber', text: driveProblemText(res.code, res.limit) });
         return;
       }
@@ -923,101 +1370,119 @@ function DiscoverScreen({ onOpen }) {
         return next;
       });
       if (typeof res.lookupsLeft === 'number' && res.lookupsLeft <= 3) {
-        setDriveNote({ tone: 'amber', text: `${res.lookupsLeft} drive-time ${res.lookupsLeft === 1 ? 'lookup' : 'lookups'} left today.` });
+        setDriveNote({ tone: 'amber', text: t(res.lookupsLeft === 1 ? 'drive.lookupsLeftOne' : 'drive.lookupsLeft', { count: res.lookupsLeft }) });
       }
     });
   }, [rows, place, driveMode, driveTimes]);
 
   const driveFor = (item) => (place && driveMode ? driveTimes[driveKey(place, driveMode, item.id)] : undefined);
+  const comparingIds = compare.map((x) => x.id);
 
   const header = (
     <View>
       <View style={s.hero} testID="discover-hero">
         <View style={{ flex: 1, gap: 4 }}>
-          <Text style={s.heroTitle}>{cat.key === 'school' ? 'Find the right school' : cat.key === 'after_school' ? 'Classes after school' : 'Colleges'}</Text>
-          <Text style={s.heroText}>
-            {cat.key === 'school' ? 'Preschool to class 12, with boards, levels, drive times and what parents say.'
-              : cat.key === 'after_school' ? 'Music, dance, sports, art and tuition near you.' : 'Degree, engineering and business colleges.'}
-          </Text>
+          <Text style={s.heroTitle}>{t(`hero.${cat.key}.title`)}</Text>
+          <Text style={s.heroText}>{t(`hero.${cat.key}.text`)}</Text>
         </View>
         <View style={s.heroArt}><SchoolArt seed={cat.key} height={78} compact /></View>
       </View>
+      {cat.key === 'school' && <Tiles tiles={tiles} onOpenAdmissions={() => set({ admissionsOpen: !filters.admissionsOpen })} />}
       <View style={s.wrap}>
-        {CATEGORY_CHOICES.map((c) => <Chip key={c.key} testID={`category-${c.key}`} label={`${CATEGORY_ICONS[c.key]} ${c.label}`} selected={cat.key === c.key} onPress={() => set({ category: c.key })} />)}
+        {CATEGORY_CHOICES.map((c) => <Chip key={c.key} testID={`category-${c.key}`} label={`${CATEGORY_ICONS[c.key]} ${t(c.label)}`} selected={cat.key === c.key} onPress={() => set({ category: c.key })} />)}
       </View>
-      <TextInput testID="search" style={s.search} placeholder={cat.key === 'school' ? 'Search by school name or area' : `Search ${cat.noun} by name or area`} value={typed} onChangeText={setTyped} autoCorrect={false} />
+      <TextInput testID="search" style={s.search} placeholder={cat.key === 'school' ? t('search.schools') : t('search.other', { what: t(cat.noun) })} value={typed} onChangeText={setTyped} autoCorrect={false} />
       {hasPlace ? (
         <View style={[s.card, { marginBottom: 8 }]} testID="near-me-on">
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={s.body}>Distances are from your location</Text>
-            <Btn testID="stop-location" kind="quiet" label="Turn off" onPress={stopUsingLocation} />
+            <Text style={s.body}>{t('location.on')}</Text>
+            <Btn testID="stop-location" kind="quiet" label={t('location.turnOff')} onPress={stopUsingLocation} />
           </View>
           <View style={s.wrap}>
-            {DISTANCE_CHOICES.map((d) => <Chip key={String(d.km)} testID={`near-${d.km ?? 'any'}`} label={d.label} selected={filters.nearKm === d.km} onPress={() => set({ nearKm: d.km })} />)}
+            {DISTANCE_CHOICES.map((d) => <Chip key={String(d.km)} testID={`near-${d.km ?? 'any'}`} label={t(d.label)} selected={filters.nearKm === d.km} onPress={() => set({ nearKm: d.km })} />)}
           </View>
-          <Text style={s.muted}>In a straight line, not by road.</Text>
-          <Text style={s.label}>Drive time by car</Text>
+          <Text style={s.muted}>{t('location.straightLine')}</Text>
+          <Text style={s.label}>{t('drive.title')}</Text>
           <View style={s.wrap}>
             {DRIVE_MODES.map((m) => (
-              <Chip key={m.key} testID={`drive-mode-${m.key}`} label={m.label} selected={driveMode === m.key}
+              <Chip key={m.key} testID={`drive-mode-${m.key}`} label={t(m.label)} selected={driveMode === m.key}
                 onPress={() => { setDriveNote(null); setDriveMode(driveMode === m.key ? null : m.key); }} />
             ))}
           </View>
-          <Text style={s.muted}>Worked out by Google Maps from your approximate location, which Kidscover does not store. Each screen of 20 schools uses one of your daily lookups.</Text>
+          <Text style={s.muted}>{t('drive.note')}</Text>
           {!!driveNote && <Notice tone={driveNote.tone} text={driveNote.text} testID="drive-note" />}
         </View>
       ) : (
         <View style={[s.card, { marginBottom: 8 }]} testID="near-me-off">
-          <Btn testID="use-location" kind="outline" label={locating ? 'Finding you...' : 'Use my location'} onPress={useMyLocation} disabled={locating} />
-          <Text style={s.muted}>See how far each school is from you. Your location is only used to measure distance and is not saved.</Text>
+          <Btn testID="use-location" kind="outline" label={locating ? t('location.finding') : t('location.use')} onPress={useMyLocation} disabled={locating} />
+          <Text style={s.muted}>{t('location.why')}</Text>
         </View>
       )}
       {!!locationNote && <Notice tone={locationNote.tone} text={locationNote.text} testID="location-note" />}
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-        <Btn testID="toggle-filters" kind="outline" label={showFilters ? 'Hide filters' : `Filters${count ? ` (${count})` : ''}`} onPress={() => setShowFilters((v) => !v)} />
-        {count > 0 && <Btn testID="clear-filters" kind="quiet" label="Clear filters" onPress={() => setFilters({ ...DEFAULT_FILTERS, category: cat.key, sort: defaultSort(hasPlace) })} />}
+        <Btn testID="toggle-filters" kind="outline" label={showFilters ? t('filters.hide') : count ? t('filters.showCount', { count }) : t('filters.show')} onPress={() => setShowFilters((v) => !v)} />
+        {count > 0 && <Btn testID="clear-filters" kind="quiet" label={t('filters.clear')} onPress={() => setFilters({ ...DEFAULT_FILTERS, category: cat.key, sort: defaultSort(hasPlace) })} />}
       </View>
       {showFilters && (
         <View style={[s.card, { marginBottom: 12 }]}>
           {cat.key === 'school' && (<>
-          <Text style={s.label}>Level</Text>
-          <View style={s.wrap}>
-            {LEVEL_CHOICES.map((l) => <Chip key={l.key} testID={`level-${l.key}`} label={l.label} selected={filters.level === l.key} onPress={() => set({ level: filters.level === l.key ? null : l.key })} />)}
-          </View>
-          <View style={s.switchRow}>
-            <Text style={s.body}>Daycare available</Text>
-            <Switch testID="daycare" value={filters.daycare} onValueChange={(v) => set({ daycare: v })} />
-          </View>
-          <Text style={s.label}>Board</Text>
-          <View style={s.wrap}>
-            {BOARD_CHOICES.map((b) => <Chip key={b} testID={`board-${b}`} label={b} selected={filters.board === b} onPress={() => set({ board: filters.board === b ? null : b })} />)}
-          </View>
-          {!!filters.board && (
-            <View style={s.switchRow}>
-              <View style={{ flex: 1, paddingRight: 8 }}>
-                <Text style={s.body}>Also show schools whose board we do not know yet</Text>
-                <Text style={s.muted}>Kidscover is still checking boards with each school, so many are not known yet.</Text>
-              </View>
-              <Switch testID="include-unknown-board" value={filters.includeUnknownBoard} onValueChange={(v) => set({ includeUnknownBoard: v })} />
+            <Text style={s.label}>{t('filters.level')}</Text>
+            <View style={s.wrap}>
+              {LEVEL_CHOICES.map((l) => <Chip key={l.key} testID={`level-${l.key}`} label={t(l.label)} selected={filters.level === l.key} onPress={() => set({ level: filters.level === l.key ? null : l.key })} />)}
             </View>
-          )}
+            <View style={s.switchRow}>
+              <Text style={s.body}>{t('filters.daycare')}</Text>
+              <Switch testID="daycare" value={filters.daycare} onValueChange={(v) => set({ daycare: v })} />
+            </View>
+            <Text style={s.label}>{t('filters.board')}</Text>
+            <View style={s.wrap}>
+              {BOARD_CHOICES.map((b) => <Chip key={b} testID={`board-${b}`} label={b} selected={filters.board === b} onPress={() => set({ board: filters.board === b ? null : b })} />)}
+            </View>
+            {!!filters.board && (
+              <View style={s.switchRow}>
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <Text style={s.body}>{t('filters.unknownBoard')}</Text>
+                  <Text style={s.muted}>{t('filters.unknownBoardHelp')}</Text>
+                </View>
+                <Switch testID="include-unknown-board" value={filters.includeUnknownBoard} onValueChange={(v) => set({ includeUnknownBoard: v })} />
+              </View>
+            )}
+            <Text style={s.label}>{t('filters.cost')}</Text>
+            <Text style={s.muted}>{t('filters.costHelp')}</Text>
+            <View style={s.wrap}>
+              {BUDGET_CHOICES.map((b) => <Chip key={String(b)} testID={`budget-${b ?? 'any'}`} label={budgetLabel(b)} selected={filters.maxFee === b} onPress={() => set({ maxFee: b })} />)}
+            </View>
+            {!!filters.maxFee && (
+              <View style={s.switchRow}>
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <Text style={s.body}>{t('filters.unknownFees')}</Text>
+                  <Text style={s.muted}>{t('filters.unknownFeesHelp')}</Text>
+                </View>
+                <Switch testID="include-unknown-fees" value={filters.includeUnknownFees} onValueChange={(v) => set({ includeUnknownFees: v })} />
+              </View>
+            )}
+            <View style={s.switchRow}>
+              <Text style={s.body}>{t('filters.admissionsOpen')}</Text>
+              <Switch testID="admissions-open" value={filters.admissionsOpen} onValueChange={(v) => set({ admissionsOpen: v })} />
+            </View>
           </>)}
-          <Text style={s.label}>Google rating</Text>
+          <Text style={s.label}>{t('filters.rating')}</Text>
           <View style={s.wrap}>
-            {RATING_CHOICES.map((r) => <Chip key={r.value} testID={`rating-${r.value}`} label={r.label} selected={filters.minRating === r.value} onPress={() => set({ minRating: r.value })} />)}
+            {RATING_CHOICES.map((r) => <Chip key={r.value} testID={`rating-${r.value}`} label={t(r.label)} selected={filters.minRating === r.value} onPress={() => set({ minRating: r.value })} />)}
           </View>
           <View style={s.switchRow}>
             <View style={{ flex: 1, paddingRight: 8 }}>
-              <Text style={s.body}>Include schools with no rating</Text>
-              <Text style={s.muted}>Most primary and secondary schools have none on Google, so leave this on to see them.</Text>
+              <Text style={s.body}>{t('filters.unrated')}</Text>
+              <Text style={s.muted}>{t('filters.unratedHelp')}</Text>
             </View>
             <Switch testID="include-unrated" value={filters.includeUnrated} onValueChange={(v) => set({ includeUnrated: v })} />
           </View>
-          <Text style={s.label}>Sort by</Text>
+          <Text style={s.label}>{t('filters.sort')}</Text>
           <View style={s.wrap}>
-            {hasPlace && <Chip testID="sort-distance" label="Nearest first" selected={filters.sort === 'distance'} onPress={() => set({ sort: 'distance' })} />}
-            <Chip testID="sort-name" label="A to Z" selected={filters.sort === 'name'} onPress={() => set({ sort: 'name' })} />
-            <Chip testID="sort-rating" label="Best rated" selected={filters.sort === 'rating'} onPress={() => set({ sort: 'rating' })} />
+            {hasPlace && <Chip testID="sort-distance" label={t('sort.nearest')} selected={filters.sort === 'distance'} onPress={() => set({ sort: 'distance' })} />}
+            <Chip testID="sort-name" label={t('sort.name')} selected={filters.sort === 'name'} onPress={() => set({ sort: 'name' })} />
+            <Chip testID="sort-rating" label={t('sort.rating')} selected={filters.sort === 'rating'} onPress={() => set({ sort: 'rating' })} />
+            {cat.key === 'school' && <Chip testID="sort-cost" label={t('sort.cost')} selected={filters.sort === 'cost'} onPress={() => set({ sort: 'cost' })} />}
           </View>
         </View>
       )}
@@ -1029,19 +1494,66 @@ function DiscoverScreen({ onOpen }) {
     <ScrollView testID="discover-list" contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
       {header}
       {rows.map((item) => (
-        <SchoolCard key={item.id} school={item} drive={driveFor(item)}
+        <SchoolCard key={item.id} school={item} drive={driveFor(item)} level={filters.level} comparing={comparingIds.includes(item.id)}
+          onCompare={() => onToggleCompare({ ...item, drive: driveFor(item) })}
           onPress={() => onOpen(driveFor(item) ? { ...item, drive: driveFor(item), driveMode } : item)} />
       ))}
       {!loading && !error && rows.length === 0 && (
         <Text testID="empty" style={s.empty}>
-          {hasPlace && filters.nearKm ? `No ${cat.noun} within ${filters.nearKm} km match. Try a bigger distance or remove a filter.` : `No ${cat.noun} match. Try removing a filter.`}
+          {hasPlace && filters.nearKm ? t('empty.within', { what: t(cat.noun), km: filters.nearKm }) : t('empty.any', { what: t(cat.noun) })}
         </Text>
       )}
       <View style={{ paddingVertical: 12 }}>
         {loading && <ActivityIndicator testID="loading" />}
-        {!loading && !!error && <Btn testID="retry" label="Try again" onPress={() => run(0, false)} />}
-        {!loading && hasMore && <Btn testID="more" kind="outline" label={`Show more ${cat.noun}`} onPress={() => run(pageRef.current + 1, true)} />}
+        {!loading && !!error && <Btn testID="retry" label={t('tryAgain')} onPress={() => run(0, false)} />}
+        {!loading && hasMore && <Btn testID="more" kind="outline" label={t('showMore', { what: t(cat.noun) })} onPress={() => run(pageRef.current + 1, true)} />}
       </View>
+      {compare.length > 0 && (
+        <View style={s.compareBar} testID="compare-bar">
+          <Text style={s.body}>{t('compare.chosen', { count: compare.length, max: MAX_COMPARE })}</Text>
+          <Btn testID="open-compare" label={t('compare.open')} onPress={onOpenCompare} disabled={compare.length < 2} />
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------- comparing
+function CompareScreen({ schools, level, onBack, onOpen, onRemove }) {
+  const rows = compareRows(schools, level);
+  return (
+    <ScrollView testID="compare-screen" contentContainerStyle={{ padding: 16 }}>
+      <Btn testID="compare-back" kind="quiet" label={t('back')} onPress={onBack} />
+      <Text style={s.title}>{t('compare.title')}</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={{ paddingBottom: 8 }}>
+        <View>
+          <View style={{ flexDirection: 'row' }}>
+            <View style={[s.compareCell, s.compareHead]} />
+            {schools.map((school) => (
+              <View key={school.id} style={[s.compareCell, s.compareHead]}>
+                <Pressable testID={`compare-open-${school.id}`} accessibilityRole="button" onPress={() => onOpen(school)}>
+                  <View style={{ height: 60, borderRadius: 10, overflow: 'hidden', marginBottom: 4 }}>
+                    <SchoolPicture school={school} height={60} compact testID={`compare-pic-${school.id}`} />
+                  </View>
+                  <Text style={s.compareName} numberOfLines={2}>{cleanName(school.name)}</Text>
+                </Pressable>
+                <Pressable testID={`compare-remove-${school.id}`} accessibilityRole="button" onPress={() => onRemove(school)}>
+                  <Text style={[s.muted, { color: C.blue }]}>{t('compare.remove')}</Text>
+                </Pressable>
+              </View>
+            ))}
+          </View>
+          {rows.map((row) => (
+            <View key={row.key} style={{ flexDirection: 'row' }} testID={`compare-row-${row.key}`}>
+              <View style={[s.compareCell, { backgroundColor: C.bg }]}><Text style={s.label}>{row.label}</Text></View>
+              {row.values.map((value, i) => (
+                <View key={schools[i].id} style={s.compareCell}><Text style={s.body}>{value}</Text></View>
+              ))}
+            </View>
+          ))}
+        </View>
+      </ScrollView>
+      <Text style={s.muted}>{t('compare.note')}</Text>
     </ScrollView>
   );
 }
@@ -1064,13 +1576,13 @@ function ReviewForm({ initial, onSaved, onCancel, schoolId }) {
     const res = initial ? await updateReview(supabase, initial.id, form) : await submitReview(supabase, schoolId, form);
     setBusy(false);
     if (res.error) setError(friendlyError(res.error, 'review'));
-    else onSaved(initial ? 'Saved. It will be checked again before other parents see it.' : 'Thank you! A moderator will check your review before it appears. It is always shown without your name.');
+    else onSaved(initial ? t('review.savedEdit') : t('review.savedNew'));
   }
 
   return (
     <View style={[s.card, { marginTop: 12 }]}>
-      <Text style={s.h2}>{initial ? 'Edit your review' : 'Write a review'}</Text>
-      <Text style={s.label}>Your rating</Text>
+      <Text style={s.h2}>{initial ? t('review.edit') : t('review.write')}</Text>
+      <Text style={s.label}>{t('review.yourRating')}</Text>
       <View style={{ flexDirection: 'row', gap: 6, marginBottom: 8 }}>
         {[1, 2, 3, 4, 5].map((n) => (
           <Pressable key={n} testID={`star-${n}`} accessibilityRole="button" onPress={() => setRating(n)}>
@@ -1078,17 +1590,17 @@ function ReviewForm({ initial, onSaved, onCancel, schoolId }) {
           </Pressable>
         ))}
       </View>
-      <Text style={s.label}>You are a...</Text>
+      <Text style={s.label}>{t('review.youAre')}</Text>
       <View style={s.wrap}>
-        {RELATIONSHIPS.map((r) => <Chip key={r.key} testID={`rel-${r.key}`} label={r.label} selected={relationship === r.key} onPress={() => setRelationship(r.key)} />)}
+        {RELATIONSHIPS.map((r) => <Chip key={r.key} testID={`rel-${r.key}`} label={t(r.label)} selected={relationship === r.key} onPress={() => setRelationship(r.key)} />)}
       </View>
-      <TextInput testID="review-title" style={s.input} placeholder="Title (optional)" value={title} onChangeText={setTitle} maxLength={120} />
-      <TextInput testID="review-body" style={[s.input, { minHeight: 110, textAlignVertical: 'top' }]} multiline placeholder="What should other parents know? (at least 20 characters)" value={body} onChangeText={setBody} />
-      <Text style={s.muted}>{body.trim().length} / 2000. Please do not include names of children or staff.</Text>
+      <TextInput testID="review-title" style={s.input} placeholder={t('review.titlePlaceholder')} value={title} onChangeText={setTitle} maxLength={120} />
+      <TextInput testID="review-body" style={[s.input, { minHeight: 110, textAlignVertical: 'top' }]} multiline placeholder={t('review.bodyPlaceholder')} value={body} onChangeText={setBody} />
+      <Text style={s.muted}>{t('review.counter', { count: body.trim().length })}</Text>
       {!!error && <Notice text={error} testID="review-error" />}
       <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-        <Btn testID="review-save" label={busy ? 'Saving...' : initial ? 'Save changes' : 'Submit review'} onPress={save} disabled={busy} />
-        <Btn testID="review-cancel" kind="quiet" label="Cancel" onPress={onCancel} />
+        <Btn testID="review-save" label={busy ? t('saving') : initial ? t('saveChanges') : t('review.submit')} onPress={save} disabled={busy} />
+        <Btn testID="review-cancel" kind="quiet" label={t('cancel')} onPress={onCancel} />
       </View>
     </View>
   );
@@ -1115,29 +1627,23 @@ function EnquiryForm({ schoolId, schoolName, onSent, onCancel }) {
 
   return (
     <View style={[s.card, { marginTop: 12 }]} testID="enquiry-form">
-      <Text style={s.h2}>Ask about admissions</Text>
-      <Text style={s.muted}>{`Your question goes to ${cleanName(schoolName)} through Kidscover. Please do not include your child's name or date of birth.`}</Text>
-      <Text style={s.label}>Which class? (optional)</Text>
+      <Text style={s.h2}>{t('enquiry.title')}</Text>
+      <Text style={s.muted}>{t('enquiry.intro', { school: cleanName(schoolName) })}</Text>
+      <Text style={s.label}>{t('enquiry.whichClass')}</Text>
       <View style={s.wrap}>
-        {GRADE_CHOICES.map((g) => <Chip key={g} testID={`grade-${g}`} label={g} selected={grade === g} onPress={() => setGrade(grade === g ? '' : g)} />)}
+        {GRADE_CHOICES.map((g) => <Chip key={g} testID={`grade-${EN_GRADES[g]}`} label={t(g)} selected={grade === g} onPress={() => setGrade(grade === g ? '' : g)} />)}
       </View>
-      <Text style={s.label}>Starting when? (optional)</Text>
+      <Text style={s.label}>{t('enquiry.whichYear')}</Text>
       <View style={s.wrap}>
         {startYearChoices().map((y) => <Chip key={y} testID={`year-${y}`} label={String(y)} selected={startYear === y} onPress={() => setStartYear(startYear === y ? null : y)} />)}
       </View>
-      <TextInput
-        testID="enquiry-message"
-        style={[s.input, { minHeight: 110, textAlignVertical: 'top' }]}
-        multiline
-        placeholder="What would you like to ask? For example: are places open, what are the fees, how do we visit?"
-        value={message}
-        onChangeText={setMessage}
-      />
+      <TextInput testID="enquiry-message" style={[s.input, { minHeight: 110, textAlignVertical: 'top' }]} multiline
+        placeholder={t('enquiry.placeholder')} value={message} onChangeText={setMessage} />
       <Text style={s.muted}>{`${message.trim().length} / ${MAX_ENQUIRY}`}</Text>
       {!!error && <Notice text={error} testID="enquiry-error" />}
       <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-        <Btn testID="enquiry-send" label={busy ? 'Sending...' : 'Send question'} onPress={submit} disabled={busy} />
-        <Btn testID="enquiry-cancel" kind="quiet" label="Cancel" onPress={onCancel} />
+        <Btn testID="enquiry-send" label={busy ? t('sending') : t('enquiry.send')} onPress={submit} disabled={busy} />
+        <Btn testID="enquiry-cancel" kind="quiet" label={t('cancel')} onPress={onCancel} />
       </View>
     </View>
   );
@@ -1159,7 +1665,7 @@ function Conversation({ thread, myId, onChanged, onBack }) {
 
   async function send() {
     const text = reply.trim();
-    if (text.length < 1) { setError('Please write your message first.'); return; }
+    if (text.length < 1) { setError(t('enquiry.writeFirst')); return; }
     setBusy(true);
     setError('');
     const res = await replyToEnquiry(supabase, thread.id, text);
@@ -1181,31 +1687,23 @@ function Conversation({ thread, myId, onChanged, onBack }) {
 
   return (
     <View testID={`conversation-${thread.id}`}>
-      <Btn testID="conversation-back" kind="quiet" label="< Back to enquiries" onPress={onBack} />
-      <Text style={s.title}>{cleanName(thread.school_name ?? 'This school')}</Text>
+      <Btn testID="conversation-back" kind="quiet" label={t('enquiry.backToList')} onPress={onBack} />
+      <Text style={s.title}>{cleanName(thread.school_name ?? t('thisSchool'))}</Text>
       <Text style={s.muted}>{`${enquiryStatusText(thread.status)}${enquiryAbout(thread) ? ` \u00b7 ${enquiryAbout(thread)}` : ''}`}</Text>
       {!!error && <Notice text={error} testID="conversation-error" />}
       {messages === null ? <ActivityIndicator style={{ marginTop: 12 }} /> : messages.map((m) => (
         <View key={m.id} testID={`msg-${m.id}`} style={[s.card, fromMe(m, myId) ? s.mine : s.theirs]}>
-          <Text style={s.label}>{fromMe(m, myId) ? 'You' : 'The school'}</Text>
+          <Text style={s.label}>{messageFrom(m, myId)}</Text>
           <Text style={s.body}>{m.message}</Text>
           <Text style={s.muted}>{monthYear(m.created_at)}</Text>
         </View>
       ))}
-      {thread.status === 'closed' ? (
-        <Text style={s.muted}>This enquiry is closed. Write below if you need to ask again.</Text>
-      ) : null}
-      <TextInput
-        testID="reply-box"
-        style={[s.input, { minHeight: 80, textAlignVertical: 'top' }]}
-        multiline
-        placeholder="Write a message..."
-        value={reply}
-        onChangeText={setReply}
-      />
+      {thread.status === 'closed' ? <Text style={s.muted}>{t('enquiry.closedNote')}</Text> : null}
+      <TextInput testID="reply-box" style={[s.input, { minHeight: 80, textAlignVertical: 'top' }]} multiline
+        placeholder={t('enquiry.writeMessage')} value={reply} onChangeText={setReply} />
       <View style={{ flexDirection: 'row', gap: 8 }}>
-        <Btn testID="reply-send" label={busy ? 'Sending...' : 'Send'} onPress={send} disabled={busy} />
-        {thread.status !== 'closed' && <Btn testID="close-enquiry" kind="quiet" label="Close this enquiry" onPress={close} disabled={busy} />}
+        <Btn testID="reply-send" label={busy ? t('sending') : t('send')} onPress={send} disabled={busy} />
+        {thread.status !== 'closed' && <Btn testID="close-enquiry" kind="quiet" label={t('enquiry.close')} onPress={close} disabled={busy} />}
       </View>
     </View>
   );
@@ -1225,7 +1723,7 @@ function EnquiriesScreen({ myId, onBack, onChanged }) {
   }, [onChanged]);
   useEffect(() => { load(); }, [load]);
 
-  const open = (rows ?? []).find((t) => t.id === openId);
+  const open = (rows ?? []).find((x) => x.id === openId);
 
   return (
     <ScrollView testID="enquiries-screen" contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
@@ -1233,20 +1731,16 @@ function EnquiriesScreen({ myId, onBack, onChanged }) {
         <Conversation thread={open} myId={myId} onBack={() => { setOpenId(null); load(); }} onChanged={load} />
       ) : (
         <>
-          <Btn testID="enquiries-back" kind="quiet" label="< Back to schools" onPress={onBack} />
-          <Text style={s.title}>Your enquiries</Text>
+          <Btn testID="enquiries-back" kind="quiet" label={t('backToSchools')} onPress={onBack} />
+          <Text style={s.title}>{t('enquiry.yours')}</Text>
           {!!error && <Notice text={error} testID="enquiries-error" />}
           {rows === null && <ActivityIndicator testID="enquiries-loading" style={{ marginTop: 12 }} />}
-          {rows !== null && rows.length === 0 && !error && (
-            <Text testID="enquiries-empty" style={s.empty}>You have not asked any schools yet. Open a school and tap &quot;Ask about admissions&quot;.</Text>
-          )}
-          {(rows ?? []).map((t) => (
-            <Pressable key={t.id} testID={`thread-${t.id}`} accessibilityRole="button" onPress={() => setOpenId(t.id)} style={s.card}>
-              <Text style={s.schoolName}>
-                {t.unread_for_parent ? '\u25cf ' : ''}{cleanName(t.school_name ?? 'This school')}
-              </Text>
-              <Text style={s.muted}>{`${enquiryStatusText(t.status)}${enquiryAbout(t) ? ` \u00b7 ${enquiryAbout(t)}` : ''}`}</Text>
-              {!!t.last_message && <Text style={s.body} numberOfLines={2}>{t.last_message}</Text>}
+          {rows !== null && rows.length === 0 && !error && <Text testID="enquiries-empty" style={s.empty}>{t('enquiry.none')}</Text>}
+          {(rows ?? []).map((x) => (
+            <Pressable key={x.id} testID={`thread-${x.id}`} accessibilityRole="button" onPress={() => setOpenId(x.id)} style={s.card}>
+              <Text style={s.schoolName}>{x.unread_for_parent ? '\u25cf ' : ''}{cleanName(x.school_name ?? t('thisSchool'))}</Text>
+              <Text style={s.muted}>{`${enquiryStatusText(x.status)}${enquiryAbout(x) ? ` \u00b7 ${enquiryAbout(x)}` : ''}`}</Text>
+              {!!x.last_message && <Text style={s.body} numberOfLines={2}>{x.last_message}</Text>}
             </Pressable>
           ))}
         </>
@@ -1255,26 +1749,299 @@ function EnquiriesScreen({ myId, onBack, onChanged }) {
   );
 }
 
-function SchoolScreen({ school, onBack, onOpenEnquiries }) {
+// ---------------------------------------------------------------------------------------------- applying
+function ApplyScreen({ school, profile, onDone, onCancel }) {
+  const [form, setForm] = useState({
+    ...EMPTY_APPLICATION,
+    academic_year: academicYearChoices()[1],
+    parent_name: [profile?.first_name, profile?.last_name].filter(Boolean).join(' '),
+    parent_email: profile?.email ?? '',
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+
+  async function submit() {
+    setBusy(true);
+    setError('');
+    const res = await submitApplication(supabase, school.id, form);
+    setBusy(false);
+    if (res.error) { setError(isMissingApplications(res.error) ? t('apply.notOn') : friendlyError(res.error)); return; }
+    onDone();
+  }
+
+  return (
+    <ScrollView testID="apply-screen" contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
+      <Btn testID="apply-back" kind="quiet" label={t('back')} onPress={onCancel} />
+      <Text style={s.title}>{t('apply.title')}</Text>
+      <Text style={s.body}>{t('apply.intro', { school: cleanName(school.name) })}</Text>
+
+      <View style={[s.card, { marginTop: 12 }]}>
+        <Text style={s.h2}>{t('apply.aboutChild')}</Text>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TextInput testID="apply-child-first" style={[s.input, { flex: 1 }]} placeholder={t('apply.childFirstName')} value={form.child_first_name} onChangeText={(v) => set({ child_first_name: v })} />
+          <TextInput testID="apply-child-last" style={[s.input, { flex: 1 }]} placeholder={t('apply.childLastName')} value={form.child_last_name} onChangeText={(v) => set({ child_last_name: v })} />
+        </View>
+        <Field label={t('apply.dob')} hint={t('apply.dobHint')}>
+          <TextInput testID="apply-dob" style={s.input} placeholder="2021-06-30" value={form.child_dob} onChangeText={(v) => set({ child_dob: v.replace(/[^0-9-]/g, '').slice(0, 10) })} />
+        </Field>
+        <Text style={s.label}>{t('apply.gender')}</Text>
+        <View style={s.wrap}>
+          {APPLY_GENDERS.map((g) => <Chip key={g} testID={`apply-gender-${g}`} label={t(`gender.${g}`)} selected={form.child_gender === g} onPress={() => set({ child_gender: form.child_gender === g ? '' : g })} />)}
+        </View>
+        <Text style={s.label}>{t('apply.class')}</Text>
+        <View style={s.wrap}>
+          {APPLY_CLASSES.map((c) => <Chip key={c} testID={`apply-class-${c}`} label={classLabel(c)} selected={form.class_applying === c} onPress={() => set({ class_applying: c })} />)}
+        </View>
+        <Text style={s.label}>{t('apply.year')}</Text>
+        <View style={s.wrap}>
+          {academicYearChoices().map((y) => <Chip key={y} testID={`apply-year-${y}`} label={y} selected={form.academic_year === y} onPress={() => set({ academic_year: y })} />)}
+        </View>
+        <TextInput testID="apply-current-school" style={s.input} placeholder={t('apply.currentSchool')} value={form.current_school} onChangeText={(v) => set({ current_school: v })} />
+      </View>
+
+      <View style={s.card}>
+        <Text style={s.h2}>{t('apply.aboutYou')}</Text>
+        <TextInput testID="apply-parent-name" style={s.input} placeholder={t('apply.yourName')} value={form.parent_name} onChangeText={(v) => set({ parent_name: v })} />
+        <View style={s.wrap}>
+          {APPLY_RELATIONS.map((r) => <Chip key={r} testID={`apply-relation-${r}`} label={t(`relation.${r}`)} selected={form.parent_relation === r} onPress={() => set({ parent_relation: r })} />)}
+        </View>
+        <TextInput testID="apply-phone" style={s.input} placeholder={t('apply.phone')} keyboardType="phone-pad" value={form.parent_phone} onChangeText={(v) => set({ parent_phone: v })} />
+        <TextInput testID="apply-email" style={s.input} placeholder={t('apply.email')} autoCapitalize="none" keyboardType="email-address" value={form.parent_email} onChangeText={(v) => set({ parent_email: v })} />
+        <TextInput testID="apply-address" style={[s.input, { minHeight: 70, textAlignVertical: 'top' }]} multiline placeholder={t('apply.address')} value={form.address} onChangeText={(v) => set({ address: v })} />
+        <TextInput testID="apply-pincode" style={s.input} placeholder={t('apply.pincode')} keyboardType="number-pad" value={form.pincode} onChangeText={(v) => set({ pincode: v.replace(/[^0-9]/g, '').slice(0, 6) })} />
+        <TextInput testID="apply-notes" style={[s.input, { minHeight: 70, textAlignVertical: 'top' }]} multiline placeholder={t('apply.notes')} value={form.notes} onChangeText={(v) => set({ notes: v })} />
+        <Text style={s.muted}>{t('apply.notesHint')}</Text>
+      </View>
+
+      <View style={s.card}>
+        <Pressable testID="apply-consent" accessibilityRole="checkbox" accessibilityState={{ checked: form.consent }} onPress={() => set({ consent: !form.consent })}
+          style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
+          <Text style={{ fontSize: 20 }}>{form.consent ? '\u2611' : '\u2610'}</Text>
+          <Text style={[s.body, { flex: 1 }]}>{t('apply.consent', { school: cleanName(school.name) })}</Text>
+        </Pressable>
+        <Text style={s.muted}>{t('apply.consentNote')}</Text>
+      </View>
+
+      {!!error && <Notice text={error} testID="apply-error" />}
+      <Btn testID="apply-send" label={busy ? t('sending') : t('apply.send')} onPress={submit} disabled={busy} />
+      <Btn testID="apply-cancel" kind="quiet" label={t('cancel')} onPress={onCancel} />
+    </ScrollView>
+  );
+}
+
+function ApplicationsScreen({ onBack, onChanged }) {
+  const [rows, setRows] = useState(null);
+  const [events, setEvents] = useState({});
+  const [openId, setOpenId] = useState(null);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const load = useCallback(async () => {
+    const res = await loadApplications(supabase);
+    if (res.error) setError(isMissingApplications(res.error) ? t('apply.notOn') : friendlyError(res.error));
+    else setError('');
+    setRows(res.rows);
+    onChanged?.(res.rows);
+  }, [onChanged]);
+  useEffect(() => { load(); }, [load]);
+
+  async function open(id) {
+    setOpenId(openId === id ? null : id);
+    setNotice('');
+    if (!events[id]) {
+      const res = await loadApplicationEvents(supabase, id);
+      setEvents((e) => ({ ...e, [id]: res.rows }));
+    }
+  }
+
+  async function withdraw(row) {
+    const res = await withdrawApplication(supabase, row.id);
+    if (res?.error) setError(friendlyError(res.error));
+    else { setNotice(t('apply.withdrawn')); setEvents((e) => ({ ...e, [row.id]: undefined })); await load(); }
+  }
+
+  async function remove(row) {
+    const res = await deleteApplication(supabase, row.id);
+    if (res?.error) setError(friendlyError(res.error));
+    else { setConfirmDelete(null); setNotice(t('apply.deleted')); await load(); }
+  }
+
+  return (
+    <ScrollView testID="applications-screen" contentContainerStyle={{ padding: 16 }}>
+      <Btn testID="applications-back" kind="quiet" label={t('backToSchools')} onPress={onBack} />
+      <Text style={s.title}>{t('apply.yours')}</Text>
+      {!!error && <Notice text={error} testID="applications-error" />}
+      {!!notice && <Notice tone="green" text={notice} testID="applications-notice" />}
+      {rows === null && <ActivityIndicator testID="applications-loading" style={{ marginTop: 12 }} />}
+      {rows !== null && rows.length === 0 && !error && <Text testID="applications-empty" style={s.empty}>{t('apply.noneYet')}</Text>}
+      {(rows ?? []).map((row) => (
+        <View key={row.id} style={s.card} testID={`application-${row.id}`}>
+          <Pressable accessibilityRole="button" testID={`application-open-${row.id}`} onPress={() => open(row.id)}>
+            <Text style={s.schoolName}>{cleanName(row.school_name || t('thisSchool'))}</Text>
+            <Text style={[s.badge, { alignSelf: 'flex-start', backgroundColor: row.status === 'accepted' ? C.greenSoft : row.status === 'declined' ? C.redSoft : C.blueSoft, color: row.status === 'accepted' ? C.green : row.status === 'declined' ? C.red : C.blue }]}>
+              {stageText(row.status)}
+            </Text>
+            <Text style={s.body}>{t('apply.forChild', { child: `${row.child_first_name} ${row.child_last_name}`, class: classLabel(row.class_applying), year: row.academic_year })}</Text>
+            {!!row.status_note && <Text style={s.muted}>{t('apply.schoolSays', { note: row.status_note })}</Text>}
+          </Pressable>
+          {openId === row.id && (
+            <View testID={`application-detail-${row.id}`}>
+              <Text style={s.label}>{t('apply.whatHappened')}</Text>
+              {(events[row.id] ?? []).map((e) => (
+                <Text key={e.id} style={s.muted}>{`${stageText(e.status)} \u00b7 ${dayText(e.at)}${e.note ? ` \u00b7 ${e.note}` : ''}`}</Text>
+              ))}
+              <Text style={s.muted}>{t('apply.sharedOn', { date: dayText(row.consent_at) })}</Text>
+              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                {row.status !== 'withdrawn' && <Btn testID={`withdraw-${row.id}`} kind="quiet" label={t('apply.withdraw')} onPress={() => withdraw(row)} />}
+                {confirmDelete === row.id
+                  ? <Btn testID={`delete-confirm-${row.id}`} kind="quiet" label={t('apply.deleteConfirm')} onPress={() => remove(row)} />
+                  : <Btn testID={`delete-${row.id}`} kind="quiet" label={t('apply.delete')} onPress={() => setConfirmDelete(row.id)} />}
+              </View>
+              <Text style={s.muted}>{t('apply.deleteNote')}</Text>
+            </View>
+          )}
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------- settings
+function SettingsScreen({ language, onPickLanguage, settings, onSavePush, biometrics, unlockOn, onSetUnlock, onDeleted, onBack, email }) {
+  const [password, setPassword] = useState('');
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  async function remove() {
+    setBusy(true);
+    setError('');
+    const res = await deleteAccount(supabase, email, password);
+    setBusy(false);
+    if (res.error) { setError(res.error.message); return; }
+    onDeleted();
+  }
+
+  return (
+    <ScrollView testID="settings-screen" contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
+      <Btn testID="settings-back" kind="quiet" label={t('backToSchools')} onPress={onBack} />
+      <Text style={s.title}>{t('settings.title')}</Text>
+      {!!error && <Notice text={error} testID="settings-error" />}
+      {!!notice && <Notice tone="green" text={notice} testID="settings-notice" />}
+
+      <View style={s.card}>
+        <Text style={s.h2}>{t('settings.language')}</Text>
+        <Text style={s.muted}>{t('settings.languageHelp')}</Text>
+        <Btn testID="settings-language" kind="outline" label={`\ud83c\udf10 ${languageName(language)}`} onPress={onPickLanguage} />
+      </View>
+
+      <View style={s.card}>
+        <Text style={s.h2}>{t('settings.notifications')}</Text>
+        <View style={s.switchRow}>
+          <Text style={[s.body, { flex: 1, paddingRight: 8 }]}>{t('settings.notificationsHelp')}</Text>
+          <Switch testID="settings-push" value={!!settings?.notify_push} onValueChange={onSavePush} />
+        </View>
+      </View>
+
+      {biometrics !== 'none' && (
+        <View style={s.card}>
+          <Text style={s.h2}>{t('settings.unlock')}</Text>
+          <View style={s.switchRow}>
+            <Text style={[s.body, { flex: 1, paddingRight: 8 }]}>
+              {biometrics === 'face' ? t('settings.unlockFace') : t('settings.unlockFingerprint')}
+            </Text>
+            <Switch testID="settings-unlock" value={!!unlockOn} onValueChange={onSetUnlock} />
+          </View>
+          <Text style={s.muted}>{t('settings.unlockHelp')}</Text>
+        </View>
+      )}
+
+      <View style={s.card}>
+        <Text style={s.h2}>{t('settings.yourData')}</Text>
+        <Text style={s.muted}>{t('settings.yourDataHelp')}</Text>
+        {!confirming ? (
+          <Btn testID="settings-delete" kind="quiet" label={t('settings.deleteAccount')} onPress={() => { setConfirming(true); setError(''); }} />
+        ) : (
+          <View>
+            <Text style={s.body}>{t('settings.deleteWarning')}</Text>
+            <TextInput testID="settings-password" style={s.input} secureTextEntry placeholder={t('settings.yourPassword')} value={password} onChangeText={setPassword} />
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <Btn testID="settings-delete-confirm" label={busy ? t('pleaseWait') : t('settings.deleteForGood')} onPress={remove} disabled={busy || password.length < 1} />
+              <Btn testID="settings-delete-cancel" kind="quiet" label={t('cancel')} onPress={() => { setConfirming(false); setPassword(''); }} />
+            </View>
+          </View>
+        )}
+      </View>
+
+      <Btn testID="settings-signout" kind="outline" label={t('signOut')} onPress={() => supabase.auth.signOut()} />
+      <Text style={s.muted}>{t('settings.privacy')}</Text>
+    </ScrollView>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------- one school's page
+function FeeTable({ rows, level }) {
+  if (!rows.length) return null;
+  const chosen = rows.find((r) => r.level === level) ?? rows[0];
+  return (
+    <View testID="fees">
+      <Text style={[s.h2, { marginTop: 20 }]}>{t('fees.title')}</Text>
+      <View style={s.wrap}>
+        {rows.map((r) => (
+          <Text key={r.level} testID={`fee-level-${r.level}`} style={[s.badge, r.level === chosen.level && { backgroundColor: C.blue, color: '#fff' }]}>
+            {`${t(`level.${r.level}`)}: ${rupees(r.first_year_total)}`}
+          </Text>
+        ))}
+      </View>
+      <View style={[s.card, { marginTop: 8 }]} testID="fee-breakdown">
+        <Text style={s.schoolName}>{t('fees.forLevel', { level: t(`level.${chosen.level}`), year: chosen.academic_year })}</Text>
+        {FEE_PARTS.filter(([key]) => chosen[key] > 0).map(([key, label, when]) => (
+          <View key={key} style={s.feeRow} testID={`fee-part-${key}`}>
+            <Text style={s.body}>{t(label)}{when === 'once' ? ` (${t('fees.once')})` : ''}</Text>
+            <Text style={s.body}>{rupees(chosen[key])}</Text>
+          </View>
+        ))}
+        <View style={[s.feeRow, { borderTopWidth: 1, borderTopColor: C.line, paddingTop: 6, marginTop: 4 }]}>
+          <Text style={s.schoolName}>{t('fees.firstYearTotal')}</Text>
+          <Text style={s.schoolName}>{rupees(chosen.first_year_total)}</Text>
+        </View>
+        <View style={s.feeRow}>
+          <Text style={s.body}>{t('fees.thenEachYear')}</Text>
+          <Text style={s.body}>{rupees(chosen.annual_total)}</Text>
+        </View>
+        {chosen.deposit > 0 && <Text style={s.muted}>{t('fees.deposit', { amount: rupees(chosen.deposit) })}</Text>}
+        {!!chosen.note && <Text style={s.muted}>{chosen.note}</Text>}
+        <Text style={s.muted}>{sourcesText(rows)}</Text>
+      </View>
+    </View>
+  );
+}
+
+function SchoolScreen({ school, profile, level, comparing, onBack, onOpenEnquiries, onApply, onCompare }) {
   const [stats, setStats] = useState(school.community);
   const [reviews, setReviews] = useState(null);
-  const [mine, setMine] = useState(undefined); // undefined = still loading, null = has not reviewed
+  const [mine, setMine] = useState(undefined);
   const [error, setError] = useState('');
   const [form, setForm] = useState(false);
   const [message, setMessage] = useState('');
   const [reporting, setReporting] = useState(null);
   const [reportMsg, setReportMsg] = useState({});
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [enquiry, setEnquiry] = useState(undefined); // undefined = still loading, null = none yet
+  const [enquiry, setEnquiry] = useState(undefined);
   const [askForm, setAskForm] = useState(false);
   const [askDone, setAskDone] = useState('');
   const [facilities, setFacilities] = useState([]);
   const [achievements, setAchievements] = useState([]);
+  const [fees, setFees] = useState([]);
 
   const reload = useCallback(async () => {
-    const [r, m, st, en, fa, ac] = await Promise.all([
-      loadReviews(supabase, school.id), loadMyReview(supabase, school.id), loadStats(supabase, [school.id]), loadEnquiryForSchool(supabase, school.id),
-      loadFacilities(supabase, school.id), loadAchievements(supabase, school.id),
+    const [r, m, st, en, fa, ac, fe] = await Promise.all([
+      loadReviews(supabase, school.id), loadMyReview(supabase, school.id), loadStats(supabase, [school.id]),
+      loadEnquiryForSchool(supabase, school.id), loadFacilities(supabase, school.id), loadAchievements(supabase, school.id),
+      loadFeeSchedules(supabase, school.id),
     ]);
     if (r.error) setError(friendlyError(r.error));
     setReviews(r.rows);
@@ -1283,19 +2050,25 @@ function SchoolScreen({ school, onBack, onOpenEnquiries }) {
     setEnquiry(en.error ? null : en.thread);
     setFacilities(fa.rows);
     setAchievements(ac.groups);
+    setFees(fe.rows);
   }, [school.id]);
   useEffect(() => { reload(); }, [reload]);
 
   async function report(reviewId, reason) {
     const res = await reportReview(supabase, reviewId, reason);
-    setReportMsg((m) => ({ ...m, [reviewId]: res.error ? friendlyError(res.error, 'report') : 'Thank you. A moderator will take a look.' }));
+    setReportMsg((m) => ({ ...m, [reviewId]: res.error ? friendlyError(res.error, 'report') : t('review.reported') }));
     setReporting(null);
   }
 
   async function remove() {
     const res = await deleteReview(supabase, mine.id);
     if (res.error) setError(friendlyError(res.error));
-    else { setConfirmDelete(false); setMessage('Your review was deleted.'); reload(); }
+    else { setConfirmDelete(false); setMessage(t('review.deleted')); reload(); }
+  }
+
+  function openSite(url, kind) {
+    noteOutboundClick(supabase, school.id, kind);
+    Linking.openURL(url);
   }
 
   const site = safeUrl(school.website);
@@ -1303,21 +2076,22 @@ function SchoolScreen({ school, onBack, onOpenEnquiries }) {
 
   return (
     <ScrollView contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
-      <Btn testID="back" kind="quiet" label="< Back to schools" onPress={onBack} />
+      <Btn testID="back" kind="quiet" label={t('backToSchools')} onPress={onBack} />
       <View style={s.heroPhoto}><SchoolPicture school={school} height={190} testID="hero" /></View>
       {!!photoCreditText(school) && (
         <Text testID="photo-credit" style={s.credit}>
           {photoCreditText(school)}
-          {!!safeUrl(school.photo_page_url) && <Text testID="photo-source" style={{ color: C.blue }} onPress={() => Linking.openURL(safeUrl(school.photo_page_url))}> (source)</Text>}
+          {!!safeUrl(school.photo_page_url) && <Text testID="photo-source" style={{ color: C.blue }} onPress={() => Linking.openURL(safeUrl(school.photo_page_url))}> ({t('source')})</Text>}
         </Text>
       )}
       <Text testID="page-title" style={s.title}>{cleanName(school.name)}</Text>
       {!!distanceText(school.distance_km) && <Text testID="school-distance" style={s.distance}>{distanceText(school.distance_km)}</Text>}
       {!!driveTimeText(school.drive) && (
         <Text testID="page-drive" style={s.distance}>
-          {`${driveTimeText(school.drive)}, ${DRIVE_MODES.find((m) => m.key === school.driveMode)?.long ?? 'leaving now'}`}
+          {`${driveTimeText(school.drive)}, ${t(DRIVE_MODES.find((m) => m.key === school.driveMode)?.long ?? 'drive.nowLong')}`}
         </Text>
       )}
+      {!!leaveByText(school.drive) && <Text testID="page-leaveby" style={s.distance}>{leaveByText(school.drive)}</Text>}
       {!!cleanAddress(school.address) && <Text style={s.body}>{cleanAddress(school.address)}</Text>}
       <View style={s.badgeRow}>
         {isSchoolPlace(school) && levelBadges(school.levels).map((b) => <Text key={b} style={s.badge}>{b}</Text>)}
@@ -1325,23 +2099,29 @@ function SchoolScreen({ school, onBack, onOpenEnquiries }) {
       </View>
       {!!school.board && !!boardSourceText(school.board_source) && (
         <Text testID="page-board-source" style={s.muted}>
-          {`Board: ${school.board}, ${boardSourceText(school.board_source)}.`}
-          {!!safeUrl(school.board_source_url) && <Text testID="board-source-link" style={{ color: C.blue }} onPress={() => Linking.openURL(safeUrl(school.board_source_url))}> See where.</Text>}
+          {t('board.line', { board: school.board, source: boardSourceText(school.board_source) })}
+          {!!safeUrl(school.board_source_url) && <Text testID="board-source-link" style={{ color: C.blue }} onPress={() => Linking.openURL(safeUrl(school.board_source_url))}> {t('seeWhere')}</Text>}
         </Text>
       )}
       {!!admissionText(school) && (
         <Text testID="page-admission" style={[s.rating, { color: school.admissions_open ? C.green : C.grey }]}>
           {admissionText(school)}
-          {!!safeUrl(school.admissions_source_url) && <Text testID="admission-source-link" style={{ color: C.blue }} onPress={() => Linking.openURL(safeUrl(school.admissions_source_url))}> See the page.</Text>}
+          {!!safeUrl(school.admissions_source_url) && <Text testID="admission-source-link" style={{ color: C.blue }} onPress={() => openSite(safeUrl(school.admissions_source_url), 'admission_page')}> {t('seeThePage')}</Text>}
         </Text>
       )}
       <Text style={s.rating}>{googleRatingText(school.google_rating, school.google_review_count)}</Text>
-      {!school.google_rating && <Text style={s.muted}>Google does not show ratings for many schools. Parent reviews below fill the gap.</Text>}
-      {!!site && <Btn testID="website" kind="outline" label="Visit school website" onPress={() => Linking.openURL(site)} />}
+      {!school.google_rating && <Text style={s.muted}>{t('rating.noneHelp')}</Text>}
+      {!!school.start_time && <Text testID="school-start" style={s.muted}>{t('school.startsAt', { time: String(school.start_time).slice(0, 5) })}</Text>}
+      {!!site && <Btn testID="website" kind="outline" label={t('school.visitWebsite')} onPress={() => openSite(site, 'website')} />}
+      {isSchoolPlace(school) && (
+        <Btn testID="compare-toggle" kind="quiet" label={comparing ? t('compare.added') : t('compare.add')} onPress={onCompare} />
+      )}
+
+      <FeeTable rows={fees} level={level} />
 
       {facilities.length > 0 && (
         <View testID="facilities">
-          <Text style={[s.h2, { marginTop: 20 }]}>Facilities</Text>
+          <Text style={[s.h2, { marginTop: 20 }]}>{t('facilities.title')}</Text>
           <View style={s.wrap}>
             {facilities.map((f) => <Text key={f.facility} testID={`facility-${f.facility}`} style={s.facility}>{`${FACILITY_INFO[f.facility][1]} ${facilityText(f)}`}</Text>)}
           </View>
@@ -1351,77 +2131,75 @@ function SchoolScreen({ school, onBack, onOpenEnquiries }) {
 
       {achievements.length > 0 && (
         <View testID="achievements">
-          <Text style={[s.h2, { marginTop: 20 }]}>Achievements</Text>
+          <Text style={[s.h2, { marginTop: 20 }]}>{t('achievements.title')}</Text>
           {achievements.map((g) => (
             <View key={g.kind} testID={`achievements-${g.kind}`} style={[s.card, s.achievementCard]}>
               <Text style={s.schoolName}>{`${g.icon} ${g.label}`}</Text>
               {g.items.map((a) => (
                 <Text key={a.id} testID={`achievement-${a.id}`} style={s.body}>
                   {a.year ? `${a.year}: ` : ''}{a.text}
-                  <Text style={s.muted}>{` (${SOURCE_TEXT[a.source] ?? 'source not given'})`}</Text>
-                  {!!safeUrl(a.source_url) && <Text testID={`achievement-link-${a.id}`} style={{ color: C.blue }} onPress={() => Linking.openURL(safeUrl(a.source_url))}> See it</Text>}
+                  <Text style={s.muted}>{` (${t(SOURCE_TEXT[a.source] ?? 'source.unknown')})`}</Text>
+                  {!!safeUrl(a.source_url) && <Text testID={`achievement-link-${a.id}`} style={{ color: C.blue }} onPress={() => Linking.openURL(safeUrl(a.source_url))}> {t('seeIt')}</Text>}
                 </Text>
               ))}
             </View>
           ))}
-          <Text style={s.muted}>What the school says it has achieved. Each line says where it came from.</Text>
+          <Text style={s.muted}>{t('achievements.note')}</Text>
         </View>
       )}
 
       {isSchoolPlace(school) && (<>
-      <Text style={[s.h2, { marginTop: 20 }]}>Admissions</Text>
-      {!!askDone && <Notice tone="green" text={askDone} testID="enquiry-sent" />}
-      {enquiry === undefined ? <ActivityIndicator style={{ marginTop: 8 }} /> : (
-        <>
-          {!!enquiry && (
-            <View style={s.card} testID="enquiry-existing">
-              <Text style={s.body}>{`You asked this school already. ${enquiryStatusText(enquiry.status)}.`}</Text>
-              <Btn testID="open-enquiry" kind="outline" label="Open the conversation" onPress={onOpenEnquiries} />
-            </View>
-          )}
-          {/* a closed enquiry is not a dead end: something new can always come up */}
-          {(!enquiry || enquiry.status === 'closed') && !askForm && (
-            <View style={s.card}>
-              <Text style={s.body}>
-                {enquiry ? 'That enquiry is closed. You can ask again if something new comes up.' : 'Ask about places, fees or a visit. Kidscover passes your question on and you get the reply here.'}
-              </Text>
-              <Btn testID="ask-school" label={enquiry ? 'Ask again' : 'Ask about admissions'} onPress={() => { setAskForm(true); setAskDone(''); }} />
-            </View>
-          )}
-        </>
-      )}
-      {askForm && (
-        <EnquiryForm
-          schoolId={school.id}
-          schoolName={school.name}
-          onCancel={() => setAskForm(false)}
-          onSent={() => { setAskForm(false); setAskDone('Sent. You will find the reply under Enquiries at the top of the app.'); reload(); }}
-        />
-      )}
+        <Text style={[s.h2, { marginTop: 20 }]}>{t('admissions.title')}</Text>
+        {!!askDone && <Notice tone="green" text={askDone} testID="enquiry-sent" />}
+        {enquiry === undefined ? <ActivityIndicator style={{ marginTop: 8 }} /> : (
+          <>
+            {!!enquiry && (
+              <View style={s.card} testID="enquiry-existing">
+                <Text style={s.body}>{t('enquiry.already', { status: enquiryStatusText(enquiry.status) })}</Text>
+                <Btn testID="open-enquiry" kind="outline" label={t('enquiry.openConversation')} onPress={onOpenEnquiries} />
+              </View>
+            )}
+            {(!enquiry || enquiry.status === 'closed') && !askForm && (
+              <View style={s.card}>
+                <Text style={s.body}>{enquiry ? t('enquiry.closedAskAgain') : t('enquiry.intro2')}</Text>
+                <Btn testID="ask-school" label={enquiry ? t('enquiry.askAgain') : t('enquiry.ask')} onPress={() => { setAskForm(true); setAskDone(''); }} />
+              </View>
+            )}
+          </>
+        )}
+        {askForm && (
+          <EnquiryForm schoolId={school.id} schoolName={school.name} onCancel={() => setAskForm(false)}
+            onSent={() => { setAskForm(false); setAskDone(t('enquiry.sent')); reload(); }} />
+        )}
+        <View style={s.card} testID="apply-card">
+          <Text style={s.schoolName}>{t('apply.cardTitle')}</Text>
+          <Text style={s.body}>{t('apply.cardText')}</Text>
+          <Btn testID="apply-start" label={t('apply.start')} onPress={() => onApply(school)} />
+        </View>
       </>)}
 
-      <Text style={[s.h2, { marginTop: 20 }]}>What parents say</Text>
-      {community ? <Text testID="community-summary" style={[s.rating, { color: C.green }]}>{community}</Text> : <Text style={s.muted}>No parent reviews yet. Be the first.</Text>}
+      <Text style={[s.h2, { marginTop: 20 }]}>{t('reviews.title')}</Text>
+      {community ? <Text testID="community-summary" style={[s.rating, { color: C.green }]}>{community}</Text> : <Text style={s.muted}>{t('reviews.none')}</Text>}
       {!!error && <Notice text={error} testID="school-error" />}
       {!!message && <Notice tone="green" text={message} testID="review-message" />}
 
       {mine === undefined ? <ActivityIndicator style={{ marginTop: 12 }} /> : mine ? (
         <View style={[s.card, { marginTop: 12 }]} testID="my-review">
-          <Text style={s.label}>Your review</Text>
+          <Text style={s.label}>{t('reviews.yours')}</Text>
           <Text style={s.stars}>{stars(mine.rating)}</Text>
           {!!mine.title && <Text style={s.schoolName}>{mine.title}</Text>}
           <Text style={s.body}>{mine.body}</Text>
           <Notice tone={mine.status === 'published' ? 'green' : mine.status === 'pending' ? 'amber' : 'red'} text={statusLine(mine.status, mine.moderation_note)} testID="my-review-status" />
           {!form && (
             <View style={{ flexDirection: 'row', gap: 8 }}>
-              {mine.status !== 'removed' && <Btn testID="edit-review" kind="outline" label="Edit" onPress={() => { setForm(true); setMessage(''); }} />}
+              {mine.status !== 'removed' && <Btn testID="edit-review" kind="outline" label={t('edit')} onPress={() => { setForm(true); setMessage(''); }} />}
               {!confirmDelete
-                ? <Btn testID="delete-review" kind="quiet" label="Delete" onPress={() => setConfirmDelete(true)} />
-                : <Btn testID="confirm-delete" kind="quiet" label="Tap again to delete for good" onPress={remove} />}
+                ? <Btn testID="delete-review" kind="quiet" label={t('delete')} onPress={() => setConfirmDelete(true)} />
+                : <Btn testID="confirm-delete" kind="quiet" label={t('review.deleteConfirm')} onPress={remove} />}
             </View>
           )}
         </View>
-      ) : !form && <Btn testID="write-review" label="Write a review" onPress={() => { setForm(true); setMessage(''); }} />}
+      ) : !form && <Btn testID="write-review" label={t('review.write')} onPress={() => { setForm(true); setMessage(''); }} />}
 
       {form && <ReviewForm schoolId={school.id} initial={mine || undefined} onCancel={() => setForm(false)} onSaved={(m) => { setForm(false); setMessage(m); reload(); }} />}
 
@@ -1430,13 +2208,13 @@ function SchoolScreen({ school, onBack, onOpenEnquiries }) {
           <Text style={s.stars}>{stars(r.rating)}</Text>
           {!!r.title && <Text style={s.schoolName}>{r.title}</Text>}
           <Text style={s.body}>{r.body}</Text>
-          <Text style={s.muted}>{`${RELATIONSHIPS.find((x) => x.key === r.relationship)?.label ?? 'Parent'} \u00b7 ${monthYear(r.created_at)}`}</Text>
+          <Text style={s.muted}>{`${t(RELATIONSHIPS.find((x) => x.key === r.relationship)?.label ?? 'relationship.other')} \u00b7 ${monthYear(r.created_at)}`}</Text>
           {!!reportMsg[r.id] && <Text testID={`report-msg-${r.id}`} style={[s.muted, { color: C.green }]}>{reportMsg[r.id]}</Text>}
           {mine?.id !== r.id && !reportMsg[r.id] && (reporting === r.id ? (
             <View style={s.wrap}>
-              {REPORT_REASONS.map((x) => <Chip key={x.key} testID={`reason-${x.key}`} label={x.label} onPress={() => report(r.id, x.key)} />)}
+              {REPORT_REASONS.map((x) => <Chip key={x.key} testID={`reason-${x.key}`} label={t(x.label)} onPress={() => report(r.id, x.key)} />)}
             </View>
-          ) : <Btn testID={`report-${r.id}`} kind="quiet" label="Report" onPress={() => setReporting(r.id)} />)}
+          ) : <Btn testID={`report-${r.id}`} kind="quiet" label={t('report')} onPress={() => setReporting(r.id)} />)}
         </View>
       ))}
     </ScrollView>
@@ -1447,9 +2225,48 @@ function SchoolScreen({ school, onBack, onOpenEnquiries }) {
 export default function App() {
   const [ready, setReady] = useState(false);
   const [session, setSession] = useState(null);
+  const [language, setLanguage] = useState('en');
+  const [languageReady, setLanguageReady] = useState(false);
+  const [screen, setScreen] = useState('discover');   // discover | school | compare | enquiries | applications | apply | settings | language
   const [school, setSchool] = useState(null);
-  const [showEnquiries, setShowEnquiries] = useState(false);
+  const [applyTo, setApplyTo] = useState(null);
+  const [compare, setCompare] = useState([]);
+  const [compareNote, setCompareNote] = useState('');
   const [unread, setUnread] = useState(0);
+  const [liveApps, setLiveApps] = useState(0);
+  const [settings, setSettings] = useState(null);
+  const [biometrics, setBiometrics] = useState('none');
+  const [unlockOn, setUnlockOn] = useState(false);
+  const [locked, setLocked] = useState(false);
+  const [lockBusy, setLockBusy] = useState(false);
+  const [lockError, setLockError] = useState('');
+  const leftAt = useRef(null);
+
+  // ---- language: what was chosen last time, then what the profile says ----
+  const applyLanguage = useCallback((code) => {
+    setTranslator(makeTranslator(code));
+    setMoneyLocale(localeFor(code));
+    setDateLocale(localeFor(code));
+    setLanguage(code);
+    if (I18nManager?.allowRTL) { try { I18nManager.allowRTL(true); } catch { /* not on web */ } }
+  }, []);
+
+  useEffect(() => {
+    AsyncStorage.getItem(LANGUAGE_SETTING).then((saved) => {
+      applyLanguage(LANGUAGES.some((l) => l.code === saved) ? saved : 'en');
+      setLanguageReady(true);
+    });
+  }, [applyLanguage]);
+
+  const chooseLanguage = useCallback(async (code) => {
+    applyLanguage(code);
+    await AsyncStorage.setItem(LANGUAGE_SETTING, code);
+    if (session?.user?.id) await saveLanguage(supabase, session.user.id, code);
+    setScreen('discover');
+  }, [applyLanguage, session]);
+
+  // a steady handler, so the applications screen does not reload itself on every render
+  const onApplicationsChanged = useCallback((rows) => setLiveApps(liveApplications(rows)), []);
 
   const refreshUnread = useCallback(async (rows) => {
     if (rows) { setUnread(unreadCount(rows)); return; }
@@ -1462,72 +2279,194 @@ export default function App() {
     supabase.auth.getSession().then(({ data }) => { setSession(data?.session ?? null); setReady(true); });
     const { data } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
-      if (!next) { setSchool(null); setShowEnquiries(false); setUnread(0); }
+      if (!next) { setSchool(null); setScreen('discover'); setUnread(0); setCompare([]); setSettings(null); setLocked(false); }
     });
     const app = AppState.addEventListener('change', (state) => {
-      if (state === 'active') supabase.auth.startAutoRefresh(); else supabase.auth.stopAutoRefresh();
+      if (state === 'active') {
+        supabase.auth.startAutoRefresh();
+        if (shouldLock(unlockOn, leftAt.current)) setLocked(true);
+        leftAt.current = null;
+      } else {
+        supabase.auth.stopAutoRefresh();
+        leftAt.current = Date.now();
+      }
     });
     return () => { data?.subscription?.unsubscribe(); app?.remove?.(); };
-  }, []);
+  }, [unlockOn]);
 
+  // ---- what this person has asked for before ----
   useEffect(() => {
-    if (!session) return undefined;
+    if (!session?.user?.id) return undefined;
+    let alive = true;
     refreshUnread();
-    return undefined;
-  }, [session, refreshUnread]);
+    loadApplications(supabase).then((res) => { if (alive && !res.error) setLiveApps(liveApplications(res.rows)); });
+    loadSettings(supabase, session.user.id).then((res) => {
+      if (!alive || !res.settings) return;
+      setSettings(res.settings);
+      if (res.settings.language && res.settings.language !== language) {
+        applyLanguage(res.settings.language);
+        AsyncStorage.setItem(LANGUAGE_SETTING, res.settings.language);
+      } else if (!res.settings.language) {
+        saveLanguage(supabase, session.user.id, language);
+      }
+    });
+    AsyncStorage.getItem(BIOMETRIC_SETTING).then((v) => { if (alive) setUnlockOn(v === 'on'); });
+    biometricKind(LocalAuthentication).then((kind) => { if (alive) setBiometrics(kind); });
+    return () => { alive = false; };
+    // language is left out on purpose: this runs when the person signs in, not every time they switch language
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, refreshUnread, applyLanguage]);
+
+  // ---- notifications on the phone ----
+  useEffect(() => {
+    if (!session?.user?.id || !settings) return undefined;
+    let alive = true;
+    if (settings.notify_push) {
+      const projectId = Constants?.expoConfig?.extra?.eas?.projectId ?? null;
+      registerForPush(Notifications, supabase, Platform.OS, projectId).then(() => { /* nothing to show: it is quiet on purpose */ });
+    }
+    const sub = Notifications.addNotificationResponseReceivedListener?.((response) => {
+      const kind = response?.notification?.request?.content?.data?.kind;
+      if (!alive) return;
+      if (kind === 'enquiry_reply') { setScreen('enquiries'); refreshUnread(); }
+      if (kind === 'application_status') setScreen('applications');
+    });
+    return () => { alive = false; sub?.remove?.(); };
+  }, [session, settings, refreshUnread]);
 
   useEffect(() => {
-    if ((!school && !showEnquiries) || Platform.OS !== 'android') return undefined; // the phone's back button exists only on Android
+    if (screen === 'discover' || Platform.OS !== 'android') return undefined;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (showEnquiries) setShowEnquiries(false); else setSchool(null);
+      setScreen(screen === 'school' || screen === 'compare' ? 'discover' : 'discover');
       return true;
     });
     return () => sub.remove();
-  }, [school, showEnquiries]);
+  }, [screen]);
+
+  async function unlock() {
+    setLockBusy(true);
+    setLockError('');
+    const res = await unlockWithBiometrics(LocalAuthentication, t('lock.prompt'));
+    setLockBusy(false);
+    if (res.ok) setLocked(false); else setLockError(t('lock.failed'));
+  }
+
+  async function setUnlockChoice(on) {
+    if (on) {
+      const res = await unlockWithBiometrics(LocalAuthentication, t('lock.prompt'));
+      if (!res.ok) return;
+    }
+    setUnlockOn(on);
+    await AsyncStorage.setItem(BIOMETRIC_SETTING, on ? 'on' : 'off');
+  }
+
+  async function setPushChoice(on) {
+    setSettings((cur) => ({ ...cur, notify_push: on }));
+    if (session?.user?.id) await savePushChoice(supabase, session.user.id, on);
+    if (on) await registerForPush(Notifications, supabase, Platform.OS, Constants?.expoConfig?.extra?.eas?.projectId ?? null);
+    else await forgetPush(Notifications, supabase, Platform.OS, Constants?.expoConfig?.extra?.eas?.projectId ?? null);
+  }
+
+  function toggleCompareSchool(item) {
+    const res = toggleCompare(compare, item);
+    setCompare(res.list);
+    setCompareNote(res.full ? t('compare.full', { max: MAX_COMPARE }) : '');
+  }
 
   if (!KEY_IS_SET) {
     return (
       <View style={[s.root, s.center]} testID="setup">
         <Text style={s.h2}>One quick step</Text>
         <Text style={[s.body, { textAlign: 'center', marginTop: 8 }]}>
-          Open App.js and replace PASTE_YOUR_PUBLISHABLE_KEY_HERE with your Supabase publishable key (it starts with sb_publishable_). Never use a secret key here.
+          Open App.js and replace PASTE_YOUR_PUBLISHABLE_KEY_HERE with your Supabase publishable key (it starts with
+          sb_publishable_). Never use a secret key here.
         </Text>
       </View>
     );
   }
-  if (!ready) return <View style={[s.root, s.center]}><ActivityIndicator testID="boot" /></View>;
-  if (!session) return <View style={s.root}><AuthScreen /></View>;
+  if (!ready || !languageReady) return <View style={[s.root, s.center]}><ActivityIndicator testID="boot" /></View>;
+
+  const rtl = isRightToLeft(language);
+  const frame = [s.root, rtl && { direction: 'rtl' }];
+
+  if (!session) {
+    return (
+      <View style={frame}>
+        {screen === 'language'
+          ? <LanguageScreen current={language} onPick={chooseLanguage} onClose={() => setScreen('discover')} />
+          : <AuthScreen language={language} onPickLanguage={() => setScreen('language')} />}
+      </View>
+    );
+  }
+  if (locked) {
+    return (
+      <View style={frame}>
+        <LockScreen kind={biometrics} busy={lockBusy} error={lockError} onUnlock={unlock} onSignOut={() => { setLocked(false); supabase.auth.signOut(); }} />
+      </View>
+    );
+  }
 
   return (
-    <View style={s.root}>
+    <View style={frame}>
       <View style={s.topBar}>
         <View style={s.brandRow}>
           <LogoMark size={26} />
           <Text style={s.topTitle}>Kidscover</Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Btn testID="enquiries" kind="quiet" label={unread > 0 ? `Enquiries (${unread})` : 'Enquiries'} onPress={() => setShowEnquiries(true)} />
-          <Btn testID="sign-out" kind="quiet" label="Sign out" onPress={() => supabase.auth.signOut()} />
+          <Btn testID="applications" kind="quiet" label={liveApps > 0 ? t('nav.applicationsCount', { count: liveApps }) : t('nav.applications')} onPress={() => setScreen('applications')} />
+          <Btn testID="enquiries" kind="quiet" label={unread > 0 ? t('nav.enquiriesCount', { count: unread }) : t('nav.enquiries')} onPress={() => setScreen('enquiries')} />
+          <Btn testID="settings" kind="quiet" label={t('nav.settings')} onPress={() => setScreen('settings')} />
         </View>
       </View>
-      {showEnquiries ? (
-        <EnquiriesScreen
-          myId={session?.user?.id}
-          onBack={() => { setShowEnquiries(false); refreshUnread(); }}
-          onChanged={refreshUnread}
+      {!!compareNote && <Notice tone="amber" text={compareNote} testID="compare-note" />}
+
+      {screen === 'language' && <LanguageScreen current={language} onPick={chooseLanguage} onClose={() => setScreen('settings')} />}
+      {screen === 'settings' && (
+        <SettingsScreen
+          language={language}
+          onPickLanguage={() => setScreen('language')}
+          settings={settings}
+          onSavePush={setPushChoice}
+          biometrics={biometrics}
+          unlockOn={unlockOn}
+          onSetUnlock={setUnlockChoice}
+          email={session?.user?.email ?? settings?.email ?? ''}
+          onDeleted={() => { setScreen('discover'); supabase.auth.signOut(); }}
+          onBack={() => setScreen('discover')}
         />
-      ) : (
-        <>
-          <View style={{ flex: 1, display: school ? 'none' : 'flex' }}><DiscoverScreen onOpen={setSchool} /></View>
-          {school && (
-            <SchoolScreen
-              key={school.id}
-              school={school}
-              onBack={() => setSchool(null)}
-              onOpenEnquiries={() => setShowEnquiries(true)}
-            />
-          )}
-        </>
+      )}
+      {screen === 'enquiries' && (
+        <EnquiriesScreen myId={session?.user?.id} onBack={() => { setScreen('discover'); refreshUnread(); }} onChanged={refreshUnread} />
+      )}
+      {screen === 'applications' && (
+        <ApplicationsScreen onBack={() => setScreen('discover')} onChanged={onApplicationsChanged} />
+      )}
+      {screen === 'apply' && applyTo && (
+        <ApplyScreen school={applyTo} profile={{ ...settings, email: session?.user?.email }}
+          onCancel={() => setScreen(school ? 'school' : 'discover')}
+          onDone={async () => { setScreen('applications'); const res = await loadApplications(supabase); if (!res.error) setLiveApps(liveApplications(res.rows)); }} />
+      )}
+      {screen === 'compare' && (
+        <CompareScreen schools={compare} level={null} onBack={() => setScreen('discover')}
+          onOpen={(x) => { setSchool(x); setScreen('school'); }} onRemove={(x) => toggleCompareSchool(x)} />
+      )}
+      <View style={{ flex: 1, display: screen === 'discover' ? 'flex' : 'none' }}>
+        <DiscoverScreen onOpen={(x) => { setSchool(x); setScreen('school'); }} compare={compare}
+          onToggleCompare={toggleCompareSchool} onOpenCompare={() => setScreen('compare')} />
+      </View>
+      {screen === 'school' && school && (
+        <SchoolScreen
+          key={school.id}
+          school={school}
+          profile={settings}
+          level={null}
+          comparing={compare.some((x) => x.id === school.id)}
+          onCompare={() => toggleCompareSchool(school)}
+          onBack={() => setScreen('discover')}
+          onOpenEnquiries={() => setScreen('enquiries')}
+          onApply={(x) => { setApplyTo(x); setScreen('apply'); }}
+        />
       )}
     </View>
   );
@@ -1544,7 +2483,7 @@ const s = StyleSheet.create({
   authArt: { borderRadius: 24, overflow: 'hidden', marginBottom: 18, backgroundColor: C.blueSoft },
   authCard: { borderRadius: 20, padding: 18, shadowColor: C.blue, shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 2 },
   logo: { fontSize: 34, fontWeight: '900', color: C.blue, textAlign: 'center' },
-  tagline: { color: C.grey, textAlign: 'center', marginTop: 6, marginBottom: 20, fontSize: 15 },
+  tagline: { color: C.grey, textAlign: 'center', marginTop: 6, marginBottom: 8, fontSize: 15 },
   card: { backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.line, padding: 14, marginBottom: 10, gap: 6 },
   cardRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   thumb: { width: 78, height: 78, borderRadius: 14, overflow: 'hidden', backgroundColor: C.blueSoft },
@@ -1556,6 +2495,16 @@ const s = StyleSheet.create({
   credit: { fontSize: 11, color: C.grey, marginBottom: 6 },
   facility: { backgroundColor: C.mintSoft, color: C.ink, fontSize: 13, fontWeight: '600', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 12, overflow: 'hidden' },
   achievementCard: { marginTop: 8, backgroundColor: '#FFFDF7', borderColor: C.sunSoft },
+  tileRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  tile: { flex: 1, borderRadius: 16, padding: 10, alignItems: 'center' },
+  tileNumber: { fontSize: 22, fontWeight: '900' },
+  tileLabel: { fontSize: 11, color: C.grey, textAlign: 'center' },
+  feeRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
+  compareBar: { backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.blue, padding: 12, gap: 6, marginTop: 8 },
+  compareCell: { width: 150, padding: 8, borderWidth: 1, borderColor: C.line, backgroundColor: C.card },
+  compareHead: { backgroundColor: C.blueSoft },
+  compareName: { fontSize: 14, fontWeight: '700', color: C.ink },
+  compareTag: { backgroundColor: C.blueSoft, color: C.blue, fontSize: 12, fontWeight: '700', paddingVertical: 4, paddingHorizontal: 10, borderRadius: 999, overflow: 'hidden' },
   h2: { fontSize: 18, fontWeight: '700', color: C.ink },
   title: { fontSize: 24, fontWeight: '800', color: C.ink, marginTop: 4 },
   schoolName: { fontSize: 16, fontWeight: '700', color: C.ink },

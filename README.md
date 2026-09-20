@@ -59,7 +59,8 @@ npx eas-cli login
 npx eas-cli init
 ```
 
-`init` puts your own project id into `app.json` (it replaces `set-by-eas-init`). Commit that change.
+`init` writes your own project id into `app.json`, as `extra.eas.projectId`. Commit that change. Run `init` before
+the first build: without it `eas build` stops with "Invalid UUID appId", because there is no project to build into.
 
 **2. Notifications on Android (once, optional).** Push needs Firebase:
 

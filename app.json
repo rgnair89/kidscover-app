@@ -9,11 +9,6 @@
     "newArchEnabled": true,
     "primaryColor": "#5B4BDB",
     "backgroundColor": "#F7F5FF",
-    "extra": {
-      "eas": {
-        "projectId": "set-by-eas-init"
-      }
-    },
     "android": {
       "package": "in.kidscover.app",
       "versionCode": 1,

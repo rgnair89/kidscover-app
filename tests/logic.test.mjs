@@ -8,16 +8,21 @@ const src = fs.readFileSync(process.env.APP_FILE ?? path.join(here, '..', 'App.j
 const a = src.indexOf('// ==== BEGIN pure logic'), b = src.indexOf('// ==== END pure logic');
 if (a < 0 || b < 0) throw new Error('markers not found in App.js');
 fs.mkdirSync(path.join(here, '.tmp'), { recursive: true });
-const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'levelBadges', 'googleRatingText', 'communityText', 'stars', 'safeUrl', 'validateAuth', 'validateReview', 'statusLine', 'cleanName', 'friendlyError', 'loadStats', 'loadSchools', 'loadReviews', 'loadMyReview', 'submitReview', 'updateReview', 'deleteReview', 'reportReview', 'DEFAULT_FILTERS', 'PAGE_SIZE', 'monthYear', 'SCHOOL_COLUMNS', 'NEARBY_COLUMNS', 'DISTANCE_CHOICES', 'SERVICE_AREA', 'validPlace', 'inServiceArea', 'defaultSort', 'normalizeFilters', 'distanceText', 'cleanAddress', 'isMissingNearby', 'locateMe', 'locationProblemText', 'OUTSIDE_AREA_TEXT', 'NEARBY_MISSING_TEXT',
+const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'levelBadges', 'googleRatingText', 'communityText', 'stars', 'safeUrl', 'validateAuth', 'validateReview', 'statusLine', 'cleanName', 'friendlyError', 'loadStats', 'loadSchools', 'loadReviews', 'loadMyReview', 'submitReview', 'updateReview', 'deleteReview', 'reportReview', 'DEFAULT_FILTERS', 'PAGE_SIZE', 'monthYear', 'SCHOOL_COLUMNS', 'NEARBY_COLUMNS', 'DISTANCE_CHOICES', 'SERVICE_AREA', 'validPlace', 'inServiceArea', 'defaultSort', 'normalizeFilters', 'distanceText', 'cleanAddress', 'isMissingNearby', 'locateMe', 'locationProblemText',
   'ENQUIRY_COLUMNS', 'MESSAGE_COLUMNS', 'MAX_ENQUIRY', 'MIN_ENQUIRY', 'GRADE_CHOICES', 'startYearChoices', 'validateEnquiry', 'enquirySubject',
-  'enquiryStatusText', 'enquiryAbout', 'unreadCount', 'fromMe', 'isMissingEnquiries', 'ENQUIRIES_MISSING_TEXT', 'sendEnquiry', 'loadEnquiries',
+  'enquiryStatusText', 'enquiryAbout', 'unreadCount', 'fromMe', 'isMissingEnquiries', 'sendEnquiry', 'loadEnquiries',
   'loadEnquiryForSchool', 'loadEnquiryMessages', 'replyToEnquiry', 'markEnquiryRead', 'closeEnquiry',
   'DRIVE_MODES', 'MAX_DRIVE_BATCH', 'driveTimeText', 'driveKey', 'needDriveTimes', 'requestDriveTimes', 'driveProblemText',
   'BOARD_CHOICES', 'boardSourceText', 'admissionText',
   'CATEGORY_CHOICES', 'categoryOf', 'categoryFilters', 'isSchoolPlace',
-  'FACILITY_INFO', 'ACHIEVEMENT_INFO', 'SOURCE_TEXT', 'facilityText', 'sourcesText', 'photoCreditText', 'artColours', 'ART_COLOURS', 'loadFacilities', 'loadAchievements'];
+  'FACILITY_INFO', 'ACHIEVEMENT_INFO', 'SOURCE_TEXT', 'facilityText', 'sourcesText', 'photoCreditText', 'artColours', 'ART_COLOURS', 'loadFacilities', 'loadAchievements',
+  'setTranslator', 't', 'setMoneyLocale', 'setDateLocale', 'rupees', 'budgetLabel', 'BUDGET_CHOICES', 'FEE_PARTS', 'feeForLevel', 'feeSummaryText', 'loadFeeSchedules', 'loadTiles', 'leaveByText', 'clockText', 'dayText', 'noteOutboundClick', 'messageFrom', 'EN_GRADES', 'classLabel', 'stageText', 'academicYearChoices', 'APPLY_CLASSES', 'APPLY_RELATIONS', 'APPLY_GENDERS', 'EMPTY_APPLICATION', 'validateApplication', 'submitApplication', 'loadApplications', 'loadApplicationEvents', 'withdrawApplication', 'deleteApplication', 'isMissingApplications', 'liveApplications', 'MAX_COMPARE', 'toggleCompare', 'compareRows', 'registerForPush', 'forgetPush', 'loadNotifications', 'markNotificationsRead', 'loadSettings', 'saveLanguage', 'savePushChoice', 'deleteAccount', 'biometricKind', 'unlockWithBiometrics', 'shouldLock', 'BIOMETRIC_SETTING', 'LANGUAGE_SETTING', 'LOCK_AFTER_MS', 'APPLICATION_COLUMNS'];
 fs.writeFileSync(path.join(here, '.tmp', 'logic.mjs'), src.slice(a, b) + `\nexport { ${names.join(', ')} };\n`);
 const L = await import(pathToFileURL(path.join(here, '.tmp', 'logic.mjs')).href);
+// the words of the app come from the language packs; the tests read the English one
+const EN = JSON.parse(fs.readFileSync(path.join(here, '..', 'i18n', 'en.json'), 'utf8'));
+const fill = (line, values) => (values ? String(line).replace(/\{(\w+)\}/g, (whole, name) => (name in values ? String(values[name]) : whole)) : line);
+L.setTranslator((key, values) => fill(EN[key] ?? key, values));
 
 let pass = 0, fail = 0;
 const check = (name, cond, detail = '') => { cond ? pass++ : fail++; console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${!cond && detail ? '  -> ' + String(detail).slice(0, 200) : ''}`); };
@@ -188,7 +193,7 @@ ndb = fakeDb(() => ({ data: null, error: { code: 'PGRST202', message: 'Could not
 res = await L.loadSchools(ndb, L.DEFAULT_FILTERS, 0, { lat: 19, lng: 72.8 });
 check('the function not being installed comes back as an error, not a crash, and is recognised', !!res.error && L.isMissingNearby(res.error) && res.rows.length === 0);
 check('missing-function detection: by code, by name, and not for other errors', L.isMissingNearby({ code: 'PGRST202' }) && L.isMissingNearby({ message: 'function public.schools_nearby does not exist' }) && !L.isMissingNearby({ message: 'Network request failed' }) && !L.isMissingNearby(null) && !L.isMissingNearby({ code: '23505' }));
-check('a missing function is explained in plain words (not the raw database message)', L.friendlyError({ code: 'PGRST202', message: 'Could not find the function public.schools_nearby' }) === L.NEARBY_MISSING_TEXT && /not switched on yet/.test(L.NEARBY_MISSING_TEXT) && !/PGRST|schema cache/.test(L.NEARBY_MISSING_TEXT));
+check('a missing function is explained in plain words (not the raw database message)', L.friendlyError({ code: 'PGRST202', message: 'Could not find the function public.schools_nearby' }) === EN['error.nearbyOff'] && /not switched on yet/.test(EN['error.nearbyOff']) && !/PGRST|schema cache/.test(EN['error.nearbyOff']));
 
 console.log('\n=== near me: how far ===');
 const dt = L.distanceText;
@@ -238,13 +243,13 @@ for (const [why, pos] of [['no coordinates', {}], ['a null latitude (must not be
   check(`a bad position (${why}) is "unavailable"`, got.ok === false && got.reason === 'unavailable', JSON.stringify(got));
 }
 check('each problem has its own plain-words message, and none blames the parent', ['denied', 'blocked', 'timeout', 'unavailable'].every((r) => L.locationProblemText(r).length > 30) && new Set(['denied', 'blocked', 'timeout', 'unavailable'].map(L.locationProblemText)).size === 4 && /settings/.test(L.locationProblemText('blocked')) && /search by school name/.test(L.locationProblemText('denied')));
-check('the outside-Mumbai notice names the area', /Mumbai/.test(L.OUTSIDE_AREA_TEXT));
+check('the outside-Mumbai notice names the area', /Mumbai/.test(EN['location.outsideArea']));
 
 console.log('\n=== asking a school about admissions ===');
 check('a question has to say something, but not an essay', L.validateEnquiry({ message: 'x'.repeat(10) }) === null && /at least 10 characters, 9 so far/.test(L.validateEnquiry({ message: 'x'.repeat(9) })) && L.validateEnquiry({ message: 'x'.repeat(2000) }) === null && /under 2000/.test(L.validateEnquiry({ message: 'x'.repeat(2001) })));
 check('spaces do not count towards the minimum', /at least 10/.test(L.validateEnquiry({ message: '  hi  ' + ' '.repeat(30) })));
-check('the class chosen goes into the subject the school sees, and it is never over-long', L.enquirySubject('Class 1') === 'Admission enquiry - Class 1' && L.enquirySubject('') === 'Admission enquiry' && L.enquirySubject(null) === 'Admission enquiry' && L.enquirySubject('x'.repeat(300)).length === 120);
-check('the classes offered run from nursery to class 12', L.GRADE_CHOICES.includes('Nursery') && L.GRADE_CHOICES.includes('Class 11 to 12') && L.GRADE_CHOICES.length >= 5);
+check('the class chosen goes into the subject the school sees, in English so every school reads it the same', L.enquirySubject('grade.1to5') === 'Admission enquiry - Class 1 to 5' && L.enquirySubject('') === 'Admission enquiry' && L.enquirySubject(null) === 'Admission enquiry' && L.enquirySubject('grade.unknown') === 'Admission enquiry');
+check('the classes offered run from nursery to class 12, in the language the parent chose', L.GRADE_CHOICES.map((g) => EN[g]).includes('Nursery') && L.GRADE_CHOICES.map((g) => EN[g]).includes('Class 11 to 12') && L.GRADE_CHOICES.length >= 5 && L.GRADE_CHOICES.every((g) => EN[g]));
 check('the years offered are this year and the two after it', eq(L.startYearChoices(new Date('2026-09-19T00:00:00Z')), [2026, 2027, 2028]) && eq(L.startYearChoices(new Date('2030-01-01T00:00:00Z')), [2030, 2031, 2032]));
 check('the state of an enquiry is put in words a parent understands', L.enquiryStatusText('open') === 'Waiting for a reply' && L.enquiryStatusText('replied') === 'They have replied' && L.enquiryStatusText('closed') === 'Closed' && L.enquiryStatusText('nonsense') === '');
 check('what it is about reads as a phrase, and is empty when nothing was chosen', L.enquiryAbout({ grade_of_interest: 'Class 1', start_year: 2027 }) === 'Class 1, starting 2027' && L.enquiryAbout({ grade_of_interest: 'Nursery' }) === 'Nursery' && L.enquiryAbout({ start_year: 2027 }) === 'starting 2027' && L.enquiryAbout({}) === '' && L.enquiryAbout(null) === '');
@@ -253,8 +258,8 @@ check('a message is mine only when the sender is me; with no user id nothing is 
 
 console.log('\n=== asking a school: what is sent ===');
 let edb = fakeDb(() => ({ data: [], error: null }));
-await L.sendEnquiry(edb, 'school-1', { grade: 'Class 1', startYear: 2027, message: '  Do you have places?  ' });
-check('the question goes through the send_enquiry function with the school, subject, message, class and year', edb.recs[0].table === 'rpc:send_enquiry' && eq(edb.recs[0].args, { p_school: 'school-1', p_subject: 'Admission enquiry - Class 1', p_message: 'Do you have places?', p_grade: 'Class 1', p_start_year: 2027 }), JSON.stringify(edb.recs[0]));
+await L.sendEnquiry(edb, 'school-1', { grade: 'grade.1to5', startYear: 2027, message: '  Do you have places?  ' });
+check('the question goes through the send_enquiry function with the school, subject, message, class and year', edb.recs[0].table === 'rpc:send_enquiry' && eq(edb.recs[0].args, { p_school: 'school-1', p_subject: 'Admission enquiry - Class 1 to 5', p_message: 'Do you have places?', p_grade: 'Class 1 to 5', p_start_year: 2027 }), JSON.stringify(edb.recs[0]));
 edb = fakeDb(() => ({ data: [], error: null }));
 await L.sendEnquiry(edb, 'school-1', { grade: '', startYear: null, message: 'Just a question.' });
 check('no class and no year are sent as nothing, not as empty text', edb.recs[0].args.p_grade === null && edb.recs[0].args.p_start_year === null && edb.recs[0].args.p_subject === 'Admission enquiry');
@@ -288,19 +293,19 @@ check('the app never asks for who the staff member is, only the sender id', !/fi
 
 console.log('\n=== asking a school: when it goes wrong ===');
 check('a database that has not been set up is recognised, by code or by name', L.isMissingEnquiries({ code: 'PGRST202' }) && L.isMissingEnquiries({ code: 'PGRST205' }) && L.isMissingEnquiries({ message: 'Could not find the table public.enquiry_threads in the schema cache' }) && !L.isMissingEnquiries({ message: 'Network request failed' }) && !L.isMissingEnquiries(null));
-check('...and explained plainly, without database words', fe({ code: 'PGRST202', message: 'send_enquiry not found' }, 'enquiry') === L.ENQUIRIES_MISSING_TEXT && !/PGRST|schema cache|enquiry_threads/.test(L.ENQUIRIES_MISSING_TEXT));
+check('...and explained plainly, without database words', fe({ code: 'PGRST202', message: 'send_enquiry not found' }, 'enquiry') === EN['error.enquiriesOff'] && !/PGRST|schema cache|enquiry_threads/.test(EN['error.enquiriesOff']));
 check('asking the same school twice points the parent at the conversation they already have', /already have an open enquiry/.test(fe({ message: 'an enquiry with this school is already open' }, 'enquiry')) && /Enquiries/.test(fe({ message: 'an enquiry with this school is already open' }, 'enquiry')));
 check('the daily limit is explained in plain words', /sent 10 enquiries today/.test(fe({ message: 'daily enquiry limit reached' }, 'enquiry')));
 check('sending too fast is explained without blaming the parent', /wait a few minutes/.test(fe({ message: 'too many messages just now, please wait a little' }, 'enquiry')));
 check('an unconfirmed account is told to confirm their email, as for reviews', /confirm your email address/.test(fe({ code: '42501' }, 'enquiry')));
-check('the older messages (near me, reviews) are unchanged by all this', fe({ code: 'PGRST202', message: 'schools_nearby missing' }) === L.NEARBY_MISSING_TEXT && /do not match/.test(fe({ message: 'Invalid login credentials' })));
+check('the older messages (near me, reviews) are unchanged by all this', fe({ code: 'PGRST202', message: 'schools_nearby missing' }) === EN['error.nearbyOff'] && /do not match/.test(fe({ message: 'Invalid login credentials' })));
 
 console.log('\n=== drive times: wording ===');
 const dtt = L.driveTimeText;
 check('minutes under an hour', dtt({ minutes: 25, km: 8 }) === 'About 25 min by car' && dtt({ minutes: 0.4 }) === 'About 1 min by car' && dtt({ minutes: 59.4 }) === 'About 59 min by car');
 check('an hour or more: hours and minutes, and no "0 min"', dtt({ minutes: 60 }) === 'About 1 h by car' && dtt({ minutes: 75 }) === 'About 1 h 15 min by car' && dtt({ minutes: 59.6 }) === 'About 1 h by car' && dtt({ minutes: 130 }) === 'About 2 h 10 min by car');
 check('nothing is shown for no route, no answer or rubbish', [null, undefined, {}, { minutes: null }, { minutes: 'x' }, { minutes: NaN }, { minutes: -3 }].every((t) => dtt(t) === ''));
-check('the two times of day are the weekday school run and right now', eq(L.DRIVE_MODES.map((m) => m.key), ['school_run', 'now']) && /7:30/.test(L.DRIVE_MODES[0].label) && L.MAX_DRIVE_BATCH === 20);
+check('three times of day: the weekday school run, in time for the bell, and right now', eq(L.DRIVE_MODES.map((m) => m.key), ['school_run', 'arrive', 'now']) && /7:30/.test(EN[L.DRIVE_MODES[0].label]) && L.MAX_DRIVE_BATCH === 20);
 const dpt = L.driveProblemText;
 check('each problem has a plain message', /used today's 20 drive-time lookups/.test(dpt('user_limit', 20)) && /used today's 30/.test(dpt('user_limit', 30)) && /paused for today/.test(dpt('daily_budget')) && /only in Mumbai and Thane/.test(dpt('outside_area')) && /confirm your email/.test(dpt('confirm_email')) && /try again in a moment/.test(dpt('network')));
 check('every setup problem reads the same to a parent: not switched on yet (the details are for admins)', ['switched_off', 'not_deployed', 'not_configured', 'routes_not_enabled', 'google_key_blocked', 'google_key_invalid'].every((c) => /not switched on yet/.test(dpt(c))) && !/Google key|Routes API/i.test(dpt('google_key_blocked')));
@@ -362,7 +367,7 @@ check('the category itself is not counted as a filter; set-aside filters are not
 check('the parent\'s filters are not changed by being set aside', classChoices.level === 'primary' && classChoices.board === 'CBSE' && L.categoryFilters(classChoices) !== classChoices);
 check('a place with no category (an older database row) counts as a school; classes and colleges do not', L.isSchoolPlace({}) && L.isSchoolPlace({ category: 'school' }) && !L.isSchoolPlace({ category: 'after_school' }) && !L.isSchoolPlace({ category: 'college' }) && L.isSchoolPlace(null));
 check('the list asks for the category (the app hides level badges and admissions for classes and colleges)', L.SCHOOL_COLUMNS.split(',').includes('category') && L.NEARBY_COLUMNS.split(',').includes('category'));
-check('a category\'s words: "after-school classes", "colleges"', L.categoryOf('after_school').noun === 'after-school classes' && L.categoryOf('college').label === 'Colleges' && L.categoryOf('nope').key === 'school');
+check('a category\'s words: "after-school classes", "colleges"', EN[L.categoryOf('after_school').noun] === 'after-school classes' && EN[L.categoryOf('college').label] === 'Colleges' && L.categoryOf('nope').key === 'school');
 check('a board that is not on the list is ignored (nothing odd reaches the filter)', !filtersOf({ board: 'Harvard' }).some((x) => /boards/.test(x)) && !filtersOf({ board: 'CBSE},id.eq.1' }).some((x) => /boards/.test(x)));
 check('board works together with level and near me', ['overlaps("boards",["ICSE"])', 'overlaps("levels",["primary"])', 'lte("distance_km",5)'].every((x) => filtersOf({ board: 'ICSE', level: 'primary', sort: 'distance', nearKm: 5 }, true).includes(x)));
 check('a chosen board counts as one filter', L.activeFilterCount({ ...L.DEFAULT_FILTERS, board: 'IB' }) === 1 && L.activeFilterCount({ ...L.DEFAULT_FILTERS, board: 'IB', includeUnknownBoard: true }) === 1 && L.DEFAULT_FILTERS.includeUnknownBoard === false);

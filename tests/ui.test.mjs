@@ -19,14 +19,24 @@ fs.writeFileSync(path.join(tmp, 'stub-svg.mjs'), `import * as React from 'react'
 fs.writeFileSync(path.join(tmp, 'fake-location.mjs'), `export const Accuracy = { Balanced: 3 };\nexport const requestForegroundPermissionsAsync = (...a) => globalThis.__loc.requestForegroundPermissionsAsync(...a);\nexport const getCurrentPositionAsync = (...a) => globalThis.__loc.getCurrentPositionAsync(...a);`);
 // the app creates its client when the file loads, before a test has set up its data, so look the real stand-in up on every use
 fs.writeFileSync(path.join(tmp, 'fake-supabase.mjs'), `export const createClient = () => new Proxy({}, { get: (_, prop) => globalThis.__db[prop] });`);
+// the phone's own keystore: on the web there is none, so the app falls back to ordinary storage (as here)
+fs.writeFileSync(path.join(tmp, 'stub-securestore.mjs'), `export const setItemAsync = async () => {}; export const getItemAsync = async () => null; export const deleteItemAsync = async () => {};`);
+// the fingerprint reader and the notifications: each test sets globalThis.__bio / globalThis.__push
+fs.writeFileSync(path.join(tmp, 'fake-biometrics.mjs'), `export const AuthenticationType = { FINGERPRINT: 1, FACIAL_RECOGNITION: 2, IRIS: 3 };\nexport const hasHardwareAsync = async () => globalThis.__bio?.hasHardwareAsync?.() ?? false;\nexport const isEnrolledAsync = async () => globalThis.__bio?.isEnrolledAsync?.() ?? false;\nexport const supportedAuthenticationTypesAsync = async () => globalThis.__bio?.supportedAuthenticationTypesAsync?.() ?? [];\nexport const authenticateAsync = async (...a) => globalThis.__bio?.authenticateAsync?.(...a) ?? { success: false };`);
+fs.writeFileSync(path.join(tmp, 'fake-notifications.mjs'), `export const getPermissionsAsync = async () => globalThis.__push?.getPermissionsAsync?.() ?? { granted: false, status: 'undetermined' };\nexport const requestPermissionsAsync = async () => globalThis.__push?.requestPermissionsAsync?.() ?? { granted: false, status: 'denied' };\nexport const getExpoPushTokenAsync = async (...a) => globalThis.__push?.getExpoPushTokenAsync?.(...a) ?? { data: '' };\nexport const addNotificationResponseReceivedListener = (fn) => { globalThis.__push?.listen?.(fn); return { remove() {} }; };`);
+fs.writeFileSync(path.join(tmp, 'stub-constants.mjs'), `export default { expoConfig: { extra: { eas: { projectId: 'test-project' } } } };`);
+fs.writeFileSync(path.join(tmp, 'stub-crypto.mjs'), `export const getRandomBytesAsync = async (n) => new Uint8Array(n).fill(7);`);
 
 const appSource = fs.readFileSync(process.env.APP_FILE ?? path.join(root, 'App.js'), 'utf8');
+const EN = JSON.parse(fs.readFileSync(path.join(root, 'i18n', 'en.json'), 'utf8'));
 async function bundle(name, source) {
-  fs.writeFileSync(path.join(tmp, `${name}.App.js`), source);
+  // the copy of the app lives in tests/.tmp, so point it at the real language packs
+  const i18nPath = path.join(root, 'i18n', 'index.js').split(path.sep).join('/');
+  fs.writeFileSync(path.join(tmp, `${name}.App.js`), source.replace("from './i18n'", `from ${JSON.stringify(i18nPath)}`));
   fs.writeFileSync(path.join(tmp, `${name}.entry.jsx`), `import * as React from 'react';\nimport { createRoot } from 'react-dom/client';\nimport App from './${name}.App.js';\nexport { React, createRoot, App };\n`);
   await build({
     entryPoints: [path.join(tmp, `${name}.entry.jsx`)], bundle: true, format: 'esm', platform: 'node', outfile: path.join(tmp, `${name}.bundle.mjs`),
-    loader: { '.js': 'jsx' }, jsx: 'automatic', logLevel: 'error',
+    loader: { '.js': 'jsx', '.json': 'json' }, jsx: 'automatic', logLevel: 'error',
     alias: {
       'react-native': 'react-native-web',
       '@react-native-async-storage/async-storage': path.join(tmp, 'stub-storage.mjs'),
@@ -34,6 +44,11 @@ async function bundle(name, source) {
       '@supabase/supabase-js': path.join(tmp, 'fake-supabase.mjs'),
       'expo-location': path.join(tmp, 'fake-location.mjs'),
       'react-native-svg': path.join(tmp, 'stub-svg.mjs'),
+      'expo-secure-store': path.join(tmp, 'stub-securestore.mjs'),
+      'expo-local-authentication': path.join(tmp, 'fake-biometrics.mjs'),
+      'expo-notifications': path.join(tmp, 'fake-notifications.mjs'),
+      'expo-constants': path.join(tmp, 'stub-constants.mjs'),
+      'expo-crypto': path.join(tmp, 'stub-crypto.mjs'),
     },
     define: { 'process.env.NODE_ENV': '"development"', __DEV__: 'true' },
   });
@@ -85,6 +100,8 @@ function seed() {
   // two real-looking Google names with emoji / search-engine text
   schools.push(S('n1', '\u{1F60A}Smiling Kids Pre-school \u{1F60A} and \u{1F4DA}Eon International School \u{1F4DA}', 'Kalher, Maharashtra', ['preschool'], 5, 21, { latitude: 19.2831, longitude: 73.0546 }));
   schools.push(S('n2', '270 Degree Kids Preschool Kasarvadavali, Thane | Best Preschool In Kasarvadavali', 'Kasarvadavali, Thane', ['preschool', 'daycare'], 4.9, 139, { latitude: 19.2645, longitude: 72.9694, photo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/270.jpg/800px-270.jpg', photo_source: 'wikimedia', photo_credit: 'Jane Doe', photo_licence: 'CC BY-SA 4.0', photo_page_url: 'https://commons.wikimedia.org/wiki/File:270.jpg' }));
+  Object.assign(schools.find((x) => x.id === 'n2'), { fee_preschool: 136000, fee_primary: 231000, fees_from: 136000, fees_year: '2026-27', start_time: '08:15:00', start_time_source: 'school' });
+  Object.assign(schools.find((x) => x.id === 's1'), { fee_preschool: 60000, fees_from: 60000, fees_year: '2026-27' });
   Object.assign(schools.find((x) => x.id === 's4'), { photo_url: 'https://proj.supabase.co/storage/v1/object/public/school-photos/s4/photo-1.jpg', photo_source: 'school', photo_credit: null });
   return {
     schools, session: null, log: [], authCalls: [], nextId: 1,
@@ -96,6 +113,16 @@ function seed() {
     ],
     private: [{ review_id: 'rv1', school_id: 's1', author_id: 'u2', moderation_note: null }, { review_id: 'rv2', school_id: 's1', author_id: 'u9', moderation_note: null }, { review_id: 'rv3', school_id: 's1', author_id: 'u9', moderation_note: null }],
     reports: [], failNext: null,
+    fees: [
+      { school_id: 'n2', level: 'preschool', academic_year: '2026-27', tuition: 90000, transport: 24000, meals: 0, uniform_books: 6000,
+        activities: 0, other_annual: 0, admission_fee: 15000, registration_fee: 1000, deposit: 5000, annual_total: 120000,
+        first_year_total: 136000, note: 'Sibling discount 10%', source: 'school', source_url: null },
+      { school_id: 'n2', level: 'primary', academic_year: '2026-27', tuition: 150000, transport: 30000, meals: 12000, uniform_books: 8000,
+        activities: 5000, other_annual: 0, admission_fee: 25000, registration_fee: 1000, deposit: 10000, annual_total: 205000,
+        first_year_total: 231000, note: null, source: 'kidscover', source_url: null },
+    ],
+    applications: [], appEvents: [], notifications: [], pushTokens: [], clicks: [], profiles: {},
+    deleteAccountResult: { ok: true },
     threads: [], tmsgs: [], nextT: 1, rpcCalls: [], clock: Date.now(),
     fnCalls: [], fnMode: 'ok', lookupsLeft: undefined,
     facilities: [
@@ -129,7 +156,7 @@ const threadRows = (st) => st.threads.map((t) => {
 // the school answering, as the database trigger would record it
 function staffReply(st, ticketId, message) {
   const now = tick(st);
-  st.tmsgs.push({ id: 'staff' + st.nextT++, ticket_id: ticketId, sender_id: 'kidscover-staff', message, created_at: now });
+  st.tmsgs.push({ id: 'staff' + st.nextT++, ticket_id: ticketId, sender_id: 'school-staff', sender_role: 'school', message, created_at: now });
   const t = st.threads.find((x) => x.id === ticketId);
   t.last_message_at = now;
   t.status = 'replied';
@@ -191,6 +218,21 @@ class Query {
       return this.finish(all(this.table === 'school_facilities' ? st.facilities : st.achievements));
     }
     if (this.table === 'schools') return this.finish(all(st.schools));
+    if (this.table === 'school_fee_schedules') {
+      if (st.feesMissing) return { data: null, error: { code: '42P01', message: 'relation "public.school_fee_schedules" does not exist' } };
+      return this.finish(all(st.fees));
+    }
+    if (this.table === 'admission_applications') {
+      if (st.applicationsMissing) return { data: null, error: { code: 'PGRST205', message: 'Could not find the table public.admission_applications in the schema cache' } };
+      return this.finish(all(st.applications.filter((a) => a.parent_id === me?.id).map((a) => ({ ...a, schools: { name: st.schools.find((x) => x.id === a.school_id)?.name ?? null } }))));
+    }
+    if (this.table === 'admission_application_events') return this.finish(all(st.appEvents));
+    if (this.table === 'notifications') return this.finish(all(st.notifications.filter((n) => n.user_id === me?.id)));
+    if (this.table === 'profiles') {
+      if (this.op === 'update') { st.profiles[me?.id] = { ...(st.profiles[me?.id] ?? {}), ...this.payload }; return { error: null }; }
+      const row = { id: me?.id, language: null, notify_push: true, first_name: 'Ann', last_name: 'Rao', email: me?.email, ...(st.profiles[me?.id] ?? {}) };
+      return this.finish(all([row]));
+    }
     if (this.table === 'rpc:schools_nearby') {
       // the same rules as the database function: only schools with coordinates, distance in km rounded to 0.01, bad input -> nothing
       if (st.nearbyMissing) return { data: null, error: { code: 'PGRST202', message: 'Could not find the function public.schools_nearby(p_lat, p_lng) in the schema cache' } };
@@ -241,6 +283,41 @@ class Query {
         st.tmsgs.push({ id: 'tm' + st.nextT++, ticket_id: id, sender_id: me.id, message: args.p_message, created_at: now });
         return { data: id, error: null };
       }
+      if (fn === 'school_tiles') {
+        const inside = st.schools.filter((x) => !x.is_hidden && x.category !== 'after_school' && x.category !== 'college');
+        return { data: { schools: inside.length, admissions_open: inside.filter((x) => x.admissions_open && x.admissions_source_url).length,
+          admissions_closed: 0, with_fees: inside.filter((x) => x.fees_from != null).length }, error: null };
+      }
+      if (fn === 'submit_admission_application') {
+        if (!me || !st.users[me.email].verified) return { data: null, error: { code: '42501', message: 'Please confirm your email address first' } };
+        const form = args.p_form ?? {};
+        if (st.applications.some((a) => a.school_id === args.p_school && a.parent_id === me.id
+          && a.child_first_name.toLowerCase() === String(form.child_first_name).toLowerCase() && !['withdrawn', 'declined'].includes(a.status))) {
+          return { data: null, error: { code: '23505', message: 'You have already applied to this school for this child' } };
+        }
+        const id = 'app' + st.nextT++;
+        st.applications.push({ id, school_id: args.p_school, parent_id: me.id, status: 'submitted', status_note: null,
+          consent_at: tick(st), created_at: tick(st), updated_at: tick(st), ...form });
+        st.appEvents.push({ id: st.appEvents.length + 1, application_id: id, status: 'submitted', note: null, by_role: 'parent', at: tick(st) });
+        return { data: id, error: null };
+      }
+      if (fn === 'withdraw_admission_application') {
+        const a = st.applications.find((x) => x.id === args.p_app && x.parent_id === me?.id);
+        if (!a) return { data: null, error: { code: '42501', message: 'This application is not yours' } };
+        a.status = 'withdrawn';
+        st.appEvents.push({ id: st.appEvents.length + 1, application_id: a.id, status: 'withdrawn', note: null, by_role: 'parent', at: tick(st) });
+        return { data: null, error: null };
+      }
+      if (fn === 'delete_admission_application') {
+        const before = st.applications.length;
+        st.applications = st.applications.filter((x) => !(x.id === args.p_app && x.parent_id === me?.id));
+        st.appEvents = st.appEvents.filter((e) => e.application_id !== args.p_app);
+        return before === st.applications.length ? { data: null, error: { code: '42501', message: 'This application is not yours' } } : { data: null, error: null };
+      }
+      if (fn === 'register_push_device') { st.pushTokens.push({ token: args.p_token, platform: args.p_platform, user: me?.id }); return { data: null, error: null }; }
+      if (fn === 'unregister_push_device') { st.pushTokens = st.pushTokens.filter((x) => x.token !== args.p_token); return { data: null, error: null }; }
+      if (fn === 'log_outbound_click') { st.clicks.push({ school: args.p_school, kind: args.p_kind, user: me?.id }); return { data: null, error: null }; }
+      if (fn === 'mark_notifications_read') { st.notifications.filter((n) => n.user_id === me?.id).forEach((n) => { n.read_at = tick(st); }); return { data: null, error: null }; }
       if (fn === 'mark_ticket_read') {
         const t = own(args.p_ticket);
         if (!t) return { data: null, error: { code: '42501', message: 'this enquiry is not yours' } };
@@ -299,6 +376,8 @@ function makeDb(state) {
         const mode = state.fnMode ?? 'ok';
         if (mode === 'not_deployed') return { data: null, error: { name: 'FunctionsHttpError', message: 'Edge Function returned a non-2xx status code', context: { status: 404 } } };
         if (mode === 'network') return { data: null, error: { name: 'FunctionsFetchError', message: 'Failed to send a request to the Edge Function' } };
+        if (name === 'delete-account') return { data: state.deleteAccountResult, error: null };
+        if (name === 'send-push' || name === 'crm-deliver') return { data: { ok: true }, error: null };
         if (mode !== 'ok') return { data: { ok: false, code: mode, limit: 20 }, error: null };
         const times = {};
         for (const id of body.schoolIds) {
@@ -326,7 +405,7 @@ async function mount(state, mod = keyed) {
     id: (t) => container.querySelector(`[data-testid="${t}"]`),
     all: (prefix) => [...container.querySelectorAll(`[data-testid^="${prefix}"]`)],
     text: () => container.textContent,
-    click: async (t) => { const el = typeof t === 'string' ? api.id(t) : t; if (!el) throw new Error('no element ' + t); el.click(); await sleep(20); },
+    click: async (t) => { const el = typeof t === 'string' ? api.id(t) : t; if (!el) throw new Error('no element ' + t); el.click(); await sleep(60); },
     type: async (t, v) => { const el = api.id(t); const proto = el.tagName === 'TEXTAREA' ? w.HTMLTextAreaElement.prototype : w.HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v); el.dispatchEvent(new w.Event('input', { bubbles: true })); await sleep(20); },
     toggle: async (t) => { const el = api.id(t); const inp = el.matches('input') ? el : el.querySelector('input'); inp.click(); await sleep(20); },
     unmount: async () => { rootEl.unmount(); container.remove(); await sleep(10); },
@@ -341,6 +420,8 @@ async function signIn(ui, email, password) {
   return waitFor(() => ui.id('search'));
 }
 const cardText = (ui, id) => ui.id('school-' + id)?.textContent ?? '';
+// what a query asked the database for, as text (the log entries themselves point back at the whole stand-in world)
+const asked = (q) => `${JSON.stringify(q?.ops ?? [])} ${q?.cols ?? ''} ${JSON.stringify(q?.sorts ?? [])}`;
 
 // =============================================================================================================
 console.log('\n=== setup and sign in ===');
@@ -356,13 +437,14 @@ await ui.type('email', 'ann@x.in'); await ui.type('password', 'wrong'); await ui
 check('a wrong password gives a plain-language message', await waitFor(() => /do not match/.test(ui.id('auth-error')?.textContent ?? '')));
 await ui.type('password', 'password1'); await ui.click('auth-submit');
 check('the right password opens the school list', await waitFor(() => ui.id('search') && ui.cards() > 0));
-await ui.click('sign-out');
+await ui.click('settings'); await ui.click('settings-signout');
 check('signing out goes back to the sign-in screen', await waitFor(() => ui.id('auth-submit') && !ui.id('search')));
 await ui.click('auth-switch'); await ui.type('first-name', 'Dee'); await ui.type('last-name', 'Rao'); await ui.type('email', 'dee@x.in'); await ui.type('password', 'longenough1'); await ui.click('auth-submit');
 const su = st.authCalls.find((c) => c[0] === 'signup');
 check('sign up sends the names the database trigger reads (first_name, last_name)', su && su[1].options.data.first_name === 'Dee' && su[1].options.data.last_name === 'Rao' && su[1].email === 'dee@x.in', JSON.stringify(su));
-check('...then says to check the email and switches to sign in', await waitFor(() => /confirm your account/.test(ui.id('auth-info')?.textContent ?? '')) && /Sign in/.test(ui.text()));
-await ui.click('auth-switch'); await ui.type('first-name', 'x');
+check('...then says to check the email and switches to sign in', await waitFor(() => /confirm your account/.test(ui.id('auth-info')?.textContent ?? '')) && !ui.id('first-name'));
+await ui.click('auth-switch');
+ await ui.type('first-name', 'x');
 await ui.type('email', 'ann@x.in'); await ui.type('password', 'short'); await ui.click('auth-submit');
 check('sign up refuses a short password before calling the server', /8 characters/.test(ui.id('auth-error')?.textContent ?? '') && st.authCalls.filter((c) => c[0] === 'signup').length === 1);
 await ui.unmount();
@@ -571,7 +653,16 @@ check('the phone was asked for permission first, then for the position', JSON.st
   check('...and the app asks for the distance column along with the school columns', rpcs.every((q) => /distance_km/.test(q.cols) && /google_rating/.test(q.cols)), rpcs[0]?.cols);
   check('nothing is written anywhere: no inserts, updates or deletes, and nothing saved on the phone', st.log.slice(logBefore).every((q) => q.op === 'select') && globalThis.__stored.length === 0);
 }
-check('the app source has no code that saves anything to the phone or the browser', !/AsyncStorage\.(setItem|multiSet|mergeItem)|localStorage|sessionStorage|SecureStore/.test(appSource.replace(/\/\/.*$/gm, '')));
+{
+  // The app saves three things and no more: the language, whether to unlock with a fingerprint, and the sign-in
+  // itself (encrypted with a key kept in the phone's own keystore). Never a position, never a search.
+  const saved = globalThis.__stored.map(([key]) => key);
+  const allowed = saved.every((key) => key === 'kidscover.language' || key === 'kidscover.unlockWithBiometrics' || /supabase|sb-/i.test(key));
+  const values = globalThis.__stored.map(([, value]) => String(value)).join(' | ');
+  check('the only things saved on the phone are the language, the unlock choice and the sign-in', allowed, saved.join(', '));
+  check('...and never where the parent is', !/19\\.0|72\\.8|latitude|longitude/.test(values), values.slice(0, 120));
+  check('the app never reaches for the browser own storage', !/localStorage|sessionStorage/.test(appSource.replace(/\/\/.*$/gm, '')));
+}
 {
   const want = expectedNear(st, 19.076, 72.878);
   check('the first page is the 20 nearest, in distance order (independent maths)', JSON.stringify(shown(ui)) === JSON.stringify(want.slice(0, 20).map((x) => x.id)), shown(ui).slice(0, 5).join(','));
@@ -630,7 +721,7 @@ await ui.click('toggle-filters');
 await ui.click('use-location'); await waitFor(() => ui.id('near-me-on') && firstCard(ui) === 'school-f24', 3000);
 check('starting again: back to nearest first, and the old distance limit did not come back', selected(ui, 'near-any') && !selected(ui, 'near-5'));
 await ui.click('near-5'); await waitFor(() => ui.cards() === 20, 3000);
-await ui.click('sign-out'); await waitFor(() => ui.id('auth-submit'));
+await ui.click('settings'); await ui.click('settings-signout'); await waitFor(() => ui.id('auth-submit'));
 await signIn(ui, 'bob@x.in', 'password2'); await waitFor(() => ui.cards() === 20);
 check('signing out forgets the location: the next person starts with the button and a plain list', !!ui.id('use-location') && !ui.id('near-me-on') && ui.all('distance-').length === 0);
 await ui.unmount();
@@ -640,7 +731,7 @@ st = seed(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); aw
 calls = fakePhone({ perm: { status: 'denied', canAskAgain: true } });
 await ui.click('use-location');
 check('permission refused: an amber note explains, and the parent can still search by name or area', await waitFor(() => /did not get permission/.test(ui.id('location-note')?.textContent ?? '')) && /search by school name or area/.test(ui.id('location-note').textContent));
-check('...the button is still there to try again, the list is unchanged, and the database was never asked for distances', !!ui.id('use-location') && !ui.id('near-me-on') && ui.cards() === 20 && ui.all('distance-').length === 0 && !st.log.some((q) => q.table.startsWith('rpc:')) && JSON.stringify(calls) === JSON.stringify(['permission']), JSON.stringify(calls));
+check('...the button is still there to try again, the list is unchanged, and the database was never asked for distances', !!ui.id('use-location') && !ui.id('near-me-on') && ui.cards() === 20 && ui.all('distance-').length === 0 && !st.log.some((q) => q.table.startsWith('rpc:') && !q.table.includes('school_tiles')) && JSON.stringify(calls) === JSON.stringify(['permission']), JSON.stringify(calls));
 await settle(); fakePhone({ perm: { status: 'denied', canAskAgain: false } });
 await ui.click('use-location');
 check('permission blocked for good: says to switch it on in the phone settings', await waitFor(() => /phone settings/.test(ui.id('location-note')?.textContent ?? '')) && !ui.id('near-me-on'));
@@ -649,7 +740,7 @@ await ui.click('use-location');
 check('the phone has location switched off: a plain message, no crash', await waitFor(() => /could not find your location/.test(ui.id('location-note')?.textContent ?? '')) && !ui.id('near-me-on'));
 await settle(); fakePhone({ pos: { coords: { latitude: null, longitude: 72.8 } } });
 await ui.click('use-location');
-check('a broken position (null latitude) is refused, not treated as 0,0', await waitFor(() => /could not find your location/.test(ui.id('location-note')?.textContent ?? '')) && !ui.id('near-me-on') && !st.log.some((q) => q.table.startsWith('rpc:')));
+check('a broken position (null latitude) is refused, not treated as 0,0', await waitFor(() => /could not find your location/.test(ui.id('location-note')?.textContent ?? '')) && !ui.id('near-me-on') && !st.log.some((q) => q.table.startsWith('rpc:') && !q.table.includes('school_tiles')));
 await settle(); fakePhone();
 await ui.click('use-location');
 check('then it works, and the old warning is gone', await waitFor(() => ui.id('near-me-on') && firstCard(ui) === 'school-f24', 3000) && !ui.id('location-note'));
@@ -844,7 +935,7 @@ await waitFor(() => st.threads.length === 1, 3000);
 staffReply(st, st.threads[0].id, 'A reply nobody else should ever see.');
 await ui.click('back'); await waitFor(() => ui.id('search'));
 await waitFor(() => ui.id('enquiries').textContent === 'Enquiries (1)', 3000);
-await ui.click('sign-out'); await waitFor(() => ui.id('auth-submit'));
+await ui.click('settings'); await ui.click('settings-signout'); await waitFor(() => ui.id('auth-submit'));
 await signIn(ui, 'bob@x.in', 'password2'); await waitFor(() => ui.cards() === 20);
 check('the next person sees no unread count and none of the other family\'s enquiries', ui.id('enquiries').textContent === 'Enquiries', ui.id('enquiries')?.textContent);
 await ui.click('enquiries');
@@ -972,7 +1063,7 @@ await ui.click('back'); await waitFor(() => ui.id('search'));
 await ui.type('search', 'sunrise'); await waitFor(() => ui.cards() === 1 && !!ui.id('school-s1'), 3000);
 check('a card shows "Admissions open 2027-28" when a school\'s website said so and an admin accepted it', /Admissions open 2027-28/.test(ui.id('open-s1')?.textContent ?? ''));
 await ui.click('school-s1'); await waitFor(() => ui.id('back'));
-check('the school page gives the year, the source and when it was checked', ui.id('page-admission')?.textContent.startsWith("Admissions open for 2027-28 (from the school's website, checked Sep 2026)"), ui.id('page-admission')?.textContent);
+check('the school page gives the year, the source and when it was checked', ui.id('page-admission')?.textContent.startsWith("Admissions open for 2027-28 (from the school's website, checked Sept 2026)"), ui.id('page-admission')?.textContent);
 await ui.click('admission-source-link');
 check('..."See the page" opens the school\'s own admissions page', opened.at(-1) === 'https://sunrisepre.in/admissions');
 await ui.click('back'); await waitFor(() => ui.id('search'));
@@ -1090,5 +1181,172 @@ await ui.type('search', '270 degree'); await waitFor(() => ui.cards() === 1 && !
 await ui.click('school-n2'); await waitFor(() => ui.id('back'));
 check('if facilities and achievements cannot be read, the page just leaves them out (no error)', await waitFor(() => /What parents say/.test(ui.text())) && !ui.id('facilities') && !ui.id('achievements') && !ui.id('school-error'));
 await ui.unmount();
+// =============================================================================================================
+console.log('\n=== what a year costs ===');
+st = seed(); ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+check('a school with fees shows the first-year cost on its card', await waitFor(() => !!ui.id('fee-n2')) && /2,31,000|1,36,000/.test(ui.id('fee-n2').textContent), ui.id('fee-n2')?.textContent);
+check('...starting from the cheapest level when no level is chosen', /From/.test(ui.id('fee-n2').textContent));
+await ui.click('toggle-filters');
+await ui.click('budget-200000');
+check('a budget filter asks the database for the first-year cost, and offers to include schools with no fees', await waitFor(() => st.log.some((q) => asked(q).includes('fees_from'))) && !!ui.id('include-unknown-fees'), asked(st.log.at(-1)));
+await ui.click('level-primary');
+check('with a level chosen, the cost filter uses that level', await waitFor(() => st.log.some((q) => asked(q).includes('fee_primary'))));
+await ui.click('sort-cost');
+check('the list can be put in order of cost', await waitFor(() => st.log.some((q) => JSON.stringify(q.sorts ?? []).includes('fee_primary'))), JSON.stringify(st.log.at(-1)?.sorts ?? []));
+await ui.click('clear-filters');
+await waitFor(() => ui.cards() > 3);
+await ui.click('school-n2');
+check('the school page breaks the cost down, year by year and once', await waitFor(() => !!ui.id('fee-breakdown')) && /Tuition/.test(ui.id('fee-breakdown').textContent) && /Admission fee/.test(ui.id('fee-breakdown').textContent) && /once/.test(ui.id('fee-breakdown').textContent), ui.id('fee-breakdown')?.textContent.slice(0, 200));
+check('...with the total for the first year and for each year after', /Total, first year/.test(ui.id('fee-breakdown').textContent) && /1,36,000/.test(ui.id('fee-breakdown').textContent) && /1,20,000/.test(ui.id('fee-breakdown').textContent), ui.id('fee-breakdown')?.textContent.slice(0, 220));
+check('...the refundable deposit kept apart from the cost', /refundable deposit of/.test(ui.id('fee-breakdown').textContent) && /5,000/.test(ui.id('fee-breakdown').textContent) && !/1,41,000/.test(ui.id('fee-breakdown').textContent));
+check('...and where the numbers came from', /listed by the school|checked by Kidscover/.test(ui.id('fee-breakdown').textContent));
+check('the levels with fees can each be seen', !!ui.id('fee-level-preschool') && !!ui.id('fee-level-primary'));
+check('the school page says when the school day starts', /starts at 08:15/.test(ui.id('school-start')?.textContent ?? ''), ui.id('school-start')?.textContent);
+await ui.click('back');
+await waitFor(() => !!ui.id('search'));
+await ui.type('search', 'Sunrise');
+await waitFor(() => !!ui.id('school-s1'), 3000);
+await ui.click('school-s1');
+await waitFor(() => !!ui.id('website'));
+await ui.click('website');
+check('opening the school website is counted for the school, without saying who', await waitFor(() => st.clicks.length === 1) && st.clicks[0].kind === 'website' && st.clicks[0].school === 's1', JSON.stringify(st.clicks));
+await ui.unmount();
+st = seed(); st.feesMissing = true; ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+await ui.click('school-n2');
+check('before the fee migration is run, the page simply leaves fees out', await waitFor(() => !!ui.id('page-title')) && !ui.id('fee-breakdown') && !ui.id('discover-error'));
+await ui.unmount();
+
+// =============================================================================================================
+console.log('\n=== the dashboard counts ===');
+st = seed(); ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+check('the dashboard says how many schools are listed and how many have fees', await waitFor(() => !!ui.id('tiles')) && Number(ui.id('tile-schools').textContent) > 20 && Number(ui.id('tile-fees').textContent) === 2, ui.id('tiles')?.textContent);
+await ui.click('tile-open');
+check('tapping "admissions open" narrows the list to those schools', await waitFor(() => st.log.some((q) => asked(q).includes('admissions_open'))));
+await ui.unmount();
+
+// =============================================================================================================
+console.log('\n=== comparing schools ===');
+st = seed(); ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+await ui.type('search', 'Sunrise');
+await waitFor(() => !!ui.id('compare-s1'), 3000);
+await ui.click('compare-s1');
+await ui.type('search', '270 Degree');
+await waitFor(() => !!ui.id('compare-n2'), 3000);
+await ui.click('compare-n2');
+await ui.type('search', '');
+await waitFor(() => ui.cards() > 3, 3000);
+check('two schools can be put side by side', await waitFor(() => !!ui.id('compare-bar')) && /2 of 4/.test(ui.id('compare-bar').textContent), ui.id('compare-bar')?.textContent);
+await ui.click('open-compare');
+check('the comparison shows a row for cost, distance, levels, board, admissions and ratings', await waitFor(() => !!ui.id('compare-screen')) && ['fees', 'distance', 'levels', 'board', 'admissions', 'google', 'parents', 'start'].every((r) => !!ui.id('compare-row-' + r)), ui.text().slice(0, 200));
+check('...with both schools in it', /Sunrise Preschool/.test(ui.id('compare-screen').textContent) && /270 Degree Kids/.test(ui.id('compare-screen').textContent));
+check('...and "Not known" where a school has not said', /Not known/.test(ui.id('compare-screen').textContent));
+await ui.click('compare-remove-s1');
+check('one can be taken out again', await waitFor(() => !ui.id('compare-open-s1')));
+await ui.click('compare-back');
+await waitFor(() => !!ui.id('search'));
+const notSchools = ['compare-bar', 'compare-note', 'compare-open', 'compare-back', 'compare-screen', 'compare-toggle'];
+const compareButtons = ui.all('compare-').filter((e) => !notSchools.includes(e.getAttribute('data-testid')));
+// only schools not already chosen, so a tap never takes one back out
+for (const el of compareButtons.filter((e) => /Compare/.test(e.textContent)).slice(0, 5)) { await ui.click(el); }
+check('at most four schools at a time, and the app says so', await waitFor(() => /up to 4 schools/.test(ui.id('compare-note')?.textContent ?? ''), 3000), 'chosen: ' + (ui.id('compare-bar')?.textContent ?? 'none') + ' | buttons: ' + compareButtons.length);
+await ui.unmount();
+
+// =============================================================================================================
+console.log('\n=== applying to a school ===');
+st = seed(); ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+await ui.click('school-n2');
+await waitFor(() => !!ui.id('apply-start'));
+await ui.click('apply-start');
+check('the form asks about the child, the parent, and nothing else', await waitFor(() => !!ui.id('apply-screen')) && !!ui.id('apply-child-first') && !!ui.id('apply-dob') && !!ui.id('apply-phone') && !!ui.id('apply-pincode'));
+await ui.click('apply-send');
+check('an empty form is refused here, without troubling the database', await waitFor(() => /first and last name/.test(ui.id('apply-error')?.textContent ?? '')) && st.applications.length === 0);
+await ui.type('apply-child-first', 'Ananya'); await ui.type('apply-child-last', 'Nair');
+await ui.type('apply-dob', '2021-06-30');
+await ui.click('apply-class-jr_kg');
+await ui.type('apply-parent-name', 'Priya Nair');
+await ui.type('apply-phone', '98200 11111');
+await ui.type('apply-email', 'priya@x.in');
+await ui.type('apply-address', '12 Hill Road, Bandra West');
+await ui.type('apply-pincode', '400050');
+await ui.click('apply-send');
+check('without the family agreeing to share the details, nothing is sent', await waitFor(() => /agree to share/.test(ui.id('apply-error')?.textContent ?? '')) && st.applications.length === 0);
+await ui.click('apply-consent');
+await ui.click('apply-send');
+check('with everything filled in, the application goes to that school, tidied up', await waitFor(() => st.applications.length === 1) && st.applications[0].school_id === 'n2' && st.applications[0].parent_phone === '9820011111' && st.applications[0].parent_email === 'priya@x.in' && st.applications[0].consent === true, JSON.stringify(st.applications[0] ?? {}).slice(0, 200));
+await waitFor(() => !!ui.id('applications-screen'), 4000);
+check('...and the family is taken to their applications', await waitFor(() => /Ananya/.test(ui.id('applications-screen')?.textContent ?? ''), 4000), ui.text().slice(0, 200));
+check('...where it says which stage it is at', /Sent to the school/.test(ui.id('applications-screen').textContent));
+await ui.click('application-open-' + st.applications[0].id);
+check('opening it shows what has happened and when the details were shared', await waitFor(() => !!ui.id('application-detail-' + st.applications[0].id)) && /Shared with the school/.test(ui.text()));
+await ui.click('withdraw-' + st.applications[0].id);
+check('the family can withdraw it', await waitFor(() => st.applications[0].status === 'withdrawn') && /Withdrawn/.test(ui.text()));
+await ui.click('delete-' + st.applications[0].id);
+await ui.click('delete-confirm-' + st.applications[0].id);
+check('...and delete it completely, in two taps', await waitFor(() => st.applications.length === 0) && /Deleted/.test(ui.id('applications-notice')?.textContent ?? ''));
+await ui.unmount();
+st = seed(); st.applicationsMissing = true; ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+await ui.click('applications');
+check('before the migration is run it says applying is not switched on yet', await waitFor(() => /not switched on yet/.test(ui.id('applications-error')?.textContent ?? '')), ui.text().slice(0, 150));
+await ui.unmount();
+
+// =============================================================================================================
+console.log('\n=== the language ===');
+st = seed(); ui = await mount(st);
+await waitFor(() => !!ui.id('auth-language'));
+check('a language can be chosen before signing in', /English/.test(ui.id('auth-language').textContent));
+await ui.click('auth-language');
+check('...from all 31, each written in its own script', await waitFor(() => !!ui.id('language-screen')) && ui.all('language-').length >= 31 && /\u092e\u0930\u093e\u0920\u0940/.test(ui.text()) && /\u0d2e\u0d32\u0d2f\u0d3e\u0d33\u0d02/.test(ui.text()), String(ui.all('language-').length));
+await ui.click('language-ml');
+check('choosing Malayalam changes the words of the app at once', await waitFor(() => !/Find the right school for your child/.test(ui.text())) && globalThis.__stored.some(([k, v]) => k === 'kidscover.language' && v === 'ml'), ui.text().slice(0, 120));
+await ui.click('auth-language');
+await ui.click('language-ar');
+check('Arabic too, and the page turns round to read right to left', await waitFor(() => !!ui.id('auth-submit')) && !!ui.c.querySelector('[style*="direction"], [dir]'), 'no rtl marker');
+await ui.click('auth-language');
+await ui.click('language-en');
+await waitFor(() => /Find the right school/.test(ui.text()));
+await signIn(ui, 'ann@x.in', 'password1');
+check('the language a person chose is saved with their account', await waitFor(() => (st.profiles.u1 ?? {}).language === 'en', 4000), JSON.stringify(st.profiles) + ' | tables: ' + [...new Set(st.log.map((q) => q.table + ':' + q.op))].join(','));
+await ui.unmount();
+st = seed(); st.profiles = { u1: { language: 'mr', notify_push: true } }; ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+check('signing in on a new phone brings the language back', await waitFor(() => !/Find the right school for your child/.test(ui.text()), 3000), ui.text().slice(0, 100));
+await ui.unmount();
+
+// =============================================================================================================
+console.log('\n=== settings, unlocking and notifications ===');
+globalThis.__bio = { hasHardwareAsync: () => true, isEnrolledAsync: () => true, supportedAuthenticationTypesAsync: () => [1], authenticateAsync: async () => ({ success: true }) };
+globalThis.__push = { getPermissionsAsync: async () => ({ granted: true, status: 'granted' }), requestPermissionsAsync: async () => ({ granted: true, status: 'granted' }), getExpoPushTokenAsync: async () => ({ data: 'ExponentPushToken[abc123]' }) };
+st = seed(); ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+check('the phone is remembered for notifications once, quietly', await waitFor(() => st.pushTokens.length === 1) && st.pushTokens[0].token === 'ExponentPushToken[abc123]');
+await ui.click('settings');
+check('settings offers the language, notifications, unlocking and deleting the account', await waitFor(() => !!ui.id('settings-screen')) && !!ui.id('settings-language') && !!ui.id('settings-push') && !!ui.id('settings-unlock') && !!ui.id('settings-delete'));
+await ui.toggle('settings-push');
+check('switching notifications off saves that and forgets the phone', await waitFor(() => (st.profiles.u1 ?? {}).notify_push === false) && st.pushTokens.length === 0);
+await ui.toggle('settings-unlock');
+check('unlocking with a fingerprint is only switched on after the fingerprint is given once', await waitFor(() => globalThis.__stored.some(([k, v]) => k === 'kidscover.unlockWithBiometrics' && v === 'on')));
+await ui.click('settings-delete');
+await ui.type('settings-password', 'wrong-one');
+st.deleteAccountResult = { ok: true };
+st.users['ann@x.in'].password = 'password1';
+await ui.click('settings-delete-confirm');
+check('deleting the account asks for the password again, and a wrong one deletes nothing', await waitFor(() => /did not match/.test(ui.id('settings-error')?.textContent ?? '')) && !st.fnCalls.some((c) => c.name === 'delete-account'), ui.id('settings-error')?.textContent);
+await ui.type('settings-password', 'password1');
+await ui.click('settings-delete-confirm');
+check('...and with the right password it is deleted and the app signs out', await waitFor(() => st.fnCalls.some((c) => c.name === 'delete-account')) && await waitFor(() => !!ui.id('auth-submit')));
+await ui.unmount();
+globalThis.__bio = { hasHardwareAsync: () => false, isEnrolledAsync: () => false, supportedAuthenticationTypesAsync: () => [] };
+st = seed(); ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+await ui.click('settings');
+check('a phone with no fingerprint reader is not offered unlocking', await waitFor(() => !!ui.id('settings-screen')) && !ui.id('settings-unlock'));
+await ui.unmount();
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

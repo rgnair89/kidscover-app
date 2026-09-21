@@ -1269,6 +1269,10 @@ await ui.click('compare-n2');
 await ui.type('search', '');
 await waitFor(() => ui.cards() > 3, 3000);
 check('two schools can be put side by side', await waitFor(() => !!ui.id('compare-bar')) && /2 of 4/.test(ui.id('compare-bar').textContent), ui.id('compare-bar')?.textContent);
+// The bar used to be the last thing inside the scrolling list, below every school on screen, so after picking two
+// schools there was nothing to press without scrolling past them all. It now sits outside the list.
+check('the bar to start comparing is not inside the scrolling list of schools', !ui.id('discover-list').contains(ui.id('compare-bar')));
+check('...and it says how many schools can be compared at once, without being asked', /up to 4 schools/.test(ui.id('compare-bar').textContent), ui.id('compare-bar')?.textContent);
 await ui.click('open-compare');
 check('the comparison shows a row for cost, distance, levels, board, admissions and ratings', await waitFor(() => !!ui.id('compare-screen')) && ['fees', 'distance', 'levels', 'board', 'admissions', 'google', 'parents', 'start'].every((r) => !!ui.id('compare-row-' + r)), ui.text().slice(0, 200));
 check('...with both schools in it', /Sunrise Preschool/.test(ui.id('compare-screen').textContent) && /270 Degree Kids/.test(ui.id('compare-screen').textContent));

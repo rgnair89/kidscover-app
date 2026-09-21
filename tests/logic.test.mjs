@@ -255,6 +255,12 @@ check('the state of an enquiry is put in words a parent understands', L.enquiryS
 check('what it is about reads as a phrase, and is empty when nothing was chosen', L.enquiryAbout({ grade_of_interest: 'Class 1', start_year: 2027 }) === 'Class 1, starting 2027' && L.enquiryAbout({ grade_of_interest: 'Nursery' }) === 'Nursery' && L.enquiryAbout({ start_year: 2027 }) === 'starting 2027' && L.enquiryAbout({}) === '' && L.enquiryAbout(null) === '');
 check('unread enquiries are counted for the badge', L.unreadCount([{ unread_for_parent: true }, { unread_for_parent: false }, { unread_for_parent: true }]) === 2 && L.unreadCount([]) === 0 && L.unreadCount(null) === 0);
 check('a message is mine only when the sender is me; with no user id nothing is mine', L.fromMe({ sender_id: 'u1' }, 'u1') === true && L.fromMe({ sender_id: 'staff' }, 'u1') === false && L.fromMe({ sender_id: 'u1' }, null) === false && L.fromMe(null, 'u1') === false);
+// One person can hold both sides of a conversation - a Kidscover admin who is also testing as a parent, or a school's
+// staff member enquiring about another school. Deciding by the account id alone labelled every message "You",
+// including the replies that came back from the school.
+check('who sent a message is decided by the role recorded on it, not by whose account is signed in', L.fromMe({ sender_role: 'parent', sender_id: 'same' }, 'same') === true && L.fromMe({ sender_role: 'school', sender_id: 'same' }, 'same') === false && L.fromMe({ sender_role: 'kidscover', sender_id: 'same' }, 'same') === false);
+check('...so one account on both sides still reads as a conversation', L.messageFrom({ sender_role: 'parent', sender_id: 'same' }, 'same') === 'You' && L.messageFrom({ sender_role: 'school', sender_id: 'same' }, 'same') === 'The school' && L.messageFrom({ sender_role: 'kidscover', sender_id: 'same' }, 'same') === 'Kidscover');
+check('an older message with no role recorded still falls back to the account id', L.fromMe({ sender_id: 'u1' }, 'u1') === true && L.messageFrom({ sender_id: 'u1' }, 'u1') === 'You' && L.messageFrom({ sender_id: 'other' }, 'u1') === 'Kidscover');
 
 console.log('\n=== asking a school: what is sent ===');
 let edb = fakeDb(() => ({ data: [], error: null }));

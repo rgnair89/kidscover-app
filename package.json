@@ -25,6 +25,7 @@
     "expo-updates": "~57.0.23",
     "react": "19.2.3",
     "react-native": "0.86.3",
+    "react-native-safe-area-context": "~5.7.0",
     "react-native-svg": "~15.15.5",
     "react-native-url-polyfill": "^2.0.0"
   },

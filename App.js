@@ -31,6 +31,7 @@ import Constants from 'expo-constants';
 import aesjs from 'aes-js';
 import { createClient } from '@supabase/supabase-js';
 import Svg, { Circle, Defs, Ellipse, G, LinearGradient, Path, Polygon, Rect, Stop } from 'react-native-svg';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LANGUAGES, languageName, makeTranslator, isRightToLeft, localeFor } from './i18n';
 
 const SUPABASE_URL = 'https://twpcjrpknsqlycdvwtsj.supabase.co';
@@ -892,6 +893,27 @@ async function loadNotifications(db) {
 const markNotificationsRead = async (db) => { const { error } = await db.rpc('mark_notifications_read', { p_ids: null }); return { error: error ?? null }; };
 
 // ---- each person's own settings ---------------------------------------------------------------------------------------
+// The two letters on the profile button. A person who has not given a name yet still gets something to press.
+function initialsOf(profile) {
+  const first = String(profile?.first_name ?? '').trim();
+  const last = String(profile?.last_name ?? '').trim();
+  const letters = (first.slice(0, 1) + last.slice(0, 1)).trim();
+  return letters ? letters.toUpperCase() : '··';
+}
+
+// Where the back button, and Android's own back gesture, should go from each screen. Every screen leads somewhere;
+// the list is the only place with nowhere further back, and there the phone's back button leaves the app as usual.
+const BACK_FROM = {
+  school: 'discover',
+  compare: 'discover',
+  apply: 'school',
+  enquiries: 'discover',
+  applications: 'discover',
+  settings: 'discover',
+  language: 'settings',
+};
+const backTargetFor = (screen) => BACK_FROM[screen] ?? null;
+
 async function loadSettings(db, userId) {
   const { data, error } = await db.from('profiles').select('language,notify_push,first_name,last_name,email').eq('id', userId).maybeSingle();
   return { settings: data ?? null, error: error ?? null };
@@ -2224,7 +2246,10 @@ function SchoolScreen({ school, profile, level, comparing, onBack, onOpenEnquiri
 }
 
 // ---------------------------------------------------------------------------------------------- the app
-export default function App() {
+// The app proper. It is wrapped below in a SafeAreaProvider, which is what lets it know how much of the screen the
+// phone has taken for its own status bar and navigation buttons.
+function AppBody() {
+  const insets = useSafeAreaInsets();
   const [ready, setReady] = useState(false);
   const [session, setSession] = useState(null);
   const [language, setLanguage] = useState('en');
@@ -2337,9 +2362,11 @@ export default function App() {
   }, [session, settings, refreshUnread]);
 
   useEffect(() => {
-    if (screen === 'discover' || Platform.OS !== 'android') return undefined;
+    if (Platform.OS !== 'android') return undefined;
+    const target = backTargetFor(screen);
+    if (!target) return undefined;   // on the list, back leaves the app, as it does in every other app
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      setScreen(screen === 'school' || screen === 'compare' ? 'discover' : 'discover');
+      setScreen(target);
       return true;
     });
     return () => sub.remove();
@@ -2389,11 +2416,14 @@ export default function App() {
   if (!ready || !languageReady) return <View style={[s.root, s.center]}><ActivityIndicator testID="boot" /></View>;
 
   const rtl = isRightToLeft(language);
-  const frame = [s.root, rtl && { direction: 'rtl' }];
+  // Android draws this app under its own status bar and navigation buttons. Without these two the top bar sits under
+  // the clock and the last button on every screen sits under the back / home / recents row, where it cannot be pressed.
+  const frame = [s.root, { paddingTop: insets.top, paddingBottom: insets.bottom }, rtl && { direction: 'rtl' }];
+  const backTo = backTargetFor(screen);
 
   if (!session) {
     return (
-      <View style={frame}>
+      <View style={frame} testID="frame">
         {screen === 'language'
           ? <LanguageScreen current={language} onPick={chooseLanguage} onClose={() => setScreen('discover')} />
           : <AuthScreen language={language} onPickLanguage={() => setScreen('language')} />}
@@ -2402,23 +2432,33 @@ export default function App() {
   }
   if (locked) {
     return (
-      <View style={frame}>
+      <View style={frame} testID="frame">
         <LockScreen kind={biometrics} busy={lockBusy} error={lockError} onUnlock={unlock} onSignOut={() => { setLocked(false); supabase.auth.signOut(); }} />
       </View>
     );
   }
 
   return (
-    <View style={frame}>
+    <View style={frame} testID="frame">
+      {/* Two rows, so nothing is ever pushed off the side of a narrow phone. The brand and the way out of the screen
+          you are on go on top; the places you can go to sit underneath and wrap if the words are long. */}
       <View style={s.topBar}>
-        <View style={s.brandRow}>
-          <LogoMark size={26} />
-          <Text style={s.topTitle}>Kidscover</Text>
+        <View style={s.topBarRow}>
+          <View style={s.brandRow}>
+            {backTo ? (
+              <Btn testID="top-back" kind="quiet" label={t('back')} onPress={() => setScreen(backTo)} />
+            ) : (
+              <LogoMark size={26} />
+            )}
+            <Text style={s.topTitle} numberOfLines={1}>Kidscover</Text>
+          </View>
+          <Pressable testID="settings" accessibilityRole="button" accessibilityLabel={t('nav.settings')} onPress={() => setScreen('settings')} style={s.profileButton}>
+            <Text style={s.profileInitials}>{initialsOf(settings)}</Text>
+          </Pressable>
         </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <View style={s.topBarTabs}>
           <Btn testID="applications" kind="quiet" label={liveApps > 0 ? t('nav.applicationsCount', { count: liveApps }) : t('nav.applications')} onPress={() => setScreen('applications')} />
           <Btn testID="enquiries" kind="quiet" label={unread > 0 ? t('nav.enquiriesCount', { count: unread }) : t('nav.enquiries')} onPress={() => setScreen('enquiries')} />
-          <Btn testID="settings" kind="quiet" label={t('nav.settings')} onPress={() => setScreen('settings')} />
         </View>
       </View>
       {!!compareNote && <Notice tone="amber" text={compareNote} testID="compare-note" />}
@@ -2474,13 +2514,27 @@ export default function App() {
   );
 }
 
+// SafeAreaProvider measures what the phone has taken for itself - the status bar at the top, the navigation buttons
+// or home bar at the bottom - so the app can keep its own buttons clear of them.
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AppBody />
+    </SafeAreaProvider>
+  );
+}
+
 // ---------------------------------------------------------------------------------------------- styles
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: C.bg, paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight || 24 : Platform.OS === 'ios' ? 44 : 0 },
+  root: { flex: 1, backgroundColor: C.bg },
   center: { alignItems: 'center', justifyContent: 'center', padding: 24 },
-  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: C.line, backgroundColor: C.card },
-  topTitle: { fontSize: 20, fontWeight: '900', color: C.blue, letterSpacing: 0.3 },
-  brandRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  topBar: { paddingHorizontal: 12, paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: C.line, backgroundColor: C.card },
+  topBarRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  topBarTabs: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
+  topTitle: { fontSize: 20, fontWeight: '900', color: C.blue, letterSpacing: 0.3, flexShrink: 1 },
+  profileButton: { width: 38, height: 38, borderRadius: 19, backgroundColor: C.blueSoft, borderWidth: 1, borderColor: C.blue, alignItems: 'center', justifyContent: 'center' },
+  profileInitials: { color: C.blue, fontWeight: '900', fontSize: 14 },
+  brandRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, flexShrink: 1 },
   authWrap: { padding: 20, paddingTop: 28 },
   authArt: { borderRadius: 24, overflow: 'hidden', marginBottom: 18, backgroundColor: C.blueSoft },
   authCard: { borderRadius: 20, padding: 18, shadowColor: C.blue, shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 2 },

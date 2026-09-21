@@ -16,7 +16,7 @@ const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'lev
   'BOARD_CHOICES', 'boardSourceText', 'admissionText',
   'CATEGORY_CHOICES', 'categoryOf', 'categoryFilters', 'isSchoolPlace',
   'FACILITY_INFO', 'ACHIEVEMENT_INFO', 'SOURCE_TEXT', 'facilityText', 'sourcesText', 'photoCreditText', 'artColours', 'ART_COLOURS', 'loadFacilities', 'loadAchievements',
-  'setTranslator', 't', 'setMoneyLocale', 'setDateLocale', 'rupees', 'budgetLabel', 'BUDGET_CHOICES', 'FEE_PARTS', 'feeForLevel', 'feeSummaryText', 'loadFeeSchedules', 'loadTiles', 'leaveByText', 'clockText', 'dayText', 'noteOutboundClick', 'messageFrom', 'EN_GRADES', 'classLabel', 'stageText', 'academicYearChoices', 'APPLY_CLASSES', 'APPLY_RELATIONS', 'APPLY_GENDERS', 'EMPTY_APPLICATION', 'validateApplication', 'submitApplication', 'loadApplications', 'loadApplicationEvents', 'withdrawApplication', 'deleteApplication', 'isMissingApplications', 'liveApplications', 'MAX_COMPARE', 'toggleCompare', 'compareRows', 'registerForPush', 'forgetPush', 'loadNotifications', 'markNotificationsRead', 'loadSettings', 'saveLanguage', 'savePushChoice', 'deleteAccount', 'biometricKind', 'unlockWithBiometrics', 'shouldLock', 'BIOMETRIC_SETTING', 'LANGUAGE_SETTING', 'LOCK_AFTER_MS', 'APPLICATION_COLUMNS'];
+  'setTranslator', 't', 'setMoneyLocale', 'setDateLocale', 'rupees', 'budgetLabel', 'BUDGET_CHOICES', 'FEE_PARTS', 'feeForLevel', 'feeSummaryText', 'loadFeeSchedules', 'loadTiles', 'leaveByText', 'clockText', 'dayText', 'noteOutboundClick', 'messageFrom', 'EN_GRADES', 'classLabel', 'stageText', 'academicYearChoices', 'APPLY_CLASSES', 'APPLY_RELATIONS', 'APPLY_GENDERS', 'EMPTY_APPLICATION', 'validateApplication', 'submitApplication', 'loadApplications', 'loadApplicationEvents', 'withdrawApplication', 'deleteApplication', 'isMissingApplications', 'liveApplications', 'MAX_COMPARE', 'toggleCompare', 'compareRows', 'registerForPush', 'forgetPush', 'loadNotifications', 'markNotificationsRead', 'initialsOf', 'backTargetFor', 'BACK_FROM', 'loadSettings', 'saveLanguage', 'savePushChoice', 'deleteAccount', 'biometricKind', 'unlockWithBiometrics', 'shouldLock', 'BIOMETRIC_SETTING', 'LANGUAGE_SETTING', 'LOCK_AFTER_MS', 'APPLICATION_COLUMNS'];
 fs.writeFileSync(path.join(here, '.tmp', 'logic.mjs'), src.slice(a, b) + `\nexport { ${names.join(', ')} };\n`);
 const L = await import(pathToFileURL(path.join(here, '.tmp', 'logic.mjs')).href);
 // the words of the app come from the language packs; the tests read the English one
@@ -376,5 +376,16 @@ const at = L.admissionText;
 check('admissions open, with the year and when it was checked', at({ admissions_open: true, admissions_year: '2027-28', admissions_source_url: 'https://s.example/a', admissions_checked_at: '2026-09-19T05:00:00Z' }) === "Admissions open for 2027-28 (from the school's website, checked Sep 2026)", at({ admissions_open: true, admissions_year: '2027-28', admissions_source_url: 'https://s.example/a', admissions_checked_at: '2026-09-19T05:00:00Z' }));
 check('admissions closed, and a notice without a year', at({ admissions_open: false, admissions_year: '2026-27', admissions_source_url: 'u', admissions_checked_at: '2026-09-19' }).startsWith('Admissions closed for 2026-27') && at({ admissions_open: true, admissions_source_url: 'u', admissions_checked_at: 'nonsense' }) === "Admissions open (from the school's website)");
 check('nothing is said without a source (an old "closed" default is never shown), or when unknown', at({ admissions_open: false }) === '' && at({ admissions_open: null, admissions_source_url: 'u' }) === '' && at(null) === '' && at({}) === '');
+// ---------------------------------------------------------------------------------------------------------------
+console.log('\n=== getting back, and the profile button ===');
+check('every screen a person can be on has somewhere to go back to', ['school', 'compare', 'apply', 'enquiries', 'applications', 'settings', 'language'].every((sc) => !!L.backTargetFor(sc)));
+check('the list itself has nowhere further back, so the phone\'s back button leaves the app', L.backTargetFor('discover') === null && L.backTargetFor('nonsense') === null);
+check('back from the form goes to the school it was for, not all the way out', L.backTargetFor('apply') === 'school');
+check('back from the language list goes to settings, where it was opened from', L.backTargetFor('language') === 'settings');
+check('the other screens go back to the list', ['school', 'compare', 'enquiries', 'applications', 'settings'].every((sc) => L.backTargetFor(sc) === 'discover'));
+check('the profile button shows a person\'s initials', L.initialsOf({ first_name: 'Ann', last_name: 'Rao' }) === 'AR');
+check('...one name is enough', L.initialsOf({ first_name: 'ann', last_name: '' }) === 'A' && L.initialsOf({ last_name: 'Rao' }) === 'R');
+check('...and someone with no name yet still gets a button to press', L.initialsOf(null) === '··' && L.initialsOf({}) === '··' && L.initialsOf({ first_name: '  ' }) === '··');
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

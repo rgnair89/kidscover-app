@@ -25,6 +25,13 @@ fs.writeFileSync(path.join(tmp, 'stub-securestore.mjs'), `export const setItemAs
 fs.writeFileSync(path.join(tmp, 'fake-biometrics.mjs'), `export const AuthenticationType = { FINGERPRINT: 1, FACIAL_RECOGNITION: 2, IRIS: 3 };\nexport const hasHardwareAsync = async () => globalThis.__bio?.hasHardwareAsync?.() ?? false;\nexport const isEnrolledAsync = async () => globalThis.__bio?.isEnrolledAsync?.() ?? false;\nexport const supportedAuthenticationTypesAsync = async () => globalThis.__bio?.supportedAuthenticationTypesAsync?.() ?? [];\nexport const authenticateAsync = async (...a) => globalThis.__bio?.authenticateAsync?.(...a) ?? { success: false };`);
 fs.writeFileSync(path.join(tmp, 'fake-notifications.mjs'), `export const getPermissionsAsync = async () => globalThis.__push?.getPermissionsAsync?.() ?? { granted: false, status: 'undetermined' };\nexport const requestPermissionsAsync = async () => globalThis.__push?.requestPermissionsAsync?.() ?? { granted: false, status: 'denied' };\nexport const getExpoPushTokenAsync = async (...a) => globalThis.__push?.getExpoPushTokenAsync?.(...a) ?? { data: '' };\nexport const addNotificationResponseReceivedListener = (fn) => { globalThis.__push?.listen?.(fn); return { remove() {} }; };`);
 fs.writeFileSync(path.join(tmp, 'stub-constants.mjs'), `export default { expoConfig: { extra: { eas: { projectId: 'test-project' } } } };`);
+// A stand-in phone that has taken 32 points at the top for its clock and 48 at the bottom for its navigation buttons,
+// which is roughly what the Android phone that showed the cut-off buttons reports.
+fs.writeFileSync(path.join(tmp, 'stub-safe-area.mjs'), `import * as React from 'react';
+export const INSETS = { top: 32, bottom: 48, left: 0, right: 0 };
+export function SafeAreaProvider({ children }) { return React.createElement(React.Fragment, null, children); }
+export function useSafeAreaInsets() { return INSETS; }
+`);
 fs.writeFileSync(path.join(tmp, 'stub-crypto.mjs'), `export const getRandomBytesAsync = async (n) => new Uint8Array(n).fill(7);`);
 
 const appSource = fs.readFileSync(process.env.APP_FILE ?? path.join(root, 'App.js'), 'utf8');
@@ -48,6 +55,7 @@ async function bundle(name, source) {
       'expo-local-authentication': path.join(tmp, 'fake-biometrics.mjs'),
       'expo-notifications': path.join(tmp, 'fake-notifications.mjs'),
       'expo-constants': path.join(tmp, 'stub-constants.mjs'),
+      'react-native-safe-area-context': path.join(tmp, 'stub-safe-area.mjs'),
       'expo-crypto': path.join(tmp, 'stub-crypto.mjs'),
     },
     define: { 'process.env.NODE_ENV': '"development"', __DEV__: 'true' },
@@ -441,6 +449,21 @@ await ui.type('email', 'ann@x.in'); await ui.type('password', 'wrong'); await ui
 check('a wrong password gives a plain-language message', await waitFor(() => /do not match/.test(ui.id('auth-error')?.textContent ?? '')));
 await ui.type('password', 'password1'); await ui.click('auth-submit');
 check('the right password opens the school list', await waitFor(() => ui.id('search') && ui.cards() > 0));
+// The phone in this test has taken 32 points at the top for its clock and 48 at the bottom for its navigation
+// buttons. Without both of these the app draws underneath them, and the last button on a screen - "Send the
+// application", "Write a review" - sits behind the back / home / recents row where it cannot be pressed.
+const framePadding = () => ui.id('frame')?.getAttribute('style') ?? '';
+check('the app keeps clear of the phone\'s clock and navigation buttons', /padding-top:\s*32px/.test(framePadding()) && /padding-bottom:\s*48px/.test(framePadding()), framePadding());
+
+// Settings holds the language, notifications, fingerprint unlock and deleting the account. It used to be the third
+// button in a single row that also carried the logo, the app's name, Applications and Enquiries, so on a real phone
+// it was pushed off the right-hand edge and none of it could be reached.
+check('the profile button is there to be pressed on the school list', !!ui.id('settings'));
+await ui.click('settings');
+check('...and it opens settings', await waitFor(() => !!ui.id('settings-screen')));
+check('...where the language, notifications and account are', /Language|Notifications/.test(ui.text()));
+await ui.click('top-back');
+check('the back button in the top bar returns to the list', await waitFor(() => !!ui.id('search')));
 await ui.click('settings'); await ui.click('settings-signout');
 check('signing out goes back to the sign-in screen', await waitFor(() => ui.id('auth-submit') && !ui.id('search')));
 await ui.click('auth-switch'); await ui.type('first-name', 'Dee'); await ui.type('last-name', 'Rao'); await ui.type('email', 'dee@x.in'); await ui.type('password', 'longenough1'); await ui.click('auth-submit');
@@ -454,6 +477,8 @@ check('sign up refuses a short password before calling the server', /8 character
 await ui.unmount();
 
 // =============================================================================================================
+check('...and the list itself offers no back button, because there is nowhere further back', !ui.id('top-back'));
+
 console.log('\n=== finding schools ===');
 st = seed(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1');
 check('the first page shows 20 schools', await waitFor(() => ui.cards() === 20), ui.cards());

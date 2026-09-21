@@ -12,7 +12,14 @@ fs.mkdirSync(tmp, { recursive: true });
 
 // ---- stand-ins for the packages that only exist on a phone / at Supabase ----
 // (it also remembers everything the app writes to the phone's storage, so a test can check the location is never saved)
-fs.writeFileSync(path.join(tmp, 'stub-storage.mjs'), `globalThis.__stored = []; export default { getItem: async () => null, setItem: async (k, v) => { globalThis.__stored.push([k, String(v)]); }, removeItem: async () => {} };`);
+// A stand-in for the phone's own small store. __stored records everything written, so a test can check exactly what
+// the app keeps; __preset lets a test start as though a previous visit had already saved something.
+fs.writeFileSync(path.join(tmp, 'stub-storage.mjs'), `globalThis.__stored = []; globalThis.__preset = globalThis.__preset || {};
+export default {
+  getItem: async (k) => (k in globalThis.__preset ? globalThis.__preset[k] : null),
+  setItem: async (k, v) => { globalThis.__stored.push([k, String(v)]); globalThis.__preset[k] = String(v); },
+  removeItem: async (k) => { globalThis.__removed = (globalThis.__removed || []).concat([k]); delete globalThis.__preset[k]; },
+};`);
 fs.writeFileSync(path.join(tmp, 'stub-empty.mjs'), `export {};`);
 fs.writeFileSync(path.join(tmp, 'stub-svg.mjs'), `import * as React from 'react';\nconst mk = (tag) => function SvgPart({ testID, children, ...props }) { return React.createElement(tag, { ...props, 'data-testid': testID }, children); };\nexport default mk('svg');\nexport const Circle = mk('circle'), Defs = mk('defs'), Ellipse = mk('ellipse'), G = mk('g'), LinearGradient = mk('linearGradient'), Path = mk('path'), Polygon = mk('polygon'), Rect = mk('rect'), Stop = mk('stop');\n`);
 // the phone's location: each test sets globalThis.__loc to the behaviour it wants
@@ -408,8 +415,11 @@ let pass = 0, fail = 0;
 const check = (name, ok, detail = '') => { ok ? pass++ : fail++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${!ok && detail ? '  -> ' + String(detail).slice(0, 220) : ''}`); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function waitFor(fn, ms = 4000) { const t0 = Date.now(); while (Date.now() - t0 < ms) { try { if (fn()) return true; } catch { /* keep waiting */ } await sleep(15); } return false; }
-async function mount(state, mod = keyed) {
+// `remembered` is what a previous visit had already saved on this phone; by default a test starts on a clean one.
+async function mount(state, mod = keyed, remembered = {}) {
   globalThis.__db = makeDb(state);
+  globalThis.__preset = { ...remembered };
+  globalThis.__removed = [];
   const container = document.createElement('div'); document.body.appendChild(container);
   const rootEl = mod.createRoot(container); rootEl.render(mod.React.createElement(mod.App));
   const api = {
@@ -680,17 +690,28 @@ check('the phone was asked for permission first, then for the position', JSON.st
   check('the position sent to the database is rounded to about 100 m (19.07604 -> 19.076, 72.87771 -> 72.878)', rpcs.length > 0 && rpcs.every((q) => q.args.p_lat === 19.076 && q.args.p_lng === 72.878), JSON.stringify(rpcs.map((q) => q.args)));
   check('...and nothing else about the parent is sent: only the two numbers', rpcs.every((q) => JSON.stringify(Object.keys(q.args).sort()) === '["p_lat","p_lng"]'));
   check('...and the app asks for the distance column along with the school columns', rpcs.every((q) => /distance_km/.test(q.cols) && /google_rating/.test(q.cols)), rpcs[0]?.cols);
-  check('nothing is written anywhere: no inserts, updates or deletes, and nothing saved on the phone', st.log.slice(logBefore).every((q) => q.op === 'select') && globalThis.__stored.length === 0);
+  check('finding schools near me writes nothing to the database: only reads', st.log.slice(logBefore).every((q) => q.op === 'select'));
 }
 {
-  // The app saves three things and no more: the language, whether to unlock with a fingerprint, and the sign-in
-  // itself (encrypted with a key kept in the phone's own keystore). Never a position, never a search.
+  // The app saves four things and no more: the language, whether to unlock with a fingerprint, whether this person
+  // asked for their location to be used, and the sign-in itself (encrypted with a key kept in the phone's own
+  // keystore). Never a position, never a search.
   const saved = globalThis.__stored.map(([key]) => key);
-  const allowed = saved.every((key) => key === 'kidscover.language' || key === 'kidscover.unlockWithBiometrics' || /supabase|sb-/i.test(key));
+  const allowed = saved.every((key) => key === 'kidscover.language' || key === 'kidscover.unlockWithBiometrics' || key === 'kidscover.useMyLocation' || /supabase|sb-/i.test(key));
   const values = globalThis.__stored.map(([, value]) => String(value)).join(' | ');
-  check('the only things saved on the phone are the language, the unlock choice and the sign-in', allowed, saved.join(', '));
+  const locationSaved = globalThis.__stored.filter(([key]) => key === 'kidscover.useMyLocation').map(([, v]) => String(v));
+  check('the choice to use my location is remembered as a yes, and nothing more', locationSaved.length > 0 && locationSaved.every((v) => v === '1'), locationSaved.join(', '));
+  check('the only things saved on the phone are the language, the unlock choice, that choice and the sign-in', allowed, saved.join(', '));
   check('...and never where the parent is', !/19\\.0|72\\.8|latitude|longitude/.test(values), values.slice(0, 120));
   check('the app never reaches for the browser own storage', !/localStorage|sessionStorage/.test(appSource.replace(/\/\/.*$/gm, '')));
+}
+{
+  // Once the distance and the drive time are chosen, this panel is just taking up the top of the screen.
+  check('the distance and drive-time choices are showing to begin with', !!ui.id('near-2') && !!ui.id('drive-mode-arrive'));
+  await ui.click('near-me-fold');
+  check('the panel folds away, leaving the line that says distances are from your location', await waitFor(() => !ui.id('near-2')) && !ui.id('drive-mode-arrive') && !!ui.id('near-me-on') && !!ui.id('stop-location'));
+  await ui.click('near-me-fold');
+  check('...and opens again', await waitFor(() => !!ui.id('near-2')) && !!ui.id('drive-mode-arrive'));
 }
 {
   const want = expectedNear(st, 19.076, 72.878);
@@ -753,7 +774,28 @@ await ui.click('near-5'); await waitFor(() => ui.cards() === 20, 3000);
 await ui.click('settings'); await ui.click('settings-signout'); await waitFor(() => ui.id('auth-submit'));
 await signIn(ui, 'bob@x.in', 'password2'); await waitFor(() => ui.cards() === 20);
 check('signing out forgets the location: the next person starts with the button and a plain list', !!ui.id('use-location') && !ui.id('near-me-on') && ui.all('distance-').length === 0);
+check('...and the remembered choice is wiped from the phone, not just from the screen', (globalThis.__removed ?? []).includes('kidscover.useMyLocation'), JSON.stringify(globalThis.__removed));
 await ui.unmount();
+
+// Having said yes once, a parent should not have to say it again every time they open the app.
+{
+  calls = fakePhone({ coords: { latitude: 19.07604, longitude: 72.87771 } });
+  const back = await mount(seed(), keyed, { 'kidscover.useMyLocation': '1' });
+  await signIn(back, 'ann@x.in', 'password1');
+  check('someone who chose to use their location before does not have to ask again', await waitFor(() => !!back.id('near-me-on'), 4000) && !back.id('use-location'));
+  check('...the phone was still asked for permission, which is the phone\'s to refuse', JSON.stringify(calls) === JSON.stringify(['permission', 'position']), JSON.stringify(calls));
+  await back.unmount();
+
+  // ...and if the phone has since been told to refuse, it goes quiet rather than complaining out of nowhere.
+  calls = fakePhone({ perm: { status: 'denied', canAskAgain: true } });
+  const refused = await mount(seed(), keyed, { 'kidscover.useMyLocation': '1' });
+  await signIn(refused, 'ann@x.in', 'password1');
+  await waitFor(() => refused.cards() > 0, 4000);
+  await settle();
+  check('a phone that now refuses gets no complaint the parent did not ask for', !refused.id('location-note') && !!refused.id('use-location'));
+  check('...and the app stops remembering a choice the phone will not honour', (globalThis.__removed ?? []).includes('kidscover.useMyLocation'));
+  await refused.unmount();
+}
 
 console.log('\n=== schools near me: when it does not work ===');
 st = seed(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);

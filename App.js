@@ -414,6 +414,10 @@ function driveProblemText(code, limit) {
     case 'not_configured':
     case 'routes_not_enabled':
     case 'google_key_blocked':
+    // The server rejected the request outright. In practice that means it is an older copy that does not know this
+    // way of asking - "in time for school" was added after it was deployed. Telling someone to try again in a moment
+    // is no help: the answer will be the same every time until the function is redeployed.
+    case 'bad_request':
     case 'google_key_invalid': return t('drive.notOn');
     default: return t('drive.tryAgain');
   }
@@ -980,6 +984,9 @@ async function unlockWithBiometrics(auth, promptMessage) {
 
 const BIOMETRIC_SETTING = 'kidscover.unlockWithBiometrics';
 const LANGUAGE_SETTING = 'kidscover.language';
+// Remembers that this person chose to use their location, so the app can pick it up by itself next time instead of
+// making them press "Use my location" on every visit. It records the choice, never the place.
+const LOCATION_SETTING = 'kidscover.useMyLocation';
 // How long the app may sit in the background before it asks for the fingerprint again.
 const LOCK_AFTER_MS = 2 * 60 * 1000;
 
@@ -1303,6 +1310,7 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare }) {
   const [typed, setTyped] = useState('');
   const [search, setSearch] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [showNear, setShowNear] = useState(true);
   const [rows, setRows] = useState([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -1358,18 +1366,35 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare }) {
   const hasPlace = !!place;
   const count = activeFilterCount(filters, hasPlace);
 
-  async function useMyLocation() {
-    setLocating(true);
+  // `quiet` is the app picking the location up by itself on opening, because this person asked for that last time.
+  // It says nothing when it cannot: they did not press anything, so a complaint would come out of nowhere.
+  async function useMyLocation(quiet = false) {
+    if (!quiet) setLocating(true);
     setLocationNote(null);
     const res = await locateMe(Location);
     setLocating(false);
-    if (!res.ok) { setLocationNote({ tone: 'amber', text: locationProblemText(res.reason) }); return; }
+    if (!res.ok) {
+      if (!quiet) setLocationNote({ tone: 'amber', text: locationProblemText(res.reason) });
+      if (res.reason === 'blocked' || res.reason === 'denied') AsyncStorage.removeItem(LOCATION_SETTING).catch(() => {});
+      return;
+    }
+    AsyncStorage.setItem(LOCATION_SETTING, '1').catch(() => {});
     setPlace(res.place);
     set({ sort: 'distance' });
     if (!inServiceArea(res.place)) setLocationNote({ tone: 'amber', text: t('location.outsideArea') });
   }
 
+  // Asked for once, on opening. If they chose to use their location before and the phone still allows it, it is
+  // picked up without being asked again; if they turned it off, or the phone now refuses, nothing happens.
+  const askedOnce = useRef(false);
+  useEffect(() => {
+    if (askedOnce.current) return;
+    askedOnce.current = true;
+    AsyncStorage.getItem(LOCATION_SETTING).then((saved) => { if (saved === '1') useMyLocation(true); }).catch(() => {});
+  }, []);
+
   function stopUsingLocation() {
+    AsyncStorage.removeItem(LOCATION_SETTING).catch(() => {});
     setPlace(null);
     setLocationNote(null);
     setDriveMode(null);
@@ -1421,27 +1446,35 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare }) {
       <TextInput testID="search" style={s.search} placeholder={cat.key === 'school' ? t('search.schools') : t('search.other', { what: t(cat.noun) })} value={typed} onChangeText={setTyped} autoCorrect={false} />
       {hasPlace ? (
         <View style={[s.card, { marginBottom: 8 }]} testID="near-me-on">
+          {/* The title row folds the rest away. Once the distance and the drive time are set there is no reason for
+              this to keep taking up the top of the screen, but it still has to be easy to open again. */}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={s.body}>{t('location.on')}</Text>
+            <Pressable testID="near-me-fold" accessibilityRole="button" accessibilityLabel={t('location.on')}
+              onPress={() => setShowNear((v) => !v)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 }}>
+              <Text style={s.body}>{showNear ? '▾' : '▸'}</Text>
+              <Text style={[s.body, { flexShrink: 1 }]}>{t('location.on')}</Text>
+            </Pressable>
             <Btn testID="stop-location" kind="quiet" label={t('location.turnOff')} onPress={stopUsingLocation} />
           </View>
-          <View style={s.wrap}>
-            {DISTANCE_CHOICES.map((d) => <Chip key={String(d.km)} testID={`near-${d.km ?? 'any'}`} label={t(d.label)} selected={filters.nearKm === d.km} onPress={() => set({ nearKm: d.km })} />)}
-          </View>
-          <Text style={s.muted}>{t('location.straightLine')}</Text>
-          <Text style={s.label}>{t('drive.title')}</Text>
-          <View style={s.wrap}>
-            {DRIVE_MODES.map((m) => (
-              <Chip key={m.key} testID={`drive-mode-${m.key}`} label={t(m.label)} selected={driveMode === m.key}
-                onPress={() => { setDriveNote(null); setDriveMode(driveMode === m.key ? null : m.key); }} />
-            ))}
-          </View>
-          <Text style={s.muted}>{t('drive.note')}</Text>
+          {showNear && (<>
+            <View style={s.wrap}>
+              {DISTANCE_CHOICES.map((d) => <Chip key={String(d.km)} testID={`near-${d.km ?? 'any'}`} label={t(d.label)} selected={filters.nearKm === d.km} onPress={() => set({ nearKm: d.km })} />)}
+            </View>
+            <Text style={s.muted}>{t('location.straightLine')}</Text>
+            <Text style={s.label}>{t('drive.title')}</Text>
+            <View style={s.wrap}>
+              {DRIVE_MODES.map((m) => (
+                <Chip key={m.key} testID={`drive-mode-${m.key}`} label={t(m.label)} selected={driveMode === m.key}
+                  onPress={() => { setDriveNote(null); setDriveMode(driveMode === m.key ? null : m.key); }} />
+              ))}
+            </View>
+            <Text style={s.muted}>{t('drive.note')}</Text>
+          </>)}
           {!!driveNote && <Notice tone={driveNote.tone} text={driveNote.text} testID="drive-note" />}
         </View>
       ) : (
         <View style={[s.card, { marginBottom: 8 }]} testID="near-me-off">
-          <Btn testID="use-location" kind="outline" label={locating ? t('location.finding') : t('location.use')} onPress={useMyLocation} disabled={locating} />
+          <Btn testID="use-location" kind="outline" label={locating ? t('location.finding') : t('location.use')} onPress={() => useMyLocation()} disabled={locating} />
           <Text style={s.muted}>{t('location.why')}</Text>
         </View>
       )}
@@ -2314,7 +2347,9 @@ function AppBody() {
     supabase.auth.getSession().then(({ data }) => { setSession(data?.session ?? null); setReady(true); });
     const { data } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
-      if (!next) { setSchool(null); setScreen('discover'); setUnread(0); setCompare([]); setSettings(null); setLocked(false); }
+      // Signing out hands the phone back. The next person starts fresh, including the choice to use a location:
+      // it was this person's answer, not the phone's.
+      if (!next) { setSchool(null); setScreen('discover'); setUnread(0); setCompare([]); setSettings(null); setLocked(false); AsyncStorage.removeItem(LOCATION_SETTING).catch(() => {}); }
     });
     const app = AppState.addEventListener('change', (state) => {
       if (state === 'active') {

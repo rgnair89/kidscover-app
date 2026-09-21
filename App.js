@@ -705,8 +705,11 @@ function enquiryAbout(thread) {
 
 const unreadCount = (threads) => (threads ?? []).filter((t2) => t2.unread_for_parent).length;
 
-// A message is "yours" when you sent it; anything else came from the school side.
-const fromMe = (message, myId) => !!myId && message?.sender_id === myId;
+// Who a message came from. The database records that on every message as sender_role - 'parent', 'school' or
+// 'kidscover' - and that is what decides the name shown, not whose account happens to be signed in. Matching on the
+// account id alone got this wrong whenever one person held both sides: every message in the thread said "You",
+// including the school's own replies.
+const fromMe = (message, myId) => (message?.sender_role ? message.sender_role === 'parent' : !!myId && message?.sender_id === myId);
 const messageFrom = (message, myId) => (fromMe(message, myId) ? t('enquiry.you') : message?.sender_role === 'school' ? t('enquiry.theSchool') : t('enquiry.kidscover'));
 
 const isMissingEnquiries = (error) => error?.code === 'PGRST202' || error?.code === 'PGRST205' || /enquiry_threads|send_enquiry|ticket_messages/i.test(String(error?.message ?? ''));
@@ -1515,30 +1518,35 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare }) {
   );
 
   return (
-    <ScrollView testID="discover-list" contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
-      {header}
-      {rows.map((item) => (
-        <SchoolCard key={item.id} school={item} drive={driveFor(item)} level={filters.level} comparing={comparingIds.includes(item.id)}
-          onCompare={() => onToggleCompare({ ...item, drive: driveFor(item) })}
-          onPress={() => onOpen(driveFor(item) ? { ...item, drive: driveFor(item), driveMode } : item)} />
-      ))}
-      {!loading && !error && rows.length === 0 && (
-        <Text testID="empty" style={s.empty}>
-          {hasPlace && filters.nearKm ? t('empty.within', { what: t(cat.noun), km: filters.nearKm }) : t('empty.any', { what: t(cat.noun) })}
-        </Text>
-      )}
-      <View style={{ paddingVertical: 12 }}>
-        {loading && <ActivityIndicator testID="loading" />}
-        {!loading && !!error && <Btn testID="retry" label={t('tryAgain')} onPress={() => run(0, false)} />}
-        {!loading && hasMore && <Btn testID="more" kind="outline" label={t('showMore', { what: t(cat.noun) })} onPress={() => run(pageRef.current + 1, true)} />}
-      </View>
+    <View style={{ flex: 1 }}>
+      <ScrollView testID="discover-list" contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
+        {header}
+        {rows.map((item) => (
+          <SchoolCard key={item.id} school={item} drive={driveFor(item)} level={filters.level} comparing={comparingIds.includes(item.id)}
+            onCompare={() => onToggleCompare({ ...item, drive: driveFor(item) })}
+            onPress={() => onOpen(driveFor(item) ? { ...item, drive: driveFor(item), driveMode } : item)} />
+        ))}
+        {!loading && !error && rows.length === 0 && (
+          <Text testID="empty" style={s.empty}>
+            {hasPlace && filters.nearKm ? t('empty.within', { what: t(cat.noun), km: filters.nearKm }) : t('empty.any', { what: t(cat.noun) })}
+          </Text>
+        )}
+        <View style={{ paddingVertical: 12 }}>
+          {loading && <ActivityIndicator testID="loading" />}
+          {!loading && !!error && <Btn testID="retry" label={t('tryAgain')} onPress={() => run(0, false)} />}
+          {!loading && hasMore && <Btn testID="more" kind="outline" label={t('showMore', { what: t(cat.noun) })} onPress={() => run(pageRef.current + 1, true)} />}
+        </View>
+      </ScrollView>
+      {/* Outside the list on purpose. It used to be the last thing in the scroll, under every school on screen, so
+          after picking two schools there was no way to start the comparison without scrolling to the bottom. */}
       {compare.length > 0 && (
         <View style={s.compareBar} testID="compare-bar">
           <Text style={s.body}>{t('compare.chosen', { count: compare.length, max: MAX_COMPARE })}</Text>
+          <Text style={s.muted}>{t('compare.full', { max: MAX_COMPARE })}</Text>
           <Btn testID="open-compare" label={t('compare.open')} onPress={onOpenCompare} disabled={compare.length < 2} />
         </View>
       )}
-    </ScrollView>
+    </View>
   );
 }
 
@@ -2556,7 +2564,7 @@ const s = StyleSheet.create({
   tileNumber: { fontSize: 22, fontWeight: '900' },
   tileLabel: { fontSize: 11, color: C.grey, textAlign: 'center' },
   feeRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
-  compareBar: { backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.blue, padding: 12, gap: 6, marginTop: 8 },
+  compareBar: { backgroundColor: C.card, borderTopWidth: 2, borderTopColor: C.blue, paddingHorizontal: 16, paddingVertical: 10, gap: 6, shadowColor: C.blue, shadowOpacity: 0.15, shadowRadius: 10, shadowOffset: { width: 0, height: -3 }, elevation: 8 },
   compareCell: { width: 150, padding: 8, borderWidth: 1, borderColor: C.line, backgroundColor: C.card },
   compareHead: { backgroundColor: C.blueSoft },
   compareName: { fontSize: 14, fontWeight: '700', color: C.ink },

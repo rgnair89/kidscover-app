@@ -339,6 +339,86 @@ function locationProblemText(reason) {
   return t('location.unavailable');
 }
 
+// ---- the address book: the few places a parent looks for schools from ----
+// There is no street-address lookup in this app, so a place is saved where the parent is standing: they turn their
+// location on at home, name it "Home", and afterwards they can search around home from anywhere, without turning the
+// location on again. The list is theirs alone; the database lets nobody else read it.
+const ADDRESS_COLUMNS = 'id,label,address,latitude,longitude,created_at';
+const MAX_ADDRESSES = 6;
+const MAX_ADDRESS_NAME = 40;
+const MAX_ADDRESS_TEXT = 160;
+
+// The table arrives with a migration the person running Kidscover pastes in by hand. Until they have, the app hides
+// the address book rather than showing an error nobody can act on.
+const isMissingAddresses = (error) => error?.code === 'PGRST205' || error?.code === '42P01' || /parent_addresses/i.test(String(error?.message ?? ''));
+
+const addressPlace = (row) => {
+  const place = { lat: row?.latitude, lng: row?.longitude };
+  return validPlace(place) ? place : null;
+};
+
+const sameName = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
+
+function validateAddress({ label, rows, editingId }) {
+  const name = String(label ?? '').trim();
+  if (!name) return t('address.needName');
+  if (name.length > MAX_ADDRESS_NAME) return t('address.nameLong', { max: MAX_ADDRESS_NAME });
+  if ((rows ?? []).some((r) => r.id !== editingId && sameName(r.label, name))) return t('address.nameTaken');
+  if (!editingId && (rows ?? []).length >= MAX_ADDRESSES) return t('address.full', { max: MAX_ADDRESSES });
+  return null;
+}
+
+async function loadAddresses(db) {
+  const { data, error } = await db.from('parent_addresses').select(ADDRESS_COLUMNS).order('created_at', { ascending: true });
+  if (error) return { rows: [], error };
+  // a row the app cannot search from is no use to anyone; it is left in the database but not offered
+  return { rows: (data ?? []).filter((r) => !!addressPlace(r)), error: null };
+}
+
+// Saving a new place needs somewhere to save: the position the app is holding. Renaming one does not.
+async function saveAddress(db, userId, { id, label, address, place }) {
+  const fields = {
+    label: String(label ?? '').trim().slice(0, MAX_ADDRESS_NAME),
+    address: String(address ?? '').trim().slice(0, MAX_ADDRESS_TEXT) || null,
+  };
+  if (id) {
+    const { error } = await db.from('parent_addresses').update(fields).eq('id', id);
+    return { error: error ?? null };
+  }
+  if (!validPlace(place)) return { error: { message: 'no place to save' } };
+  const { error } = await db.from('parent_addresses')
+    .insert({ ...fields, user_id: userId, latitude: place.lat, longitude: place.lng });
+  return { error: error ?? null };
+}
+
+async function deleteAddress(db, id) {
+  const { error } = await db.from('parent_addresses').delete().eq('id', id);
+  return { error: error ?? null };
+}
+
+// What the phone says is at a position, as one line. Phones disagree about which fields they fill in and repeat
+// themselves, so this takes what there is, in order, without saying the same thing twice.
+function describePlace(found) {
+  const one = Array.isArray(found) ? found[0] : found;
+  if (!one) return '';
+  const line = [];
+  for (const part of [one.name, one.street, one.district, one.city ?? one.subregion, one.postalCode]) {
+    const text = String(part ?? '').trim();
+    if (text && !line.some((x) => sameName(x, text))) line.push(text);
+  }
+  return line.slice(0, 4).join(', ').slice(0, MAX_ADDRESS_TEXT);
+}
+
+// Best effort, and nothing more: a phone may have no address lookup at all, and a parent can always type their own.
+async function addressHere(loc, place) {
+  if (!validPlace(place) || typeof loc?.reverseGeocodeAsync !== 'function') return '';
+  try {
+    return describePlace(await loc.reverseGeocodeAsync({ latitude: place.lat, longitude: place.lng }));
+  } catch {
+    return '';
+  }
+}
+
 // ---- drive time by car, from Google through the commute-times function ----
 const DRIVE_MODES = [
   { key: 'school_run', label: 'drive.schoolRun', long: 'drive.schoolRunLong' },
@@ -1374,7 +1454,105 @@ function SchoolCard({ school, drive, level, comparing, onPress, onCompare }) {
   );
 }
 
-function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare }) {
+// Where the school list is measured from: the phone's own position, or one of the places the parent saved. Nothing
+// is shown until there is a saved place, because a single choice is not a choice.
+function AddressPicker({ rows, here, from, onPick, onHere, busy }) {
+  if (!rows?.length) return null;
+  return (
+    <View testID="address-chips">
+      <Text style={s.label}>{t('address.searchFrom')}</Text>
+      <View style={s.wrap}>
+        <Chip testID="address-here" label={busy ? t('location.finding') : t('address.here')} selected={here} onPress={onHere} />
+        {rows.map((row) => (
+          <Chip key={row.id} testID={`address-${row.id}`} label={row.label} selected={from === row.label} onPress={() => onPick(row)} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// The address book itself, in the profile: what is saved, renamed and removed. Places are added where they are, from
+// the school list, because that is the only place the app learns coordinates from.
+function AddressBook({ rows, available, onChanged }) {
+  const [editing, setEditing] = useState(null);
+  const [label, setLabel] = useState('');
+  const [text, setText] = useState('');
+  const [problem, setProblem] = useState('');
+  const [done, setDone] = useState('');
+  const [saving, setSaving] = useState(false);
+  // which place is being removed, if any: pressing remove on one place must not grey out the others
+  const [removing, setRemoving] = useState('');
+  const list = rows ?? [];
+
+  function startEdit(row) {
+    setEditing(row);
+    setLabel(row.label ?? '');
+    setText(row.address ?? '');
+    setProblem('');
+    setDone('');
+  }
+
+  async function save() {
+    const bad = validateAddress({ label, rows: list, editingId: editing?.id });
+    if (bad) { setProblem(bad); return; }
+    setSaving(true);
+    const res = await saveAddress(supabase, null, { id: editing.id, label, address: text });
+    setSaving(false);
+    if (res.error) { setProblem(friendlyError(res.error)); return; }
+    setEditing(null);
+    setProblem('');
+    setDone(t('address.saved'));
+    onChanged?.();
+  }
+
+  async function remove(row) {
+    setProblem('');
+    setDone('');
+    setRemoving(row.id);
+    const res = await deleteAddress(supabase, row.id);
+    setRemoving('');
+    if (res.error) { setProblem(friendlyError(res.error)); return; }
+    if (editing?.id === row.id) setEditing(null);
+    setDone(t('address.removed'));
+    onChanged?.();
+  }
+
+  return (
+    <View style={s.card} testID="address-book">
+      <Text style={s.h2}>{t('address.title')}</Text>
+      <Text style={s.muted}>{t('address.help')}</Text>
+      {!available && <Notice tone="amber" text={t('address.off')} testID="address-book-off" />}
+      {available && list.length === 0 && <Text style={s.body} testID="address-book-empty">{t('address.none')}</Text>}
+      {list.map((row) => (
+        <View key={row.id} testID={`book-${row.id}`} style={s.addressRow}>
+          <View style={{ flex: 1, paddingRight: 8 }}>
+            <Text style={s.body}>{row.label}</Text>
+            {!!row.address && <Text style={s.muted}>{row.address}</Text>}
+          </View>
+          <Btn testID={`book-edit-${row.id}`} kind="quiet" label={t('address.rename')} onPress={() => startEdit(row)} />
+          <Btn testID={`book-remove-${row.id}`} kind="quiet" label={t('address.remove')} onPress={() => remove(row)} disabled={removing === row.id} />
+        </View>
+      ))}
+      {!!editing && (
+        <View testID="book-form" style={{ gap: 6, paddingTop: 4 }}>
+          <Text style={s.label}>{t('address.name')}</Text>
+          <TextInput testID="book-label" style={s.input} placeholder={t('address.nameHint')} value={label}
+            onChangeText={(v) => { setLabel(v); setProblem(''); }} maxLength={MAX_ADDRESS_NAME} />
+          <TextInput testID="book-text" style={s.input} placeholder={t('address.text')} value={text}
+            onChangeText={setText} maxLength={MAX_ADDRESS_TEXT} />
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Btn testID="book-save" label={saving ? t('saving') : t('saveChanges')} onPress={save} disabled={saving} />
+            <Btn testID="book-cancel" kind="quiet" label={t('cancel')} onPress={() => { setEditing(null); setProblem(''); }} />
+          </View>
+        </View>
+      )}
+      {!!problem && <Notice text={problem} testID="address-book-problem" />}
+      {!!done && <Notice tone="green" text={done} testID="address-book-done" />}
+    </View>
+  );
+}
+
+function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare, addresses, onSavedAddress, userId }) {
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [typed, setTyped] = useState('');
   const [search, setSearch] = useState('');
@@ -1385,6 +1563,12 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [place, setPlace] = useState(null);
+  // which saved place the list is searching from. Empty means the phone's own position.
+  const [placeName, setPlaceName] = useState('');
+  const [savingPlace, setSavingPlace] = useState(false);
+  const [placeLabel, setPlaceLabel] = useState('');
+  const [placeText, setPlaceText] = useState('');
+  const [placeProblem, setPlaceProblem] = useState('');
   const [locating, setLocating] = useState(false);
   const [locationNote, setLocationNote] = useState(null);
   const [driveMode, setDriveMode] = useState(null);
@@ -1449,8 +1633,39 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare }) {
     }
     AsyncStorage.setItem(LOCATION_SETTING, '1').catch(() => {});
     setPlace(res.place);
+    setPlaceName('');
     set({ sort: 'distance' });
     if (!inServiceArea(res.place)) setLocationNote({ tone: 'amber', text: t('location.outsideArea') });
+    // the phone may be able to say what is at this position; if it can, it saves the parent typing it
+    addressHere(Location, res.place).then((text) => { if (text) setPlaceText((old) => old || text); });
+  }
+
+  // Searching from a place saved earlier. No permission is needed and the phone is not asked anything: the
+  // coordinates were saved once, at the place itself.
+  function searchFromAddress(row) {
+    const where = addressPlace(row);
+    if (!where) return;
+    setLocationNote(null);
+    setDriveNote(null);
+    setPlace(where);
+    setPlaceName(row.label);
+    setSavingPlace(false);
+    set({ sort: 'distance' });
+    if (!inServiceArea(where)) setLocationNote({ tone: 'amber', text: t('location.outsideArea') });
+  }
+
+  async function saveThisPlace() {
+    const problem = validateAddress({ label: placeLabel, rows: addresses ?? [] });
+    if (problem) { setPlaceProblem(problem); return; }
+    setPlaceProblem('');
+    const res = await saveAddress(supabase, userId, { label: placeLabel, address: placeText, place });
+    if (res.error) { setPlaceProblem(friendlyError(res.error)); return; }
+    setPlaceName(placeLabel.trim());
+    setPlaceLabel('');
+    setPlaceText('');
+    setSavingPlace(false);
+    setLocationNote({ tone: 'green', text: t('address.saved') });
+    onSavedAddress?.();
   }
 
   // Asked for once, on opening. If they chose to use their location before and the phone still allows it, it is
@@ -1465,6 +1680,9 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare }) {
   function stopUsingLocation() {
     AsyncStorage.removeItem(LOCATION_SETTING).catch(() => {});
     setPlace(null);
+    setPlaceName('');
+    setSavingPlace(false);
+    setPlaceProblem('');
     setLocationNote(null);
     setDriveMode(null);
     setDriveNote(null);
@@ -1521,11 +1739,31 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare }) {
             <Pressable testID="near-me-fold" accessibilityRole="button" accessibilityLabel={t('location.on')}
               onPress={() => setShowNear((v) => !v)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 }}>
               <Text style={s.body}>{showNear ? '▾' : '▸'}</Text>
-              <Text style={[s.body, { flexShrink: 1 }]}>{t('location.on')}</Text>
+              <Text style={[s.body, { flexShrink: 1 }]} testID="near-me-title">{placeName ? t('address.from', { label: placeName }) : t('location.on')}</Text>
             </Pressable>
             <Btn testID="stop-location" kind="quiet" label={t('location.turnOff')} onPress={stopUsingLocation} />
           </View>
           {showNear && (<>
+            <AddressPicker rows={addresses} here={!placeName} from={placeName}
+              onPick={searchFromAddress} onHere={() => useMyLocation()} busy={locating} />
+            {/* Only a position the phone just gave can be saved: a place already in the book has nothing to add,
+                and a parent standing somewhere else would be saving the wrong spot. */}
+            {!placeName && Array.isArray(addresses) && (savingPlace ? (
+              <View testID="address-form" style={{ gap: 6, paddingTop: 4 }}>
+                <Text style={s.label}>{t('address.name')}</Text>
+                <TextInput testID="address-label" style={s.input} placeholder={t('address.nameHint')} value={placeLabel}
+                  onChangeText={(v) => { setPlaceLabel(v); setPlaceProblem(''); }} maxLength={MAX_ADDRESS_NAME} />
+                <TextInput testID="address-text" style={s.input} placeholder={t('address.text')} value={placeText}
+                  onChangeText={setPlaceText} maxLength={MAX_ADDRESS_TEXT} />
+                {!!placeProblem && <Notice text={placeProblem} testID="address-problem" />}
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <Btn testID="address-save" label={t('address.save')} onPress={saveThisPlace} />
+                  <Btn testID="address-cancel" kind="quiet" label={t('cancel')} onPress={() => { setSavingPlace(false); setPlaceProblem(''); }} />
+                </View>
+              </View>
+            ) : (
+              <Btn testID="address-add" kind="outline" label={t('address.saveHere')} onPress={() => setSavingPlace(true)} />
+            ))}
             <View style={s.wrap}>
               {DISTANCE_CHOICES.map((d) => <Chip key={String(d.km)} testID={`near-${d.km ?? 'any'}`} label={t(d.label)} selected={filters.nearKm === d.km} onPress={() => set({ nearKm: d.km })} />)}
             </View>
@@ -1545,6 +1783,15 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare }) {
         <View style={[s.card, { marginBottom: 8 }]} testID="near-me-off">
           <Btn testID="use-location" kind="outline" label={locating ? t('location.finding') : t('location.use')} onPress={() => useMyLocation()} disabled={locating} />
           <Text style={s.muted}>{t('location.why')}</Text>
+          {/* A place saved earlier needs no permission and no waiting, so it is offered here as well. */}
+          {!!addresses?.length && (<>
+            <Text style={s.label}>{t('address.orFrom')}</Text>
+            <View style={s.wrap} testID="address-chips-off">
+              {addresses.map((row) => (
+                <Chip key={row.id} testID={`address-off-${row.id}`} label={row.label} selected={false} onPress={() => searchFromAddress(row)} />
+              ))}
+            </View>
+          </>)}
         </View>
       )}
       {!!locationNote && <Notice tone={locationNote.tone} text={locationNote.text} testID="location-note" />}
@@ -2100,7 +2347,7 @@ function ProfileCard({ settings, userId, onSaved }) {
   );
 }
 
-function SettingsScreen({ language, onPickLanguage, settings, onSavePush, biometrics, unlockOn, onSetUnlock, onDeleted, onBack, email, onProfileSaved, userId }) {
+function SettingsScreen({ language, onPickLanguage, settings, onSavePush, biometrics, unlockOn, onSetUnlock, onDeleted, onBack, email, onProfileSaved, userId, addresses, addressBookOn, onAddressesChanged }) {
   const [password, setPassword] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -2124,6 +2371,7 @@ function SettingsScreen({ language, onPickLanguage, settings, onSavePush, biomet
       {!!notice && <Notice tone="green" text={notice} testID="settings-notice" />}
 
       <ProfileCard settings={settings} userId={userId} onSaved={onProfileSaved} />
+      <AddressBook rows={addresses} available={addressBookOn} onChanged={onAddressesChanged} />
 
       <View style={s.card}>
         <Text style={s.h2}>{t('settings.language')}</Text>
@@ -2431,6 +2679,9 @@ function AppBody() {
   const [unread, setUnread] = useState(0);
   const [liveApps, setLiveApps] = useState(0);
   const [settings, setSettings] = useState(null);
+  const [addresses, setAddresses] = useState([]);
+  // false only when the address-book migration has not been run: the app then hides the whole thing
+  const [addressBookOn, setAddressBookOn] = useState(true);
   const [biometrics, setBiometrics] = useState('none');
   const [unlockOn, setUnlockOn] = useState(false);
   const [locked, setLocked] = useState(false);
@@ -2492,11 +2743,22 @@ function AppBody() {
     return () => { data?.subscription?.unsubscribe(); app?.remove?.(); };
   }, [unlockOn]);
 
+  const refreshAddresses = useCallback(async () => {
+    const res = await loadAddresses(supabase);
+    if (res.error) {
+      if (isMissingAddresses(res.error)) setAddressBookOn(false);
+      return;
+    }
+    setAddressBookOn(true);
+    setAddresses(res.rows);
+  }, []);
+
   // ---- what this person has asked for before ----
   useEffect(() => {
     if (!session?.user?.id) return undefined;
     let alive = true;
     refreshUnread();
+    refreshAddresses();
     loadApplications(supabase).then((res) => { if (alive && !res.error) setLiveApps(liveApplications(res.rows)); });
     loadSettings(supabase, session.user.id).then((res) => {
       if (!alive || !res.settings) return;
@@ -2513,7 +2775,7 @@ function AppBody() {
     return () => { alive = false; };
     // language is left out on purpose: this runs when the person signs in, not every time they switch language
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, refreshUnread, applyLanguage]);
+  }, [session, refreshUnread, refreshAddresses, applyLanguage]);
 
   // ---- notifications on the phone ----
   useEffect(() => {
@@ -2656,6 +2918,9 @@ function AppBody() {
           email={session?.user?.email ?? settings?.email ?? ''}
           userId={session?.user?.id ?? null}
           onProfileSaved={(saved) => setSettings((old) => ({ ...(old ?? {}), ...saved }))}
+          addresses={addresses}
+          addressBookOn={addressBookOn}
+          onAddressesChanged={refreshAddresses}
           onDeleted={() => { setScreen('discover'); supabase.auth.signOut(); }}
           onBack={() => setScreen('discover')}
         />
@@ -2677,7 +2942,8 @@ function AppBody() {
       )}
       <View style={{ flex: 1, display: screen === 'discover' ? 'flex' : 'none' }}>
         <DiscoverScreen onOpen={(x) => { setSchool(x); setScreen('school'); }} compare={compare}
-          onToggleCompare={toggleCompareSchool} onOpenCompare={() => setScreen('compare')} />
+          onToggleCompare={toggleCompareSchool} onOpenCompare={() => setScreen('compare')}
+          addresses={addressBookOn ? addresses : null} onSavedAddress={refreshAddresses} userId={session?.user?.id ?? null} />
       </View>
       {screen === 'school' && school && (
         <SchoolScreen
@@ -2772,6 +3038,7 @@ const s = StyleSheet.create({
   mine: { backgroundColor: C.blueSoft, borderColor: C.blueSoft, marginLeft: 24 },
   theirs: { marginRight: 24 },
   badge: { backgroundColor: C.blueSoft, color: C.blue, fontSize: 12, fontWeight: '700', paddingVertical: 3, paddingHorizontal: 8, borderRadius: 999, overflow: 'hidden' },
+  addressRow: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: C.line, paddingVertical: 6 },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginVertical: 6 },
   notice: { borderRadius: 10, padding: 10, marginVertical: 6 },
 });

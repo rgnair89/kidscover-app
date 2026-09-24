@@ -471,5 +471,10 @@
   "tour.next": "Seguinte",
   "tour.done": "Começar a procurar",
   "tour.again": "Ver a visita outra vez",
-  "tour.againHelp": "Os mesmos cinco cartões que viu quando abriu o Kidscover pela primeira vez."
+  "tour.againHelp": "Os mesmos cinco cartões que viu quando abriu o Kidscover pela primeira vez.",
+  "settings.look": "Claro ou escuro",
+  "settings.lookHelp": "O Kidscover segue o seu telemóvel, a não ser que escolha outra coisa.",
+  "theme.system": "Seguir o telemóvel",
+  "theme.light": "Claro",
+  "theme.dark": "Escuro"
 }

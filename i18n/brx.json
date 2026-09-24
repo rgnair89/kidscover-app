@@ -471,5 +471,10 @@
   "tour.next": "उननि",
   "tour.done": "नागिरनो जागाय",
   "tour.again": "सिनायथिखौ फिन दिन्थि",
-  "tour.againHelp": "Kidscover खौ गिबि खुलिबाव नुनाय बै बा कार्डफोरनो।"
+  "tour.againHelp": "Kidscover खौ गिबि खुलिबाव नुनाय बै बा कार्डफोरनो।",
+  "settings.look": "सोरां एबा गोसोम",
+  "settings.lookHelp": "नोंथाङ गुबुन बासिखनि सिम Kidscover आ नोंथांनि फनखौ नुजासे दं।",
+  "theme.system": "फननि नुजासे",
+  "theme.light": "सोरां",
+  "theme.dark": "गोसोम"
 }

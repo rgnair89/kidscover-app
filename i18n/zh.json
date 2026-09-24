@@ -471,5 +471,10 @@
   "tour.next": "下一步",
   "tour.done": "开始查找",
   "tour.again": "再看一次介绍",
-  "tour.againHelp": "和你第一次打开 Kidscover 时看到的五张卡片一样。"
+  "tour.againHelp": "和你第一次打开 Kidscover 时看到的五张卡片一样。",
+  "settings.look": "浅色或深色",
+  "settings.lookHelp": "除非你另作选择，Kidscover 会跟随手机的设置。",
+  "theme.system": "跟随手机",
+  "theme.light": "浅色",
+  "theme.dark": "深色"
 }

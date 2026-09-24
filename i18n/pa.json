@@ -471,5 +471,10 @@
   "tour.next": "ਅੱਗੇ",
   "tour.done": "ਲੱਭਣਾ ਸ਼ੁਰੂ ਕਰੋ",
   "tour.again": "ਜਾਣ-ਪਛਾਣ ਫਿਰ ਵਿਖਾਓ",
-  "tour.againHelp": "Kidscover ਪਹਿਲੀ ਵਾਰ ਖੋਲ੍ਹਣ ਵੇਲੇ ਵੇਖੇ ਉਹੀ ਪੰਜ ਕਾਰਡ।"
+  "tour.againHelp": "Kidscover ਪਹਿਲੀ ਵਾਰ ਖੋਲ੍ਹਣ ਵੇਲੇ ਵੇਖੇ ਉਹੀ ਪੰਜ ਕਾਰਡ।",
+  "settings.look": "ਚਾਨਣ ਜਾਂ ਹਨੇਰਾ",
+  "settings.lookHelp": "ਜਦੋਂ ਤੱਕ ਤੁਸੀਂ ਹੋਰ ਨਾ ਚੁਣੋ, Kidscover ਤੁਹਾਡੇ ਫ਼ੋਨ ਮੁਤਾਬਕ ਚੱਲਦਾ ਹੈ।",
+  "theme.system": "ਫ਼ੋਨ ਮੁਤਾਬਕ",
+  "theme.light": "ਚਾਨਣ",
+  "theme.dark": "ਹਨੇਰਾ"
 }

@@ -471,5 +471,10 @@
   "tour.next": "اڳتي",
   "tour.done": "ڳولڻ شروع ڪريو",
   "tour.again": "تعارف وري ڏيکاريو",
-  "tour.againHelp": "Kidscover پهريون ڀيرو کولڻ وقت ڏٺل اهي ئي پنج ڪارڊ."
+  "tour.againHelp": "Kidscover پهريون ڀيرو کولڻ وقت ڏٺل اهي ئي پنج ڪارڊ.",
+  "settings.look": "روشني يا اونداهي",
+  "settings.lookHelp": "جيستائين توهان ٻيو نه چونڊيو، Kidscover توهان جي فون موجب هلندو.",
+  "theme.system": "فون موجب",
+  "theme.light": "روشني",
+  "theme.dark": "اونداهي"
 }

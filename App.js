@@ -19,7 +19,7 @@ import 'react-native-url-polyfill/auto';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator, AppState, BackHandler, I18nManager, Image, Linking, Platform, Pressable, ScrollView, StatusBar,
-  StyleSheet, Switch, Text, TextInput, View,
+  StyleSheet, Switch, Text, TextInput, useColorScheme, View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
@@ -1101,6 +1101,18 @@ const LOCK_AFTER_MS = 2 * 60 * 1000;
 
 const shouldLock = (enabled, leftAt, now = Date.now(), after = LOCK_AFTER_MS) => !!enabled && !!leftAt && now - leftAt >= after;
 
+// ---- light or dark ----
+// "system" is the answer for most people: the phone already knows whether it is night. The other two are for anyone
+// whose phone is set one way and who wants Kidscover the other.
+const THEME_SETTING = 'kidscover.theme';
+const THEME_CHOICES = ['system', 'light', 'dark'];
+const themeFor = (choice, phone) => {
+  if (choice === 'dark' || choice === 'light') return choice;
+  return phone === 'dark' ? 'dark' : 'light';
+};
+// Anything the app does not recognise - an older version's word, a half-written value - means "follow the phone".
+const themeChoiceOf = (saved) => (THEME_CHOICES.includes(saved) ? saved : 'system');
+
 // ---- the tour a new parent is shown once ----
 // Five cards on the first visit, so the app explains itself instead of hoping the icons do. It can be closed at any
 // point, it never comes back by itself, and it can be asked for again from the profile.
@@ -1122,11 +1134,32 @@ const shouldShowTour = (seen) => seen !== '1';
 
 // ---------------------------------------------------------------------------------------------- small pieces
 // A friendly palette: violet for actions, coral, sunshine and mint for warmth, on a soft lavender page.
-const C = {
-  blue: '#5B4BDB', blueSoft: '#ECE9FF', ink: '#1F1B3A', grey: '#6B6880', line: '#E7E4F2', bg: '#F7F5FF', card: '#FFFFFF',
-  red: '#B91C1C', redSoft: '#FEE2E2', green: '#0F8A6A', greenSoft: '#D7F5EC', amber: '#B45309', amberSoft: '#FEF3C7',
-  coral: '#FF7A59', coralSoft: '#FFE9E2', sun: '#FFC857', sunSoft: '#FFF4D6', mint: '#2EC4B6', mintSoft: '#DDF6F3',
+// The same palette twice: the day one, and a night one with the brand colours lifted so they still read against a
+// dark page. "onBlue" is whatever has to sit on top of a violet button.
+const PALETTES = {
+  light: {
+    blue: '#5B4BDB', blueSoft: '#ECE9FF', ink: '#1F1B3A', grey: '#6B6880', line: '#E7E4F2', bg: '#F7F5FF', card: '#FFFFFF',
+    red: '#B91C1C', redSoft: '#FEE2E2', green: '#0F8A6A', greenSoft: '#D7F5EC', amber: '#B45309', amberSoft: '#FEF3C7',
+    coral: '#FF7A59', coralSoft: '#FFE9E2', sun: '#FFC857', sunSoft: '#FFF4D6', mint: '#2EC4B6', mintSoft: '#DDF6F3',
+    onBlue: '#FFFFFF', veil: 'rgba(31,27,58,0.55)',
+  },
+  dark: {
+    blue: '#A99BFF', blueSoft: '#2B2551', ink: '#F2F0FA', grey: '#A8A3C2', line: '#302C4A', bg: '#12111F', card: '#1D1B2E',
+    red: '#FCA5A5', redSoft: '#3B1D1D', green: '#6EE7C0', greenSoft: '#11362C', amber: '#FCD34D', amberSoft: '#3A2D0E',
+    coral: '#FF9E82', coralSoft: '#3D2419', sun: '#FFD57A', sunSoft: '#3A2F14', mint: '#5FD9CD', mintSoft: '#123330',
+    onBlue: '#17132E', veil: 'rgba(5,4,12,0.72)',
+  },
 };
+// The colours and the stylesheet in use. Both are swapped when the theme changes and every screen is drawn again,
+// the same way the app already swaps its words when the language changes.
+const SHEETS = { light: makeStyles(PALETTES.light), dark: makeStyles(PALETTES.dark) };
+let C = PALETTES.light;
+let s = SHEETS.light;
+function applyTheme(name) {
+  const key = name === 'dark' ? 'dark' : 'light';
+  C = PALETTES[key];
+  s = SHEETS[key];
+}
 const CATEGORY_ICONS = { school: '\ud83c\udfeb', after_school: '\ud83c\udfa8', college: '\ud83c\udf93' };
 
 // ---------------------------------------------------------------------------------------------- drawings
@@ -1464,7 +1497,7 @@ function SchoolCard({ school, drive, level, comparing, onPress, onCompare }) {
       {/* outside the card's own tap area, so choosing "compare" never opens the school by mistake */}
       {isSchoolPlace(school) && (
         <Pressable testID={`compare-${school.id}`} accessibilityRole="button" accessibilityState={{ selected: comparing }} onPress={onCompare} style={{ alignSelf: 'flex-start' }}>
-          <Text style={[s.compareTag, comparing && { backgroundColor: C.blue, color: '#fff' }]}>{comparing ? t('compare.added') : t('compare.add')}</Text>
+          <Text style={[s.compareTag, comparing && { backgroundColor: C.blue, color: C.onBlue }]}>{comparing ? t('compare.added') : t('compare.add')}</Text>
         </Pressable>
       )}
     </View>
@@ -2391,7 +2424,7 @@ function ProfileCard({ settings, userId, onSaved }) {
   );
 }
 
-function SettingsScreen({ language, onPickLanguage, settings, onSavePush, biometrics, unlockOn, onSetUnlock, onDeleted, onBack, email, onProfileSaved, userId, addresses, addressBookOn, onAddressesChanged, onShowTour }) {
+function SettingsScreen({ language, onPickLanguage, settings, onSavePush, biometrics, unlockOn, onSetUnlock, onDeleted, onBack, email, onProfileSaved, userId, addresses, addressBookOn, onAddressesChanged, onShowTour, themeChoice, onPickTheme }) {
   const [password, setPassword] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -2421,6 +2454,16 @@ function SettingsScreen({ language, onPickLanguage, settings, onSavePush, biomet
         <Text style={s.h2}>{t('tour.again')}</Text>
         <Text style={s.muted}>{t('tour.againHelp')}</Text>
         <Btn testID="settings-tour" kind="outline" label={t('tour.again')} onPress={onShowTour} />
+      </View>
+
+      <View style={s.card}>
+        <Text style={s.h2}>{t('settings.look')}</Text>
+        <Text style={s.muted}>{t('settings.lookHelp')}</Text>
+        <View style={s.wrap}>
+          {THEME_CHOICES.map((choice) => (
+            <Chip key={choice} testID={`theme-${choice}`} label={t(`theme.${choice}`)} selected={themeChoice === choice} onPress={() => onPickTheme(choice)} />
+          ))}
+        </View>
       </View>
 
       <View style={s.card}>
@@ -2482,7 +2525,7 @@ function FeeTable({ rows, level }) {
       <Text style={[s.h2, { marginTop: 20 }]}>{t('fees.title')}</Text>
       <View style={s.wrap}>
         {rows.map((r) => (
-          <Text key={r.level} testID={`fee-level-${r.level}`} style={[s.badge, r.level === chosen.level && { backgroundColor: C.blue, color: '#fff' }]}>
+          <Text key={r.level} testID={`fee-level-${r.level}`} style={[s.badge, r.level === chosen.level && { backgroundColor: C.blue, color: C.onBlue }]}>
             {`${t(`level.${r.level}`)}: ${rupees(r.first_year_total)}`}
           </Text>
         ))}
@@ -2716,6 +2759,7 @@ function SchoolScreen({ school, profile, level, comparing, onBack, onOpenEnquiri
 // The app proper. It is wrapped below in a SafeAreaProvider, which is what lets it know how much of the screen the
 // phone has taken for its own status bar and navigation buttons.
 function AppBody() {
+  // The colours are worked out before anything below is drawn, so a screen is never half one theme and half the other.
   const insets = useSafeAreaInsets();
   const [ready, setReady] = useState(false);
   const [session, setSession] = useState(null);
@@ -2729,6 +2773,9 @@ function AppBody() {
   const [unread, setUnread] = useState(0);
   const [liveApps, setLiveApps] = useState(0);
   const [settings, setSettings] = useState(null);
+  // what the parent asked for, and what the phone itself is set to
+  const [themeChoice, setThemeChoice] = useState('system');
+  const phoneTheme = useColorScheme();
   const [addresses, setAddresses] = useState([]);
   // which card of the tour is showing; below zero means it is not showing at all
   const [tour, setTour] = useState(-1);
@@ -2756,6 +2803,18 @@ function AppBody() {
       setLanguageReady(true);
     });
   }, [applyLanguage]);
+
+  // The look is remembered on the phone, not in the account: it belongs to the screen a person is holding, and it
+  // has to be known before the first screen is drawn, which is long before anyone has signed in.
+  useEffect(() => {
+    AsyncStorage.getItem(THEME_SETTING).then((saved) => setThemeChoice(themeChoiceOf(saved))).catch(() => {});
+  }, []);
+
+  const chooseTheme = useCallback((choice) => {
+    const picked = themeChoiceOf(choice);
+    setThemeChoice(picked);
+    AsyncStorage.setItem(THEME_SETTING, picked).catch(() => {});
+  }, []);
 
   const chooseLanguage = useCallback(async (code) => {
     applyLanguage(code);
@@ -2907,10 +2966,13 @@ function AppBody() {
   }
   if (!ready || !languageReady) return <View style={[s.root, s.center]}><ActivityIndicator testID="boot" /></View>;
 
+  const theme = themeFor(themeChoice, phoneTheme);
+  applyTheme(theme);
+
   const rtl = isRightToLeft(language);
   // Android draws this app under its own status bar and navigation buttons. Without these two the top bar sits under
   // the clock and the last button on every screen sits under the back / home / recents row, where it cannot be pressed.
-  const frame = [s.root, { paddingTop: insets.top, paddingBottom: insets.bottom }, rtl && { direction: 'rtl' }];
+  const frame = [s.root, { paddingTop: insets.top, paddingBottom: insets.bottom, backgroundColor: C.bg }, rtl && { direction: 'rtl' }];
   const backTo = backTargetFor(screen);
 
   if (!session) {
@@ -2932,6 +2994,7 @@ function AppBody() {
 
   return (
     <View style={frame} testID="frame">
+      <StatusBar barStyle={theme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={C.card} />
       {/* Two rows, so nothing is ever pushed off the side of a narrow phone. The brand and the way out of the screen
           you are on go on top; the places you can go to sit underneath and wrap if the words are long. */}
       <View style={s.topBar}>
@@ -2981,6 +3044,8 @@ function AppBody() {
           addressBookOn={addressBookOn}
           onAddressesChanged={refreshAddresses}
           onShowTour={() => { setScreen('discover'); setTour(0); }}
+          themeChoice={themeChoice}
+          onPickTheme={chooseTheme}
           onDeleted={() => { setScreen('discover'); supabase.auth.signOut(); }}
           onBack={() => setScreen('discover')}
         />
@@ -3037,7 +3102,10 @@ export default function App() {
 }
 
 // ---------------------------------------------------------------------------------------------- styles
-const s = StyleSheet.create({
+// Built once for each palette, at the bottom of the file, where it has always been. `C` here is the palette being
+// built with, not the one in use.
+function makeStyles(C) {
+  return StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
   center: { alignItems: 'center', justifyContent: 'center', padding: 24 },
   topBar: { paddingHorizontal: 12, paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: C.line, backgroundColor: C.card },
@@ -3086,23 +3154,23 @@ const s = StyleSheet.create({
   empty: { textAlign: 'center', color: C.grey, marginTop: 24 },
   avatarChoice: { borderRadius: 24, borderWidth: 2, borderColor: 'transparent', padding: 2 },
   avatarChosen: { borderColor: C.blue, backgroundColor: C.blueSoft },
-  input: { borderWidth: 1, borderColor: C.line, borderRadius: 12, padding: 12, fontSize: 15, backgroundColor: '#fff', color: C.ink, marginVertical: 4 },
-  search: { borderWidth: 1, borderColor: C.line, borderRadius: 16, padding: 13, fontSize: 16, backgroundColor: '#fff', color: C.ink, marginBottom: 10 },
+  input: { borderWidth: 1, borderColor: C.line, borderRadius: 12, padding: 12, fontSize: 15, backgroundColor: C.card, color: C.ink, marginVertical: 4 },
+  search: { borderWidth: 1, borderColor: C.line, borderRadius: 16, padding: 13, fontSize: 16, backgroundColor: C.card, color: C.ink, marginBottom: 10 },
   btn: { backgroundColor: C.blue, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center', marginVertical: 4 },
-  btnOutline: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.blue },
+  btnOutline: { backgroundColor: C.card, borderWidth: 1, borderColor: C.blue },
   btnQuiet: { backgroundColor: 'transparent' },
-  btnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  chip: { borderWidth: 1, borderColor: C.line, borderRadius: 999, paddingVertical: 7, paddingHorizontal: 12, backgroundColor: '#fff' },
+  btnText: { color: C.onBlue, fontWeight: '700', fontSize: 15 },
+  chip: { borderWidth: 1, borderColor: C.line, borderRadius: 999, paddingVertical: 7, paddingHorizontal: 12, backgroundColor: C.card },
   chipOn: { backgroundColor: C.blue, borderColor: C.blue },
   chipText: { color: C.ink, fontSize: 14 },
-  chipTextOn: { color: '#fff', fontWeight: '700' },
+  chipTextOn: { color: C.onBlue, fontWeight: '700' },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 4 },
   badgeRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: 6, marginVertical: 4 },
   distance: { fontSize: 13, fontWeight: '700', color: C.blue },
   mine: { backgroundColor: C.blueSoft, borderColor: C.blueSoft, marginLeft: 24 },
   theirs: { marginRight: 24 },
   badge: { backgroundColor: C.blueSoft, color: C.blue, fontSize: 12, fontWeight: '700', paddingVertical: 3, paddingHorizontal: 8, borderRadius: 999, overflow: 'hidden' },
-  tourVeil: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(31,27,58,0.55)', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  tourVeil: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: C.veil, alignItems: 'center', justifyContent: 'center', padding: 20 },
   tourCard: { backgroundColor: C.card, borderRadius: 20, padding: 20, width: '100%', maxWidth: 420, gap: 8 },
   tourArt: { fontSize: 44, textAlign: 'center' },
   tourDots: { flexDirection: 'row', gap: 6, justifyContent: 'center', paddingVertical: 4 },
@@ -3112,4 +3180,5 @@ const s = StyleSheet.create({
   addressRow: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: C.line, paddingVertical: 6 },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginVertical: 6 },
   notice: { borderRadius: 10, padding: 10, marginVertical: 6 },
-});
+  });
+}

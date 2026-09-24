@@ -471,5 +471,10 @@
   "tour.next": "つぎへ",
   "tour.done": "探しはじめる",
   "tour.again": "もう一度見る",
-  "tour.againHelp": "Kidscover をはじめて開いたときの、あの5枚です。"
+  "tour.againHelp": "Kidscover をはじめて開いたときの、あの5枚です。",
+  "settings.look": "明るめか暗めか",
+  "settings.lookHelp": "別の選び方をしないかぎり、Kidscover はスマホの設定に合わせます。",
+  "theme.system": "スマホに合わせる",
+  "theme.light": "明るめ",
+  "theme.dark": "暗め"
 }

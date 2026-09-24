@@ -471,5 +471,10 @@
   "tour.next": "التالي",
   "tour.done": "ابدأ البحث",
   "tour.again": "أعد عرض الجولة",
-  "tour.againHelp": "البطاقات الخمس نفسها التي رأيتها عند فتح Kidscover أول مرة."
+  "tour.againHelp": "البطاقات الخمس نفسها التي رأيتها عند فتح Kidscover أول مرة.",
+  "settings.look": "فاتح أم داكن",
+  "settings.lookHelp": "يتبع Kidscover إعداد هاتفك ما لم تختر غير ذلك.",
+  "theme.system": "اتبع هاتفي",
+  "theme.light": "فاتح",
+  "theme.dark": "داكن"
 }

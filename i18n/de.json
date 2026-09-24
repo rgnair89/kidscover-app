@@ -471,5 +471,10 @@
   "tour.next": "Weiter",
   "tour.done": "Losschauen",
   "tour.again": "Rundgang erneut zeigen",
-  "tour.againHelp": "Dieselben fünf Karten, die Sie beim ersten Öffnen von Kidscover gesehen haben."
+  "tour.againHelp": "Dieselben fünf Karten, die Sie beim ersten Öffnen von Kidscover gesehen haben.",
+  "settings.look": "Hell oder dunkel",
+  "settings.lookHelp": "Kidscover richtet sich nach Ihrem Handy, solange Sie nichts anderes wählen.",
+  "theme.system": "Wie mein Handy",
+  "theme.light": "Hell",
+  "theme.dark": "Dunkel"
 }

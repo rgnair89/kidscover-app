@@ -471,5 +471,10 @@
   "tour.next": "اگلہٕ",
   "tour.done": "ژھانڈُن شروع کریو",
   "tour.again": "تعارف دوبارٕ ہٲویو",
-  "tour.againHelp": "Kidscover گۄڈنچہِ لٹہِ کھولِتھ یِم پانٛژھ کارڈ وُچھِ، تِمے۔"
+  "tour.againHelp": "Kidscover گۄڈنچہِ لٹہِ کھولِتھ یِم پانٛژھ کارڈ وُچھِ، تِمے۔",
+  "settings.look": "گاش یا اَنٛدھؠر",
+  "settings.lookHelp": "یٕتؠ تام توہہِ بیٛاکھ نہٕ ژٲرِو، Kidscover چھُ توٚہٕنٛدِ فونہٕ حساب چلان۔",
+  "theme.system": "فونہٕ حساب",
+  "theme.light": "گاش",
+  "theme.dark": "اَنٛدھؠر"
 }

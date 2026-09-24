@@ -16,7 +16,7 @@ const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'lev
   'BOARD_CHOICES', 'boardSourceText', 'admissionText',
   'CATEGORY_CHOICES', 'categoryOf', 'categoryFilters', 'isSchoolPlace',
   'FACILITY_INFO', 'ACHIEVEMENT_INFO', 'SOURCE_TEXT', 'facilityText', 'sourcesText', 'photoCreditText', 'artColours', 'ART_COLOURS', 'loadFacilities', 'loadAchievements',
-  'setTranslator', 't', 'setMoneyLocale', 'setDateLocale', 'rupees', 'budgetLabel', 'BUDGET_CHOICES', 'FEE_PARTS', 'feeForLevel', 'feeSummaryText', 'loadFeeSchedules', 'loadTiles', 'leaveByText', 'clockText', 'dayText', 'noteOutboundClick', 'messageFrom', 'EN_GRADES', 'classLabel', 'stageText', 'academicYearChoices', 'APPLY_CLASSES', 'APPLY_RELATIONS', 'APPLY_GENDERS', 'EMPTY_APPLICATION', 'validateApplication', 'submitApplication', 'loadApplications', 'loadApplicationEvents', 'withdrawApplication', 'deleteApplication', 'isMissingApplications', 'liveApplications', 'MAX_COMPARE', 'toggleCompare', 'compareRows', 'registerForPush', 'forgetPush', 'loadNotifications', 'markNotificationsRead', 'initialsOf', 'backTargetFor', 'BACK_FROM', 'loadSettings', 'saveLanguage', 'savePushChoice', 'deleteAccount', 'biometricKind', 'unlockWithBiometrics', 'shouldLock', 'BIOMETRIC_SETTING', 'LANGUAGE_SETTING', 'LOCK_AFTER_MS', 'APPLICATION_COLUMNS'];
+  'setTranslator', 't', 'setMoneyLocale', 'setDateLocale', 'rupees', 'budgetLabel', 'BUDGET_CHOICES', 'FEE_PARTS', 'feeForLevel', 'feeSummaryText', 'loadFeeSchedules', 'loadTiles', 'leaveByText', 'clockText', 'dayText', 'noteOutboundClick', 'messageFrom', 'EN_GRADES', 'classLabel', 'stageText', 'academicYearChoices', 'APPLY_CLASSES', 'APPLY_RELATIONS', 'APPLY_GENDERS', 'EMPTY_APPLICATION', 'validateApplication', 'submitApplication', 'loadApplications', 'loadApplicationEvents', 'withdrawApplication', 'deleteApplication', 'isMissingApplications', 'liveApplications', 'MAX_COMPARE', 'toggleCompare', 'compareRows', 'registerForPush', 'forgetPush', 'loadNotifications', 'markNotificationsRead', 'initialsOf', 'backTargetFor', 'BACK_FROM', 'PROFILE_GENDERS', 'PROFILE_AVATARS', 'AUTO_AVATAR', 'avatarFor', 'profileComplete', 'saveProfile', 'loadSettings', 'saveLanguage', 'savePushChoice', 'deleteAccount', 'biometricKind', 'unlockWithBiometrics', 'shouldLock', 'BIOMETRIC_SETTING', 'LANGUAGE_SETTING', 'LOCK_AFTER_MS', 'APPLICATION_COLUMNS'];
 fs.writeFileSync(path.join(here, '.tmp', 'logic.mjs'), src.slice(a, b) + `\nexport { ${names.join(', ')} };\n`);
 const L = await import(pathToFileURL(path.join(here, '.tmp', 'logic.mjs')).href);
 // the words of the app come from the language packs; the tests read the English one
@@ -105,7 +105,7 @@ console.log('\n=== links ===');
 check('website links are made safe', L.safeUrl('example.com') === 'https://example.com' && L.safeUrl('http://a.in/x') === 'http://a.in/x' && L.safeUrl('') === null && L.safeUrl(null) === null && L.safeUrl('javascript:alert(1)') === null && L.safeUrl('not a url') === null);
 
 console.log('\n=== forms ===');
-const auth = (o) => L.validateAuth({ mode: 'signin', first: '', last: '', email: 'a@b.co', password: 'x', ...o });
+const auth = (o) => L.validateAuth({ mode: 'signin', first: '', last: '', email: 'a@b.co', password: 'x', gender: 'woman', ...o });
 check('sign in: needs a valid email and a password', auth({}) === null && /valid email/.test(auth({ email: 'nope' })) && /password/.test(auth({ password: '' })));
 check('sign up: needs both names and an 8-character password', /first and last name/.test(auth({ mode: 'signup', password: '12345678' })) && /8 characters/.test(auth({ mode: 'signup', first: 'A', last: 'B', password: '1234567' })) && auth({ mode: 'signup', first: 'A', last: 'B', password: '12345678' }) === null);
 const rv = (o) => L.validateReview({ rating: 5, title: '', body: 'x'.repeat(20), ...o });
@@ -392,6 +392,32 @@ check('the other screens go back to the list', ['school', 'compare', 'enquiries'
 check('the profile button shows a person\'s initials', L.initialsOf({ first_name: 'Ann', last_name: 'Rao' }) === 'AR');
 check('...one name is enough', L.initialsOf({ first_name: 'ann', last_name: '' }) === 'A' && L.initialsOf({ last_name: 'Rao' }) === 'R');
 check('...and someone with no name yet still gets a button to press', L.initialsOf(null) === '··' && L.initialsOf({}) === '··' && L.initialsOf({ first_name: '  ' }) === '··');
+
+// ---------------------------------------------------------------------------------------------------------------
+console.log('\n=== the profile ===');
+check('signing up asks how you would like to be described, and will not take an invented answer', /choose one/.test(auth({ mode: 'signup', first: 'A', last: 'B', password: '12345678', gender: null })) && /choose one/.test(auth({ mode: 'signup', first: 'A', last: 'B', password: '12345678', gender: 'wizard' })) && auth({ mode: 'signup', first: 'A', last: 'B', password: '12345678', gender: 'prefer_not_to_say' }) === null);
+check('signing in is not asked, because they answered when they joined', auth({ gender: null }) === null);
+check('the four answers are the four the database will accept', L.PROFILE_GENDERS.join() === 'woman,man,other,prefer_not_to_say');
+
+check('a profile is finished when a school would know who is asking', L.profileComplete({ first_name: 'Ann', last_name: 'Rao', gender: 'woman' }) === true);
+check('...preferring not to say finishes it too: it is an answer, not a gap', L.profileComplete({ first_name: 'Ann', last_name: 'Rao', gender: 'prefer_not_to_say' }) === true);
+check('...a missing name, a blank name or no answer at all leaves it unfinished', L.profileComplete({ first_name: 'Ann', gender: 'woman' }) === false && L.profileComplete({ first_name: '  ', last_name: 'Rao', gender: 'woman' }) === false && L.profileComplete({ first_name: 'Ann', last_name: 'Rao' }) === false && L.profileComplete(null) === false);
+
+check('everyone has a picture from the first moment, before they have chosen or said anything', L.PROFILE_AVATARS.includes(L.avatarFor(null)) && L.PROFILE_AVATARS.includes(L.avatarFor({ avatar: 'auto' })));
+check('...the picture follows how they described themselves until they pick one', L.avatarFor({ avatar: 'auto', gender: 'woman' }) !== L.avatarFor({ avatar: 'auto', gender: 'man' }) && L.PROFILE_GENDERS.every((g) => L.PROFILE_AVATARS.includes(L.avatarFor({ avatar: 'auto', gender: g }))));
+check('...and once they pick one, that is the one, whatever they said', L.avatarFor({ avatar: 'parent_six', gender: 'woman' }) === 'parent_six');
+check('...a picture the app cannot draw is ignored rather than shown as a hole', L.PROFILE_AVATARS.includes(L.avatarFor({ avatar: 'mystery', gender: 'man' })));
+
+{
+  const seen = [];
+  const db = { from: () => ({ update: (v) => { seen.push(v); return { eq: () => Promise.resolve({ error: null }) }; } }) };
+  const r1 = await L.saveProfile(db, 'u1', { first_name: '  Ann  ', last_name: 'Rao', gender: 'woman', avatar: 'parent_two' });
+  check('saving trims the names and sends exactly what was asked for', r1.error === null && seen[0].first_name === 'Ann' && seen[0].last_name === 'Rao' && seen[0].gender === 'woman' && seen[0].avatar === 'parent_two');
+  const r2 = await L.saveProfile(db, 'u1', { gender: 'wizard', avatar: 'mystery' });
+  check('...and quietly refuses to send an answer the database would reject', r2.error === null && seen.length === 1 && Object.keys(r2.saved).length === 0);
+  const r3 = await L.saveProfile(db, 'u1', { first_name: 'x'.repeat(200), last_name: 'y' });
+  check('...and a name longer than the column is cut to fit rather than failing at the database', seen[1].first_name.length === 60);
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

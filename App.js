@@ -532,12 +532,41 @@ function cleanName(name) {
   return cleaned || original;
 }
 
-function validateAuth({ mode, first, last, email, password }) {
+function validateAuth({ mode, first, last, email, password, gender }) {
   if (mode === 'signup' && (!first.trim() || !last.trim())) return t('auth.needName');
+  if (mode === 'signup' && !PROFILE_GENDERS.includes(gender)) return t('profile.needGender');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return t('auth.needEmail');
   if (mode === 'signup' && password.length < 8) return t('auth.needPassword');
   if (!password) return t('auth.needPasswordAny');
   return null;
+}
+
+// ---------------------------------------------------------------------------------------------- the person's profile
+// How someone describes themselves. "Prefer not to say" is one of the answers, not the absence of one: a parent can
+// finish their profile without telling us something they would rather keep, and the app stops nagging either way.
+const PROFILE_GENDERS = ['woman', 'man', 'other', 'prefer_not_to_say'];
+// Every picture is drawn by the app in code. Nothing is uploaded, nothing is licensed, and no face reaches a server.
+const PROFILE_AVATARS = ['parent_one', 'parent_two', 'parent_three', 'parent_four', 'parent_five', 'parent_six'];
+// Which drawing to show. 'auto' - what everyone starts with - follows how they described themselves.
+const AUTO_AVATAR = { woman: 'parent_one', man: 'parent_two', other: 'parent_three', prefer_not_to_say: 'parent_four' };
+function avatarFor(profile) {
+  const chosen = profile?.avatar;
+  if (PROFILE_AVATARS.includes(chosen)) return chosen;
+  return AUTO_AVATAR[profile?.gender] ?? 'parent_five';
+}
+// A profile is finished when a school would know who it is hearing from. The database says the same thing in
+// my_profile_complete(); this is the app's own copy so a screen does not have to wait for a round trip to know.
+const profileComplete = (profile) => !!(String(profile?.first_name ?? '').trim() && String(profile?.last_name ?? '').trim() && PROFILE_GENDERS.includes(profile?.gender));
+
+async function saveProfile(db, userId, patch) {
+  const clean = {};
+  if ('first_name' in patch) clean.first_name = String(patch.first_name ?? '').trim().slice(0, 60);
+  if ('last_name' in patch) clean.last_name = String(patch.last_name ?? '').trim().slice(0, 60);
+  if ('gender' in patch && PROFILE_GENDERS.includes(patch.gender)) clean.gender = patch.gender;
+  if ('avatar' in patch && PROFILE_AVATARS.includes(patch.avatar)) clean.avatar = patch.avatar;
+  if (Object.keys(clean).length === 0) return { error: null, saved: {} };
+  const { error } = await db.from('profiles').update(clean).eq('id', userId);
+  return { error: error ?? null, saved: clean };
 }
 
 function validateReview({ rating, title, body }) {
@@ -922,7 +951,7 @@ const BACK_FROM = {
 const backTargetFor = (screen) => BACK_FROM[screen] ?? null;
 
 async function loadSettings(db, userId) {
-  const { data, error } = await db.from('profiles').select('language,notify_push,first_name,last_name,email').eq('id', userId).maybeSingle();
+  const { data, error } = await db.from('profiles').select('language,notify_push,first_name,last_name,email,gender,avatar').eq('id', userId).maybeSingle();
   return { settings: data ?? null, error: error ?? null };
 }
 // These run the moment they are called: a query that is only built and never waited for is never sent.
@@ -1103,6 +1132,37 @@ function LogoMark({ size = 28 }) {
   );
 }
 
+// The six parents, drawn rather than photographed. Nobody uploads a face, so nobody's face is ours to lose. They
+// differ by hair, skin and clothes only; none of them is labelled as a woman or a man, because a picture should not
+// have to be. What a person chose as their own description picks the first one shown, and they can change it.
+const AVATAR_LOOKS = {
+  parent_one:   { skin: '#8D5524', hair: '#2B1B12', clothes: C.coral, back: C.coralSoft, bun: true },
+  parent_two:   { skin: '#C68642', hair: '#1F1B3A', clothes: C.blue, back: C.blueSoft, bun: false },
+  parent_three: { skin: '#F1C27D', hair: '#6D4C2F', clothes: C.mint, back: C.mintSoft, bun: true },
+  parent_four:  { skin: '#5C3A21', hair: '#111111', clothes: C.sun, back: C.sunSoft, bun: false },
+  parent_five:  { skin: '#E0AC69', hair: '#8A6A4A', clothes: C.mint, back: C.blueSoft, bun: false },
+  parent_six:   { skin: '#A9744F', hair: '#3B2A1A', clothes: C.blue, back: C.sunSoft, bun: true },
+};
+function ParentAvatar({ look = 'parent_five', size = 44, testID }) {
+  const a = AVATAR_LOOKS[look] ?? AVATAR_LOOKS.parent_five;
+  return (
+    <Svg width={size} height={size} viewBox="0 0 48 48" testID={testID}>
+      <Circle cx="24" cy="24" r="24" fill={a.back} />
+      {/* shoulders */}
+      <Path d="M8 48c0-9 7.2-14 16-14s16 5 16 14z" fill={a.clothes} />
+      {/* head */}
+      <Circle cx="24" cy="20" r="10" fill={a.skin} />
+      {/* hair: a fringe for everyone, and a bun for some */}
+      <Path d="M14 18c0-6.1 4.5-10 10-10s10 3.9 10 10c0-3.2-3.2-4.6-10-4.6S14 14.8 14 18z" fill={a.hair} />
+      {a.bun && <Circle cx="24" cy="7.5" r="4" fill={a.hair} />}
+      {/* eyes and a small smile, so it reads as a person rather than a shape */}
+      <Circle cx="20.4" cy="20.5" r="1.25" fill={C.ink} />
+      <Circle cx="27.6" cy="20.5" r="1.25" fill={C.ink} />
+      <Path d="M20.8 24.4c1.6 1.7 4.8 1.7 6.4 0" stroke={C.ink} strokeWidth="1.2" strokeLinecap="round" fill="none" />
+    </Svg>
+  );
+}
+
 // A school's photo, or its drawing when there is none (or the photo does not load).
 function SchoolPicture({ school, height, compact = false, testID }) {
   const [broken, setBroken] = useState(false);
@@ -1170,6 +1230,7 @@ function AuthScreen({ language, onPickLanguage }) {
   const [mode, setMode] = useState('signin');
   const [first, setFirst] = useState('');
   const [last, setLast] = useState('');
+  const [gender, setGender] = useState(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -1179,7 +1240,7 @@ function AuthScreen({ language, onPickLanguage }) {
   async function submit() {
     setError('');
     setInfo('');
-    const problem = validateAuth({ mode, first, last, email, password });
+    const problem = validateAuth({ mode, first, last, email, password, gender });
     if (problem) { setError(problem); return; }
     setBusy(true);
     if (mode === 'signin') {
@@ -1189,7 +1250,7 @@ function AuthScreen({ language, onPickLanguage }) {
       const { data, error: e } = await supabase.auth.signUp({
         email: email.trim(),
         password,
-        options: { data: { first_name: first.trim(), last_name: last.trim(), language } },
+        options: { data: { first_name: first.trim(), last_name: last.trim(), language, gender } },
       });
       if (e) setError(friendlyError(e));
       else if (!data?.session) {
@@ -1220,6 +1281,14 @@ function AuthScreen({ language, onPickLanguage }) {
             <TextInput testID="last-name" style={[s.input, { flex: 1 }]} placeholder={t('auth.lastName')} value={last} onChangeText={setLast} />
           </View>
         )}
+        {mode === 'signup' && (<>
+          <Text style={s.label}>{t('profile.gender')}</Text>
+          <View style={s.wrap}>
+            {PROFILE_GENDERS.map((g) => (
+              <Chip key={g} testID={`signup-gender-${g}`} label={t(`profile.gender.${g}`)} selected={gender === g} onPress={() => setGender(g)} />
+            ))}
+          </View>
+        </>)}
         <TextInput testID="email" style={s.input} placeholder={t('auth.email')} autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} />
         <TextInput testID="password" style={s.input} placeholder={t('auth.password')} secureTextEntry value={password} onChangeText={setPassword} />
         {!!error && <Notice text={error} testID="auth-error" />}
@@ -1974,7 +2043,64 @@ function ApplicationsScreen({ onBack, onChanged }) {
 }
 
 // ---------------------------------------------------------------------------------------------- settings
-function SettingsScreen({ language, onPickLanguage, settings, onSavePush, biometrics, unlockOn, onSetUnlock, onDeleted, onBack, email }) {
+// Who you are: the picture a school sees, your name, and how you would like to be described. It sits at the top of
+// this screen because that is where someone looks for "my profile", and everything else here belongs to it anyway.
+function ProfileCard({ settings, userId, onSaved }) {
+  const [first, setFirst] = useState(settings?.first_name ?? '');
+  const [last, setLast] = useState(settings?.last_name ?? '');
+  const [gender, setGender] = useState(settings?.gender ?? null);
+  const [avatar, setAvatar] = useState(settings?.avatar ?? 'auto');
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState('');
+  const [done, setDone] = useState('');
+  const shown = avatarFor({ avatar, gender });
+  const complete = profileComplete({ first_name: first, last_name: last, gender });
+
+  async function save() {
+    setProblem(''); setDone('');
+    if (!first.trim() || !last.trim()) { setProblem(t('auth.needName')); return; }
+    if (!PROFILE_GENDERS.includes(gender)) { setProblem(t('profile.needGender')); return; }
+    setBusy(true);
+    const res = await saveProfile(supabase, userId, { first_name: first, last_name: last, gender, avatar });
+    setBusy(false);
+    if (res.error) { setProblem(friendlyError(res.error)); return; }
+    setDone(t('profile.saved'));
+    onSaved?.(res.saved);
+  }
+
+  return (
+    <View style={s.card} testID="profile-card">
+      <Text style={s.h2}>{t('profile.title')}</Text>
+      {!complete && <Notice tone="amber" text={t('profile.welcome')} testID="profile-welcome" />}
+      <View style={{ alignItems: 'center', paddingVertical: 6 }}>
+        <ParentAvatar look={shown} size={76} testID="profile-avatar" />
+      </View>
+      <Text style={s.label}>{t('profile.picture')}</Text>
+      <View style={s.wrap}>
+        {PROFILE_AVATARS.map((look) => (
+          <Pressable key={look} testID={`avatar-${look}`} accessibilityRole="button" onPress={() => setAvatar(look)}
+            style={[s.avatarChoice, avatar === look && s.avatarChosen]}>
+            <ParentAvatar look={look} size={40} />
+          </Pressable>
+        ))}
+      </View>
+      <Text style={s.muted}>{t('profile.pictureHelp')}</Text>
+      <TextInput testID="profile-first" style={s.input} placeholder={t('auth.firstName')} value={first} onChangeText={setFirst} />
+      <TextInput testID="profile-last" style={s.input} placeholder={t('auth.lastName')} value={last} onChangeText={setLast} />
+      <Text style={s.label}>{t('profile.gender')}</Text>
+      <View style={s.wrap}>
+        {PROFILE_GENDERS.map((g) => (
+          <Chip key={g} testID={`profile-gender-${g}`} label={t(`profile.gender.${g}`)} selected={gender === g} onPress={() => setGender(g)} />
+        ))}
+      </View>
+      {!!problem && <Notice text={problem} testID="profile-problem" />}
+      {!!done && <Notice tone="green" text={done} testID="profile-done" />}
+      <Btn testID="profile-save" label={busy ? t('saving') : t('saveChanges')} onPress={save} disabled={busy} />
+    </View>
+  );
+}
+
+function SettingsScreen({ language, onPickLanguage, settings, onSavePush, biometrics, unlockOn, onSetUnlock, onDeleted, onBack, email, onProfileSaved, userId }) {
   const [password, setPassword] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1993,9 +2119,11 @@ function SettingsScreen({ language, onPickLanguage, settings, onSavePush, biomet
   return (
     <ScrollView testID="settings-screen" contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
       <Btn testID="settings-back" kind="quiet" label={t('backToSchools')} onPress={onBack} />
-      <Text style={s.title}>{t('settings.title')}</Text>
+      <Text style={s.title}>{t('profile.title')}</Text>
       {!!error && <Notice text={error} testID="settings-error" />}
       {!!notice && <Notice tone="green" text={notice} testID="settings-notice" />}
+
+      <ProfileCard settings={settings} userId={userId} onSaved={onProfileSaved} />
 
       <View style={s.card}>
         <Text style={s.h2}>{t('settings.language')}</Text>
@@ -2495,8 +2623,9 @@ function AppBody() {
             )}
             <Text style={s.topTitle} numberOfLines={1}>Kidscover</Text>
           </View>
-          <Pressable testID="settings" accessibilityRole="button" accessibilityLabel={t('nav.settings')} onPress={() => setScreen('settings')} style={s.profileButton}>
-            <Text style={s.profileInitials}>{initialsOf(settings)}</Text>
+          <Pressable testID="settings" accessibilityRole="button" accessibilityLabel={t('profile.title')} onPress={() => setScreen('settings')} style={s.profileButton}>
+            {settings ? <ParentAvatar look={avatarFor(settings)} size={36} testID="top-avatar" /> : <Text style={s.profileInitials}>{initialsOf(settings)}</Text>}
+            {settings && !profileComplete(settings) && <View style={s.profileDot} testID="profile-dot" />}
           </Pressable>
         </View>
         <View style={s.topBarTabs}>
@@ -2505,6 +2634,14 @@ function AppBody() {
         </View>
       </View>
       {!!compareNote && <Notice tone="amber" text={compareNote} testID="compare-note" />}
+      {/* Said once, on the list, and never in the way: an unfinished profile is worth mentioning but is nobody's
+          emergency. The button goes straight to the part that needs finishing. */}
+      {screen === 'discover' && settings && !profileComplete(settings) && (
+        <View style={s.profileNudge} testID="profile-nudge">
+          <Text style={[s.body, { flex: 1, paddingRight: 8 }]}>{t('profile.incomplete')}</Text>
+          <Btn testID="profile-finish" label={t('profile.finish')} onPress={() => setScreen('settings')} />
+        </View>
+      )}
 
       {screen === 'language' && <LanguageScreen current={language} onPick={chooseLanguage} onClose={() => setScreen('settings')} />}
       {screen === 'settings' && (
@@ -2517,6 +2654,8 @@ function AppBody() {
           unlockOn={unlockOn}
           onSetUnlock={setUnlockChoice}
           email={session?.user?.email ?? settings?.email ?? ''}
+          userId={session?.user?.id ?? null}
+          onProfileSaved={(saved) => setSettings((old) => ({ ...(old ?? {}), ...saved }))}
           onDeleted={() => { setScreen('discover'); supabase.auth.signOut(); }}
           onBack={() => setScreen('discover')}
         />
@@ -2575,7 +2714,9 @@ const s = StyleSheet.create({
   topBarRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   topBarTabs: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
   topTitle: { fontSize: 20, fontWeight: '900', color: C.blue, letterSpacing: 0.3, flexShrink: 1 },
-  profileButton: { width: 38, height: 38, borderRadius: 19, backgroundColor: C.blueSoft, borderWidth: 1, borderColor: C.blue, alignItems: 'center', justifyContent: 'center' },
+  profileButton: { width: 38, height: 38, borderRadius: 19, backgroundColor: C.blueSoft, borderWidth: 1, borderColor: C.blue, alignItems: 'center', justifyContent: 'center', overflow: 'visible' },
+  profileNudge: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.amberSoft, paddingHorizontal: 16, paddingVertical: 10, gap: 8 },
+  profileDot: { position: 'absolute', top: -1, right: -1, width: 12, height: 12, borderRadius: 6, backgroundColor: C.coral, borderWidth: 2, borderColor: C.card },
   profileInitials: { color: C.blue, fontWeight: '900', fontSize: 14 },
   brandRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, flexShrink: 1 },
   authWrap: { padding: 20, paddingTop: 28 },
@@ -2613,6 +2754,8 @@ const s = StyleSheet.create({
   rating: { fontSize: 14, fontWeight: '600', color: C.ink },
   stars: { fontSize: 18, color: '#F59E0B' },
   empty: { textAlign: 'center', color: C.grey, marginTop: 24 },
+  avatarChoice: { borderRadius: 24, borderWidth: 2, borderColor: 'transparent', padding: 2 },
+  avatarChosen: { borderColor: C.blue, backgroundColor: C.blueSoft },
   input: { borderWidth: 1, borderColor: C.line, borderRadius: 12, padding: 12, fontSize: 15, backgroundColor: '#fff', color: C.ink, marginVertical: 4 },
   search: { borderWidth: 1, borderColor: C.line, borderRadius: 16, padding: 13, fontSize: 16, backgroundColor: '#fff', color: C.ink, marginBottom: 10 },
   btn: { backgroundColor: C.blue, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center', marginVertical: 4 },

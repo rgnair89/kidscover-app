@@ -454,5 +454,22 @@
   "address.needName": "Geben Sie diesem Ort einen Namen.",
   "address.nameLong": "Ein Name darf bis zu {max} Zeichen haben.",
   "address.nameTaken": "Sie haben schon einen Ort mit diesem Namen.",
-  "address.full": "Sie können bis zu {max} Orte behalten."
+  "address.full": "Sie können bis zu {max} Orte behalten.",
+  "tour.find.title": "Die richtige Schule finden",
+  "tour.find.body": "Suchen Sie nach Name oder Gegend und grenzen Sie dann nach Stufe, Board, Gebühren oder Entfernung ein.",
+  "tour.near.title": "In Ihrer Nähe oder in der Nähe von Zuhause",
+  "tour.near.body": "Schalten Sie den Standort ein oder wählen Sie einen gespeicherten Ort; jede Schule zeigt, wie weit sie ist und wie lange die Fahrt dauert.",
+  "tour.compare.title": "Nebeneinander legen",
+  "tour.compare.body": "Fügen Sie bis zu vier Schulen hinzu und sehen Sie Gebühren, Stufen, Boards und Angebote auf einer Seite.",
+  "tour.ask.title": "Fragen und bewerben",
+  "tour.ask.body": "Schreiben Sie einer Schule wegen der Aufnahme und bewerben Sie sich vom Handy aus. Die Antworten kommen hierher zurück.",
+  "tour.you.title": "Ihres",
+  "tour.you.body": "Ihr Name, Ihr Bild, Ihre Sprache und Ihre gespeicherten Orte liegen hinter der Schaltfläche oben rechts.",
+  "tour.step": "Schritt {step} von {count}",
+  "tour.skip": "Überspringen",
+  "tour.back": "Zurück",
+  "tour.next": "Weiter",
+  "tour.done": "Losschauen",
+  "tour.again": "Rundgang erneut zeigen",
+  "tour.againHelp": "Dieselben fünf Karten, die Sie beim ersten Öffnen von Kidscover gesehen haben."
 }

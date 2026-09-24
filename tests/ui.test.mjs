@@ -451,10 +451,12 @@ let pass = 0, fail = 0;
 const check = (name, ok, detail = '') => { ok ? pass++ : fail++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${!ok && detail ? '  -> ' + String(detail).slice(0, 220) : ''}`); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function waitFor(fn, ms = 4000) { const t0 = Date.now(); while (Date.now() - t0 < ms) { try { if (fn()) return true; } catch { /* keep waiting */ } await sleep(15); } return false; }
-// `remembered` is what a previous visit had already saved on this phone; by default a test starts on a clean one.
+// `remembered` is what a previous visit had already saved on this phone. By default a test starts on a phone that
+// has already seen the welcome tour, so the tour is not standing in front of every other test; a test about the tour
+// itself asks for a phone that has not seen it by passing that key as null.
 async function mount(state, mod = keyed, remembered = {}) {
   globalThis.__db = makeDb(state);
-  globalThis.__preset = { ...remembered };
+  globalThis.__preset = { 'kidscover.tourSeen': '1', ...remembered };
   globalThis.__removed = [];
   const container = document.createElement('div'); document.body.appendChild(container);
   const rootEl = mod.createRoot(container); rootEl.render(mod.React.createElement(mod.App));
@@ -733,15 +735,17 @@ check('the phone was asked for permission first, then for the position', JSON.st
   check('finding schools near me writes nothing to the database: only reads', st.log.slice(logBefore).every((q) => q.op === 'select'));
 }
 {
-  // The app saves four things and no more: the language, whether to unlock with a fingerprint, whether this person
-  // asked for their location to be used, and the sign-in itself (encrypted with a key kept in the phone's own
-  // keystore). Never a position, never a search.
+  // The app saves five things and no more: the language, whether to unlock with a fingerprint, whether this person
+  // asked for their location to be used, that the tour has been seen, and the sign-in itself (encrypted with a key
+  // kept in the phone's own keystore). Never a position, never a search.
   const saved = globalThis.__stored.map(([key]) => key);
-  const allowed = saved.every((key) => key === 'kidscover.language' || key === 'kidscover.unlockWithBiometrics' || key === 'kidscover.useMyLocation' || /supabase|sb-/i.test(key));
+  const allowed = saved.every((key) => key === 'kidscover.language' || key === 'kidscover.unlockWithBiometrics' || key === 'kidscover.useMyLocation' || key === 'kidscover.tourSeen' || /supabase|sb-/i.test(key));
   const values = globalThis.__stored.map(([, value]) => String(value)).join(' | ');
   const locationSaved = globalThis.__stored.filter(([key]) => key === 'kidscover.useMyLocation').map(([, v]) => String(v));
   check('the choice to use my location is remembered as a yes, and nothing more', locationSaved.length > 0 && locationSaved.every((v) => v === '1'), locationSaved.join(', '));
-  check('the only things saved on the phone are the language, the unlock choice, that choice and the sign-in', allowed, saved.join(', '));
+  const tourSaved = globalThis.__stored.filter(([key]) => key === 'kidscover.tourSeen').map(([, v]) => String(v));
+  check('...and the tour being over is remembered the same way: a yes, and nothing more', tourSaved.every((v) => v === '1'), tourSaved.join(', '));
+  check('the only things saved on the phone are the language, the unlock choice, those two choices and the sign-in', allowed, saved.join(', '));
   check('...and never where the parent is', !/19\\.0|72\\.8|latitude|longitude/.test(values), values.slice(0, 120));
   check('the app never reaches for the browser own storage', !/localStorage|sessionStorage/.test(appSource.replace(/\/\/.*$/gm, '')));
 }
@@ -1626,6 +1630,49 @@ st = seed(); ui = await mount(st);
 await signIn(ui, 'ann@x.in', 'password1');
 await ui.click('settings');
 check('a parent with the step run but nothing saved is told how to start', await waitFor(() => !!ui.id('address-book-empty')) && !ui.id('address-book-off'));
+await ui.unmount();
+// =============================================================================================================
+console.log('\n=== the tour a new parent is shown ===');
+globalThis.__bio = { hasHardwareAsync: () => false, isEnrolledAsync: () => false, supportedAuthenticationTypesAsync: () => [] };
+const FIRST_TIME = { 'kidscover.tourSeen': null };
+st = seed(); ui = await mount(st, keyed, FIRST_TIME); globalThis.__stored = [];
+check('a phone that has not been here before is not shown the tour until somebody signs in', await waitFor(() => !!ui.id('auth-submit')) && !ui.id('tour'));
+await signIn(ui, 'ann@x.in', 'password1');
+check('once signed in it comes up by itself, without being asked for', await waitFor(() => !!ui.id('tour')) && !!ui.id('tour-title'));
+check('...on the first card, which is about finding a school', /Find the right school/.test(ui.id('tour-title').textContent) && /Step 1 of 5/.test(ui.id('tour-progress').textContent), ui.id('tour-title').textContent);
+check('...with no way back from the first card, and a way out from the very start', !ui.id('tour-back') && !!ui.id('tour-skip'));
+check('...and the school list is behind it, ready for when it closes', ui.cards() > 0);
+await ui.click('tour-next');
+check('next moves on a card', await waitFor(() => /Step 2 of 5/.test(ui.id('tour-progress')?.textContent ?? '')) && /home/i.test(ui.id('tour-title').textContent), ui.id('tour-title')?.textContent);
+await ui.click('tour-back');
+check('...and back returns to the one before', await waitFor(() => /Step 1 of 5/.test(ui.id('tour-progress')?.textContent ?? '')) && !ui.id('tour-back'));
+for (let i = 0; i < 4; i++) await ui.click('tour-next');
+check('four more cards reach the last one, which is about their own profile', /Step 5 of 5/.test(ui.id('tour-progress')?.textContent ?? '') && /Yours to keep/.test(ui.id('tour-title').textContent), ui.id('tour-title')?.textContent);
+check('...and the button there finishes rather than promising another card', /Start looking/.test(ui.id('tour-next').textContent), ui.id('tour-next')?.textContent);
+check('nothing is written to the phone while the tour is still going', !globalThis.__stored.some(([k]) => k === 'kidscover.tourSeen'), JSON.stringify(globalThis.__stored.map(([k]) => k)));
+await ui.click('tour-next');
+check('finishing it puts the parent on the school list', await waitFor(() => !ui.id('tour')) && !!ui.id('search') && ui.cards() > 0);
+check('...and the phone remembers it has been seen, as a plain yes', globalThis.__stored.filter(([k]) => k === 'kidscover.tourSeen').map(([, v]) => v).join() === '1');
+await ui.unmount();
+
+st = seed(); ui = await mount(st, keyed, FIRST_TIME); globalThis.__stored = [];
+await signIn(ui, 'ann@x.in', 'password1');
+await waitFor(() => !!ui.id('tour'));
+await ui.click('tour-skip');
+check('a parent who would rather get on with it can leave at the first card', await waitFor(() => !ui.id('tour')) && !!ui.id('search'));
+check('...and it is not held against them: the phone remembers, so it does not come back', globalThis.__stored.filter(([k]) => k === 'kidscover.tourSeen').map(([, v]) => v).join() === '1');
+await ui.unmount();
+
+st = seed(); ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+await waitFor(() => ui.cards() === 20);
+check('a phone that has seen it once is never shown it again by itself', !ui.id('tour'));
+await ui.click('settings');
+check('...but the profile offers it, for anyone who wants another look', await waitFor(() => !!ui.id('settings-screen')) && !!ui.id('settings-tour'));
+await ui.click('settings-tour');
+check('asking for it again brings it back at the first card, over the school list', await waitFor(() => !!ui.id('tour')) && /Step 1 of 5/.test(ui.id('tour-progress').textContent) && !!ui.id('search'));
+await ui.click('tour-skip');
+check('...and closing it leaves them where they were going anyway', await waitFor(() => !ui.id('tour')) && !!ui.id('search'));
 await ui.unmount();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

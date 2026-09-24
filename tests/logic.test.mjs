@@ -16,7 +16,7 @@ const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'lev
   'BOARD_CHOICES', 'boardSourceText', 'admissionText',
   'CATEGORY_CHOICES', 'categoryOf', 'categoryFilters', 'isSchoolPlace',
   'FACILITY_INFO', 'ACHIEVEMENT_INFO', 'SOURCE_TEXT', 'facilityText', 'sourcesText', 'photoCreditText', 'artColours', 'ART_COLOURS', 'loadFacilities', 'loadAchievements',
-  'setTranslator', 't', 'setMoneyLocale', 'setDateLocale', 'rupees', 'budgetLabel', 'BUDGET_CHOICES', 'FEE_PARTS', 'feeForLevel', 'feeSummaryText', 'loadFeeSchedules', 'loadTiles', 'leaveByText', 'clockText', 'dayText', 'noteOutboundClick', 'messageFrom', 'EN_GRADES', 'classLabel', 'stageText', 'academicYearChoices', 'APPLY_CLASSES', 'APPLY_RELATIONS', 'APPLY_GENDERS', 'EMPTY_APPLICATION', 'validateApplication', 'submitApplication', 'loadApplications', 'loadApplicationEvents', 'withdrawApplication', 'deleteApplication', 'isMissingApplications', 'liveApplications', 'MAX_COMPARE', 'toggleCompare', 'compareRows', 'registerForPush', 'forgetPush', 'loadNotifications', 'markNotificationsRead', 'initialsOf', 'backTargetFor', 'BACK_FROM', 'ADDRESS_COLUMNS', 'MAX_ADDRESSES', 'MAX_ADDRESS_NAME', 'MAX_ADDRESS_TEXT', 'isMissingAddresses', 'addressPlace', 'validateAddress', 'loadAddresses', 'saveAddress', 'deleteAddress', 'describePlace', 'addressHere', 'PROFILE_GENDERS', 'PROFILE_AVATARS', 'AUTO_AVATAR', 'avatarFor', 'profileComplete', 'saveProfile', 'loadSettings', 'saveLanguage', 'savePushChoice', 'deleteAccount', 'biometricKind', 'unlockWithBiometrics', 'shouldLock', 'BIOMETRIC_SETTING', 'LANGUAGE_SETTING', 'LOCK_AFTER_MS', 'APPLICATION_COLUMNS'];
+  'setTranslator', 't', 'setMoneyLocale', 'setDateLocale', 'rupees', 'budgetLabel', 'BUDGET_CHOICES', 'FEE_PARTS', 'feeForLevel', 'feeSummaryText', 'loadFeeSchedules', 'loadTiles', 'leaveByText', 'clockText', 'dayText', 'noteOutboundClick', 'messageFrom', 'EN_GRADES', 'classLabel', 'stageText', 'academicYearChoices', 'APPLY_CLASSES', 'APPLY_RELATIONS', 'APPLY_GENDERS', 'EMPTY_APPLICATION', 'validateApplication', 'submitApplication', 'loadApplications', 'loadApplicationEvents', 'withdrawApplication', 'deleteApplication', 'isMissingApplications', 'liveApplications', 'MAX_COMPARE', 'toggleCompare', 'compareRows', 'registerForPush', 'forgetPush', 'loadNotifications', 'markNotificationsRead', 'initialsOf', 'backTargetFor', 'BACK_FROM', 'TOUR_SETTING', 'TOUR_STEPS', 'tourStepAt', 'nextTourIndex', 'onLastTourStep', 'shouldShowTour', 'ADDRESS_COLUMNS', 'MAX_ADDRESSES', 'MAX_ADDRESS_NAME', 'MAX_ADDRESS_TEXT', 'isMissingAddresses', 'addressPlace', 'validateAddress', 'loadAddresses', 'saveAddress', 'deleteAddress', 'describePlace', 'addressHere', 'PROFILE_GENDERS', 'PROFILE_AVATARS', 'AUTO_AVATAR', 'avatarFor', 'profileComplete', 'saveProfile', 'loadSettings', 'saveLanguage', 'savePushChoice', 'deleteAccount', 'biometricKind', 'unlockWithBiometrics', 'shouldLock', 'BIOMETRIC_SETTING', 'LANGUAGE_SETTING', 'LOCK_AFTER_MS', 'APPLICATION_COLUMNS'];
 fs.writeFileSync(path.join(here, '.tmp', 'logic.mjs'), src.slice(a, b) + `\nexport { ${names.join(', ')} };\n`);
 const L = await import(pathToFileURL(path.join(here, '.tmp', 'logic.mjs')).href);
 // the words of the app come from the language packs; the tests read the English one
@@ -470,5 +470,21 @@ check('...and a phone that answers with nothing leaves the parent to type it', L
 check('a phone with no address lookup at all is not a problem', await L.addressHere({}, { lat: 19, lng: 72 }) === '');
 check('...nor is one whose lookup fails', await L.addressHere({ reverseGeocodeAsync: async () => { throw new Error('no service'); } }, { lat: 19, lng: 72 }) === '');
 check('...and when it does work, the address is offered ready to keep or change', await L.addressHere({ reverseGeocodeAsync: async () => [{ street: 'Hill Road', city: 'Mumbai' }] }, { lat: 19, lng: 72 }) === 'Hill Road, Mumbai');
+console.log('\n=== the tour ===');
+check('there are five cards, each with a picture and words of its own', L.TOUR_STEPS.length === 5
+  && L.TOUR_STEPS.every((x) => x.key && x.icon && x.title && x.body)
+  && new Set(L.TOUR_STEPS.map((x) => x.key)).size === 5);
+check('...and every word the tour asks for is in the language packs', L.TOUR_STEPS.every((x) => EN[x.title] && EN[x.body]),
+  L.TOUR_STEPS.filter((x) => !EN[x.title] || !EN[x.body]).map((x) => x.key).join());
+check('the cards come in an order a parent would meet them in: find, near, compare, ask, and then their own profile',
+  L.TOUR_STEPS.map((x) => x.key).join() === 'find,near,compare,ask,you');
+check('asking for a card past the end gives the last one, not nothing', L.tourStepAt(99).key === 'you' && L.tourStepAt(-4).key === 'find');
+check('...and nonsense gives the first', L.tourStepAt(undefined).key === 'find' && L.tourStepAt(null).key === 'find' && L.tourStepAt('x').key === 'find');
+check('next stops at the last card rather than running off the end', L.nextTourIndex(0) === 1 && L.nextTourIndex(4) === 4 && L.nextTourIndex(99) === 4);
+check('...and back stops at the first', L.nextTourIndex(2, -1) === 1 && L.nextTourIndex(0, -1) === 0);
+check('the last card is the one that finishes', L.onLastTourStep(4) && !L.onLastTourStep(3) && L.onLastTourStep(9));
+check('a phone that has never been here is shown the tour', L.shouldShowTour(null) && L.shouldShowTour(undefined) && L.shouldShowTour(''));
+check('...one that has seen it is not, and a half-written answer counts as not seen', !L.shouldShowTour('1') && L.shouldShowTour('0') && L.shouldShowTour('yes'));
+check('what is kept on the phone is one plain yes, under a name that says what it is', L.TOUR_SETTING === 'kidscover.tourSeen');
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

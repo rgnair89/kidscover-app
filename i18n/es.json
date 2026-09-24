@@ -454,5 +454,22 @@
   "address.needName": "Dale un nombre a este lugar.",
   "address.nameLong": "Un nombre puede tener hasta {max} letras.",
   "address.nameTaken": "Ya tienes un lugar con ese nombre.",
-  "address.full": "Puedes guardar hasta {max} lugares."
+  "address.full": "Puedes guardar hasta {max} lugares.",
+  "tour.find.title": "Encuentra el colegio adecuado",
+  "tour.find.body": "Busca por nombre o por zona y luego filtra por nivel, junta, cuotas o distancia.",
+  "tour.near.title": "Cerca de ti, o cerca de casa",
+  "tour.near.body": "Enciende la ubicación o elige un lugar guardado: cada colegio muestra a qué distancia está y cuánto se tarda en coche.",
+  "tour.compare.title": "Ponlos uno al lado del otro",
+  "tour.compare.body": "Añade hasta cuatro colegios y mira sus cuotas, niveles, juntas y lo que ofrece cada uno en una sola página.",
+  "tour.ask.title": "Pregunta y solicita plaza",
+  "tour.ask.body": "Escribe al colegio sobre la admisión y solicita plaza desde el móvil. Sus respuestas vuelven aquí.",
+  "tour.you.title": "Tuyo",
+  "tour.you.body": "Tu nombre, tu foto, tu idioma y tus lugares guardados están detrás del botón de arriba a la derecha.",
+  "tour.step": "Paso {step} de {count}",
+  "tour.skip": "Saltar",
+  "tour.back": "Atrás",
+  "tour.next": "Siguiente",
+  "tour.done": "Empezar a buscar",
+  "tour.again": "Ver la guía otra vez",
+  "tour.againHelp": "Las mismas cinco tarjetas que viste al abrir Kidscover por primera vez."
 }

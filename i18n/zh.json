@@ -454,5 +454,22 @@
   "address.needName": "请给这个地点起个名字。",
   "address.nameLong": "名字最多 {max} 个字。",
   "address.nameTaken": "你已经有一个同名的地点了。",
-  "address.full": "最多可以保存 {max} 个地点。"
+  "address.full": "最多可以保存 {max} 个地点。",
+  "tour.find.title": "找到合适的学校",
+  "tour.find.body": "按名称或地区查找，再按学段、考试局、学费或距离筛选。",
+  "tour.near.title": "在你附近，或在家附近",
+  "tour.near.body": "打开定位，或选一个保存过的地点，每所学校都会显示距离和开车要多久。",
+  "tour.compare.title": "并排比一比",
+  "tour.compare.body": "最多添加四所学校，在同一页上看它们的学费、学段、考试局和各自的条件。",
+  "tour.ask.title": "询问，并申请",
+  "tour.ask.body": "就招生问题给学校发消息，用手机直接申请。他们的回复会回到这里。",
+  "tour.you.title": "属于你的",
+  "tour.you.body": "你的名字、头像、语言和保存的地点，都在右上角那个按钮后面。",
+  "tour.step": "第 {step} 步，共 {count} 步",
+  "tour.skip": "跳过",
+  "tour.back": "上一步",
+  "tour.next": "下一步",
+  "tour.done": "开始查找",
+  "tour.again": "再看一次介绍",
+  "tour.againHelp": "和你第一次打开 Kidscover 时看到的五张卡片一样。"
 }

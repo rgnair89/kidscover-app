@@ -454,5 +454,22 @@
   "address.needName": "Dê um nome a este lugar.",
   "address.nameLong": "Um nome pode ter até {max} letras.",
   "address.nameTaken": "Já tem um lugar com esse nome.",
-  "address.full": "Pode guardar até {max} lugares."
+  "address.full": "Pode guardar até {max} lugares.",
+  "tour.find.title": "Encontrar a escola certa",
+  "tour.find.body": "Procure pelo nome ou pela zona e depois filtre por nível, conselho, propinas ou distância.",
+  "tour.near.title": "Perto de si, ou perto de casa",
+  "tour.near.body": "Ligue a localização ou escolha um lugar guardado: cada escola mostra a que distância fica e quanto demora de carro.",
+  "tour.compare.title": "Ponha-as lado a lado",
+  "tour.compare.body": "Junte até quatro escolas e veja propinas, níveis, conselhos e o que cada uma oferece numa só página.",
+  "tour.ask.title": "Pergunte e candidate-se",
+  "tour.ask.body": "Escreva a uma escola sobre as admissões e candidate-se pelo telemóvel. As respostas voltam para aqui.",
+  "tour.you.title": "Seu",
+  "tour.you.body": "O seu nome, a sua imagem, o seu idioma e os seus lugares guardados estão por trás do botão no canto superior direito.",
+  "tour.step": "Passo {step} de {count}",
+  "tour.skip": "Saltar",
+  "tour.back": "Voltar",
+  "tour.next": "Seguinte",
+  "tour.done": "Começar a procurar",
+  "tour.again": "Ver a visita outra vez",
+  "tour.againHelp": "Os mesmos cinco cartões que viu quando abriu o Kidscover pela primeira vez."
 }

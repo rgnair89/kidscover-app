@@ -471,5 +471,10 @@
   "tour.next": "फुडें",
   "tour.done": "सोदपाक सुरवात करात",
   "tour.again": "वळख परतून दाखयात",
-  "tour.againHelp": "Kidscover पयलेच फावट उगडटना दिसिल्लीं तीच पांच कार्डां."
+  "tour.againHelp": "Kidscover पयलेच फावट उगडटना दिसिल्लीं तीच पांच कार्डां.",
+  "settings.look": "उजवाड वा काळखो",
+  "settings.lookHelp": "तुमी दुसरें वेंचना मेरेन Kidscover तुमच्या फोनाप्रमाण चलता.",
+  "theme.system": "फोनाप्रमाण",
+  "theme.light": "उजवाड",
+  "theme.dark": "काळखो"
 }

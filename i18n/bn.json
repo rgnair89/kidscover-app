@@ -471,5 +471,10 @@
   "tour.next": "পরে",
   "tour.done": "খোঁজা শুরু করুন",
   "tour.again": "পরিচয় আবার দেখান",
-  "tour.againHelp": "Kidscover প্রথমবার খোলার সময় যে পাঁচটি কার্ড দেখেছিলেন, সেগুলিই।"
+  "tour.againHelp": "Kidscover প্রথমবার খোলার সময় যে পাঁচটি কার্ড দেখেছিলেন, সেগুলিই।",
+  "settings.look": "আলো না অন্ধকার",
+  "settings.lookHelp": "আপনি অন্য কিছু না বাছলে Kidscover আপনার ফোনকেই অনুসরণ করে।",
+  "theme.system": "ফোন অনুযায়ী",
+  "theme.light": "আলো",
+  "theme.dark": "অন্ধকার"
 }

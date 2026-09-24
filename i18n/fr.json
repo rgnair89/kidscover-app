@@ -471,5 +471,10 @@
   "tour.next": "Suivant",
   "tour.done": "Commencer à chercher",
   "tour.again": "Revoir la visite",
-  "tour.againHelp": "Les mêmes cinq cartes qu'à votre première ouverture de Kidscover."
+  "tour.againHelp": "Les mêmes cinq cartes qu'à votre première ouverture de Kidscover.",
+  "settings.look": "Clair ou sombre",
+  "settings.lookHelp": "Kidscover suit votre téléphone, sauf si vous choisissez autrement.",
+  "theme.system": "Suivre mon téléphone",
+  "theme.light": "Clair",
+  "theme.dark": "Sombre"
 }

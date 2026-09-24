@@ -471,5 +471,10 @@
   "tour.next": "آگے",
   "tour.done": "تلاش شروع کریں",
   "tour.again": "تعارف دوبارہ دکھائیں",
-  "tour.againHelp": "Kidscover پہلی بار کھولنے پر دیکھے گئے وہی پانچ کارڈ۔"
+  "tour.againHelp": "Kidscover پہلی بار کھولنے پر دیکھے گئے وہی پانچ کارڈ۔",
+  "settings.look": "روشنی یا اندھیرا",
+  "settings.lookHelp": "جب تک آپ کچھ اور نہ چنیں، Kidscover آپ کے فون کے مطابق چلتا ہے۔",
+  "theme.system": "فون کے مطابق",
+  "theme.light": "روشنی",
+  "theme.dark": "اندھیرا"
 }

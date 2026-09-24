@@ -471,5 +471,10 @@
   "tour.next": "తర్వాత",
   "tour.done": "వెతకడం మొదలుపెట్టు",
   "tour.again": "పరిచయం మళ్లీ చూపించు",
-  "tour.againHelp": "Kidscover మొదటిసారి తెరిచినప్పుడు చూసిన అదే ఐదు కార్డులు."
+  "tour.againHelp": "Kidscover మొదటిసారి తెరిచినప్పుడు చూసిన అదే ఐదు కార్డులు.",
+  "settings.look": "వెలుగా, చీకటా",
+  "settings.lookHelp": "మీరు వేరేది ఎంచుకునే వరకు Kidscover మీ ఫోన్‌ను అనుసరిస్తుంది.",
+  "theme.system": "ఫోన్‌ను అనుసరించు",
+  "theme.light": "వెలుగు",
+  "theme.dark": "చీకటి"
 }

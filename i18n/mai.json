@@ -471,5 +471,10 @@
   "tour.next": "आगाँ",
   "tour.done": "ताकब शुरू करू",
   "tour.again": "परिचय फेर देखाउ",
-  "tour.againHelp": "Kidscover पहिल बेर खोलबा काल देखल ओही पाँच कार्ड।"
+  "tour.againHelp": "Kidscover पहिल बेर खोलबा काल देखल ओही पाँच कार्ड।",
+  "settings.look": "इजोत वा अन्हार",
+  "settings.lookHelp": "जाबत अहाँ दोसर नै चुनब, Kidscover अहाँक फोनक हिसाबे चलैत अछि।",
+  "theme.system": "फोनक हिसाबे",
+  "theme.light": "इजोत",
+  "theme.dark": "अन्हार"
 }

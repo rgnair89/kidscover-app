@@ -471,5 +471,10 @@
   "tour.next": "মথংগী",
   "tour.done": "থিবা হৌরো",
   "tour.again": "ইন্ত্রোদক্সন অমুক্ক উৎলু",
-  "tour.againHelp": "Kidscover অহানবা হাংদোকপদা উখিবা মগী মঙা কার্দ অদুমক।"
+  "tour.againHelp": "Kidscover অহানবা হাংদোকপদা উখিবা মগী মঙা কার্দ অদুমক।",
+  "settings.look": "মঙাল নত্ত্রগা অমম্বা",
+  "settings.lookHelp": "নঙনা অতোপ্পা অমা খন্দ্রিফাওবা Kidscover না নঙগী ফোনবু ইনগনি।",
+  "theme.system": "ফোনগী মতুং ইন্না",
+  "theme.light": "মঙাল",
+  "theme.dark": "অমম্বা"
 }

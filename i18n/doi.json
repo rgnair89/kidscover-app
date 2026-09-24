@@ -471,5 +471,10 @@
   "tour.next": "अग्गै",
   "tour.done": "तलाशना शुरू करो",
   "tour.again": "जाण-पन्छैन फ्ही दस्सो",
-  "tour.againHelp": "Kidscover पैह्ली बारी खोह्लने पर दिक्खे ओह्ई पंज कार्ड।"
+  "tour.againHelp": "Kidscover पैह्ली बारी खोह्लने पर दिक्खे ओह्ई पंज कार्ड।",
+  "settings.look": "चानण जां न्हेरा",
+  "settings.lookHelp": "जदुं तकर तुस होर नेईं चुनदे, Kidscover तुंदे फोन दे मताबक चलदा ऐ।",
+  "theme.system": "फोन दे मताबक",
+  "theme.light": "चानण",
+  "theme.dark": "न्हेरा"
 }

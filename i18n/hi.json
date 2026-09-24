@@ -471,5 +471,10 @@
   "tour.next": "आगे",
   "tour.done": "ढूँढना शुरू करें",
   "tour.again": "परिचय फिर दिखाएँ",
-  "tour.againHelp": "वही पाँच कार्ड जो आपने Kidscover पहली बार खोलने पर देखे थे।"
+  "tour.againHelp": "वही पाँच कार्ड जो आपने Kidscover पहली बार खोलने पर देखे थे।",
+  "settings.look": "उजाला या अँधेरा",
+  "settings.lookHelp": "Kidscover आपके फ़ोन के हिसाब से चलता है, जब तक आप कुछ और न चुनें।",
+  "theme.system": "फ़ोन के हिसाब से",
+  "theme.light": "उजाला",
+  "theme.dark": "अँधेरा"
 }

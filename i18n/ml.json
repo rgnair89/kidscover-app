@@ -471,5 +471,10 @@
   "tour.next": "അടുത്തത്",
   "tour.done": "തിരയാൻ തുടങ്ങുക",
   "tour.again": "പരിചയം വീണ്ടും കാണിക്കുക",
-  "tour.againHelp": "Kidscover ആദ്യം തുറന്നപ്പോൾ കണ്ട അതേ അഞ്ച് കാർഡുകൾ."
+  "tour.againHelp": "Kidscover ആദ്യം തുറന്നപ്പോൾ കണ്ട അതേ അഞ്ച് കാർഡുകൾ.",
+  "settings.look": "വെളിച്ചമോ ഇരുട്ടോ",
+  "settings.lookHelp": "നിങ്ങൾ മറ്റൊന്ന് തിരഞ്ഞെടുക്കുന്നതുവരെ Kidscover നിങ്ങളുടെ ഫോണിനെ പിന്തുടരും.",
+  "theme.system": "ഫോൺ പോലെ",
+  "theme.light": "വെളിച്ചം",
+  "theme.dark": "ഇരുട്ട്"
 }

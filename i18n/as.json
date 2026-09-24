@@ -471,5 +471,10 @@
   "tour.next": "পৰৱৰ্তী",
   "tour.done": "বিচৰা আৰম্ভ কৰক",
   "tour.again": "পৰিচয় পুনৰ দেখুৱাওক",
-  "tour.againHelp": "Kidscover প্ৰথমবাৰ খোলাৰ সময়ত দেখা সেই পাঁচখন কাৰ্ডেই।"
+  "tour.againHelp": "Kidscover প্ৰথমবাৰ খোলাৰ সময়ত দেখা সেই পাঁচখন কাৰ্ডেই।",
+  "settings.look": "পোহৰ নে আন্ধাৰ",
+  "settings.lookHelp": "আপুনি আন কিবা নাবাছিলে Kidscover আপোনাৰ ফোনকেই অনুসৰণ কৰে।",
+  "theme.system": "ফোন অনুসৰি",
+  "theme.light": "পোহৰ",
+  "theme.dark": "আন্ধাৰ"
 }

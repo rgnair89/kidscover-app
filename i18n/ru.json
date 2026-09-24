@@ -471,5 +471,10 @@
   "tour.next": "Далее",
   "tour.done": "Начать поиск",
   "tour.again": "Показать знакомство снова",
-  "tour.againHelp": "Те же пять карточек, что вы видели при первом открытии Kidscover."
+  "tour.againHelp": "Те же пять карточек, что вы видели при первом открытии Kidscover.",
+  "settings.look": "Светлая или тёмная",
+  "settings.lookHelp": "Kidscover следует настройкам телефона, пока вы не выберете иначе.",
+  "theme.system": "Как на телефоне",
+  "theme.light": "Светлая",
+  "theme.dark": "Тёмная"
 }

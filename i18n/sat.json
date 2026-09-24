@@ -471,5 +471,10 @@
   "tour.next": "ᱞᱟᱦᱟ",
   "tour.done": "ᱯᱟᱱᱛᱮ ᱮᱦᱚᱵ ᱢᱮ",
   "tour.again": "ᱯᱟᱨᱤᱪᱚᱭ ᱫᱩᱦᱲᱟᱹ ᱩᱫᱩᱜ ᱢᱮ",
-  "tour.againHelp": "Kidscover ᱯᱩᱭᱞᱩ ᱰᱷᱟᱣ ᱡᱷᱤᱡᱽ ᱠᱟᱛᱮ ᱧᱮᱞ ᱟᱠᱟᱫ ᱚᱱᱟ ᱢᱚᱬᱮ ᱠᱟᱨᱰᱮᱜᱮ᱾"
+  "tour.againHelp": "Kidscover ᱯᱩᱭᱞᱩ ᱰᱷᱟᱣ ᱡᱷᱤᱡᱽ ᱠᱟᱛᱮ ᱧᱮᱞ ᱟᱠᱟᱫ ᱚᱱᱟ ᱢᱚᱬᱮ ᱠᱟᱨᱰᱮᱜᱮ᱾",
+  "settings.look": "ᱢᱟᱨᱥᱟᱞ ᱥᱮ ᱧᱩᱛ",
+  "settings.lookHelp": "ᱟᱢ ᱮᱴᱟᱜ ᱵᱟᱝ ᱵᱟᱪᱷᱟᱣ ᱦᱟᱹᱵᱤᱡ Kidscover ᱟᱢᱟᱜ ᱯᱷᱚᱱ ᱞᱮᱠᱟᱛᱮ ᱪᱟᱞᱟᱜᱼᱟ᱾",
+  "theme.system": "ᱯᱷᱚᱱ ᱞᱮᱠᱟᱛᱮ",
+  "theme.light": "ᱢᱟᱨᱥᱟᱞ",
+  "theme.dark": "ᱧᱩᱛ"
 }

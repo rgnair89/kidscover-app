@@ -87,7 +87,9 @@ const w = dom.window;
 globalThis.window = w; globalThis.document = w.document;
 for (const k of ['HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Element', 'Node', 'ShadowRoot', 'DocumentFragment', 'Event', 'MouseEvent', 'KeyboardEvent', 'FocusEvent', 'CustomEvent', 'MutationObserver', 'getComputedStyle', 'requestAnimationFrame', 'cancelAnimationFrame', 'CSS']) { try { if (w[k] !== undefined) globalThis[k] = w[k]; } catch { /* read-only */ } }
 try { Object.defineProperty(globalThis, 'navigator', { value: w.navigator, configurable: true }); } catch { /* ignore */ }
-w.matchMedia = w.matchMedia || (() => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }));
+// the phone's own light-or-dark setting, which a test can change by setting globalThis.__scheme
+globalThis.__scheme = 'light';
+w.matchMedia = (query) => ({ get matches() { return String(query).includes('dark') && globalThis.__scheme === 'dark'; }, media: String(query), addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} });
 globalThis.ResizeObserver = w.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
 globalThis.IS_REACT_ACT_ENVIRONMENT = false;
 const opened = []; w.open = (u) => { opened.push(u); return null; };
@@ -735,17 +737,17 @@ check('the phone was asked for permission first, then for the position', JSON.st
   check('finding schools near me writes nothing to the database: only reads', st.log.slice(logBefore).every((q) => q.op === 'select'));
 }
 {
-  // The app saves five things and no more: the language, whether to unlock with a fingerprint, whether this person
-  // asked for their location to be used, that the tour has been seen, and the sign-in itself (encrypted with a key
-  // kept in the phone's own keystore). Never a position, never a search.
+  // The app saves six things and no more: the language, whether to unlock with a fingerprint, whether this person
+  // asked for their location to be used, that the tour has been seen, light or dark, and the sign-in itself
+  // (encrypted with a key kept in the phone's own keystore). Never a position, never a search.
   const saved = globalThis.__stored.map(([key]) => key);
-  const allowed = saved.every((key) => key === 'kidscover.language' || key === 'kidscover.unlockWithBiometrics' || key === 'kidscover.useMyLocation' || key === 'kidscover.tourSeen' || /supabase|sb-/i.test(key));
+  const allowed = saved.every((key) => key === 'kidscover.language' || key === 'kidscover.unlockWithBiometrics' || key === 'kidscover.useMyLocation' || key === 'kidscover.tourSeen' || key === 'kidscover.theme' || /supabase|sb-/i.test(key));
   const values = globalThis.__stored.map(([, value]) => String(value)).join(' | ');
   const locationSaved = globalThis.__stored.filter(([key]) => key === 'kidscover.useMyLocation').map(([, v]) => String(v));
   check('the choice to use my location is remembered as a yes, and nothing more', locationSaved.length > 0 && locationSaved.every((v) => v === '1'), locationSaved.join(', '));
   const tourSaved = globalThis.__stored.filter(([key]) => key === 'kidscover.tourSeen').map(([, v]) => String(v));
   check('...and the tour being over is remembered the same way: a yes, and nothing more', tourSaved.every((v) => v === '1'), tourSaved.join(', '));
-  check('the only things saved on the phone are the language, the unlock choice, those two choices and the sign-in', allowed, saved.join(', '));
+  check('the only things saved on the phone are the language, the unlock choice, those three choices and the sign-in', allowed, saved.join(', '));
   check('...and never where the parent is', !/19\\.0|72\\.8|latitude|longitude/.test(values), values.slice(0, 120));
   check('the app never reaches for the browser own storage', !/localStorage|sessionStorage/.test(appSource.replace(/\/\/.*$/gm, '')));
 }
@@ -1674,5 +1676,55 @@ check('asking for it again brings it back at the first card, over the school lis
 await ui.click('tour-skip');
 check('...and closing it leaves them where they were going anyway', await waitFor(() => !ui.id('tour')) && !!ui.id('search'));
 await ui.unmount();
+// =============================================================================================================
+console.log('\n=== light and dark ===');
+globalThis.__bio = { hasHardwareAsync: () => false, isEnrolledAsync: () => false, supportedAuthenticationTypesAsync: () => [] };
+// Which of a row of chips is drawn as the chosen one. react-native-web puts the difference in the class list, so
+// this looks for the one drawn unlike all the others - which also checks the app marks exactly one.
+const chosenChip = (u, ids) => {
+  const classOf = (id) => u.id(id)?.className ?? '';
+  const odd = ids.filter((id) => ids.filter((other) => classOf(other) === classOf(id)).length === 1);
+  return odd.length === 1 ? odd[0] : null;
+};
+const THEME_CHIPS = ['theme-system', 'theme-light', 'theme-dark'];
+const page = (u) => (u.id('frame')?.style.backgroundColor ?? '').replace(/\s/g, '');
+globalThis.__scheme = 'light';
+st = seed(); ui = await mount(st); globalThis.__stored = [];
+await signIn(ui, 'ann@x.in', 'password1');
+check('a phone set to light gets the light page', await waitFor(() => !!ui.id('frame')) && page(ui) === 'rgb(247,245,255)', page(ui));
+await ui.click('settings');
+check('the profile offers the three answers, with "follow my phone" the one already chosen',
+  await waitFor(() => !!ui.id('theme-system')) && !!ui.id('theme-light') && !!ui.id('theme-dark')
+  && chosenChip(ui, THEME_CHIPS) === 'theme-system', THEME_CHIPS.map((id) => id + '=' + (ui.id(id)?.className ?? '-').slice(-30)).join(' | '));
+await ui.click('theme-dark');
+check('choosing dark turns the page dark straight away, without leaving settings', await waitFor(() => page(ui) === 'rgb(18,17,31)') && !!ui.id('settings-screen'), page(ui));
+check('...and dark is now the one shown as chosen', chosenChip(ui, THEME_CHIPS) === 'theme-dark', THEME_CHIPS.map((id) => id + '=' + (ui.id(id)?.className ?? '-').slice(-30)).join(' | '));
+check('...and the choice is remembered on the phone, as the word itself', globalThis.__stored.filter(([k]) => k === 'kidscover.theme').map(([, v]) => v).join() === 'dark', JSON.stringify(globalThis.__stored));
+check('...and the words of the app are still there to read', /Language|Notifications/.test(ui.text()));
+await ui.click('theme-light');
+check('choosing light turns it back', await waitFor(() => page(ui) === 'rgb(247,245,255)'), page(ui));
+await ui.unmount();
+
+// a phone that was left dark last time
+st = seed(); ui = await mount(st, keyed, { 'kidscover.theme': 'dark' });
+check('a phone that was left dark starts dark, before anyone has even signed in', await waitFor(() => !!ui.id('auth-submit')) && await waitFor(() => page(ui) === 'rgb(18,17,31)'), page(ui));
+await signIn(ui, 'ann@x.in', 'password1');
+check('...and stays dark once they have', await waitFor(() => ui.cards() === 20) && page(ui) === 'rgb(18,17,31)', page(ui));
+await ui.unmount();
+
+// following the phone
+globalThis.__scheme = 'dark';
+st = seed(); ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+check('a phone set to dark, with nothing chosen in the app, gives a dark page', await waitFor(() => ui.cards() === 20) && page(ui) === 'rgb(18,17,31)', page(ui));
+await ui.click('settings');
+await ui.click('theme-light');
+check('...and a parent who wants Kidscover light anyway can have it, whatever the phone says', await waitFor(() => page(ui) === 'rgb(247,245,255)'), page(ui));
+await ui.unmount();
+st = seed(); ui = await mount(st, keyed, { 'kidscover.theme': 'sepia' });
+await signIn(ui, 'ann@x.in', 'password1');
+check('a word the app does not know means "follow the phone", not a blank screen', await waitFor(() => ui.cards() === 20) && page(ui) === 'rgb(18,17,31)', page(ui));
+await ui.unmount();
+globalThis.__scheme = 'light';
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

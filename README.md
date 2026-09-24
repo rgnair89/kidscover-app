@@ -107,7 +107,10 @@ npx eas-cli build --platform android --profile preview
 It takes 10–20 minutes. When it finishes, the terminal (and expo.dev) gives a link and a QR code. Open that link on
 your phone, allow "install unknown apps" for your browser when Android asks, and install it.
 
-**4. Later versions.** Raise `"versionCode"` in `app.json` and build again.
+**4. Later versions.** Raise both `"version"` and `"versionCode"` in `app.json`, then build again. The
+`versionCode` is the number Android compares when installing over an older build, and `version` is what a person
+sees. Because `runtimeVersion` follows `version`, changing it also means this build takes its own over-the-air
+updates rather than the previous build's - which is what you want when the app itself has changed.
 
 > An APK is not the Play Store. It installs only on phones you give the link to, which is what you want for testing.
 > For a public release you would use `--profile production` (an .aab), a Play Console account, a privacy policy and

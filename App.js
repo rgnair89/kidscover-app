@@ -1113,22 +1113,39 @@ const themeFor = (choice, phone) => {
 // Anything the app does not recognise - an older version's word, a half-written value - means "follow the phone".
 const themeChoiceOf = (saved) => (THEME_CHOICES.includes(saved) ? saved : 'system');
 
-// ---- the tour a new parent is shown once ----
-// Five cards on the first visit, so the app explains itself instead of hoping the icons do. It can be closed at any
-// point, it never comes back by itself, and it can be asked for again from the profile.
+// ---- the tour ----
+// The app explains itself instead of hoping the icons do. It comes up when the app opens and keeps doing so until
+// the parent has either seen it through to the end or said not to show it again; closing it is only "not now".
+//
+// Every card says which version of the tour it arrived in. What the phone remembers is the highest version a parent
+// has been all the way through, so when a later version of the app adds something, only the new card comes up - not
+// the four they have already read. Asking for the tour from the profile always shows all of it, however often.
 const TOUR_SETTING = 'kidscover.tourSeen';
+const TOUR_NEVER = 'never';
 const TOUR_STEPS = [
-  { key: 'find', icon: '\ud83d\udd0e', title: 'tour.find.title', body: 'tour.find.body' },
-  { key: 'near', icon: '\ud83d\udccd', title: 'tour.near.title', body: 'tour.near.body' },
-  { key: 'compare', icon: '\u2696\ufe0f', title: 'tour.compare.title', body: 'tour.compare.body' },
-  { key: 'ask', icon: '\u2709\ufe0f', title: 'tour.ask.title', body: 'tour.ask.body' },
-  { key: 'you', icon: '\ud83d\udc64', title: 'tour.you.title', body: 'tour.you.body' },
+  { key: 'find', icon: '\ud83d\udd0e', title: 'tour.find.title', body: 'tour.find.body', added: 1 },
+  { key: 'near', icon: '\ud83d\udccd', title: 'tour.near.title', body: 'tour.near.body', added: 1 },
+  { key: 'compare', icon: '\u2696\ufe0f', title: 'tour.compare.title', body: 'tour.compare.body', added: 1 },
+  { key: 'ask', icon: '\u2709\ufe0f', title: 'tour.ask.title', body: 'tour.ask.body', added: 1 },
+  { key: 'you', icon: '\ud83d\udc64', title: 'tour.you.title', body: 'tour.you.body', added: 1 },
+  { key: 'places', icon: '\ud83c\udfe0', title: 'tour.places.title', body: 'tour.places.body', added: 2 },
 ];
-const tourStepAt = (index) => TOUR_STEPS[Math.min(Math.max(Math.trunc(Number(index) || 0), 0), TOUR_STEPS.length - 1)];
-const nextTourIndex = (index, by = 1) => Math.min(Math.max(Math.trunc(Number(index) || 0) + by, 0), TOUR_STEPS.length - 1);
-const onLastTourStep = (index) => Math.trunc(Number(index) || 0) >= TOUR_STEPS.length - 1;
-// Anything other than a plain "yes, this phone has seen it" means it has not been seen.
-const shouldShowTour = (seen) => seen !== '1';
+const TOUR_VERSION = TOUR_STEPS.reduce((highest, step) => Math.max(highest, step.added), 1);
+
+// Which cards to put in front of someone on opening: the ones added since they last finished, and none at all once
+// they have asked not to be shown it again.
+function tourToShow(saved, steps = TOUR_STEPS) {
+  if (saved === TOUR_NEVER) return [];
+  const seen = Number.parseInt(saved, 10);
+  const finished = Number.isFinite(seen) && seen > 0 ? seen : 0;
+  return steps.filter((step) => step.added > finished);
+}
+// What to remember once someone reaches the end. Asking for the tour again does not undo "do not show me this
+// again": they wanted one more look, not a change of mind.
+const tourAfterFinish = (saved, version = TOUR_VERSION) => (saved === TOUR_NEVER ? TOUR_NEVER : String(version));
+const tourStepAt = (steps, index) => (steps ?? [])[Math.min(Math.max(Math.trunc(Number(index) || 0), 0), Math.max((steps ?? []).length - 1, 0))];
+const nextTourIndex = (index, by, count) => Math.min(Math.max(Math.trunc(Number(index) || 0) + by, 0), Math.max(Math.trunc(Number(count) || 1) - 1, 0));
+const onLastTourStep = (index, count) => Math.trunc(Number(index) || 0) >= Math.trunc(Number(count) || 1) - 1;
 
 // ==== END pure logic ====
 
@@ -1610,26 +1627,34 @@ function AddressBook({ rows, available, onChanged }) {
 
 // One card at a time, over whatever the parent was looking at. It is a veil rather than a separate screen so that
 // closing it puts them straight back where they were, with nothing to find their way back from.
-function TourOverlay({ index, onNext, onBack, onClose }) {
-  const step = tourStepAt(index);
-  const last = onLastTourStep(index);
+//
+// Three ways out, and they mean different things. The cross is "not now", and it will be here again next time.
+// Reaching the end is "I have read it". "Do not show me this again" is the parent settling it for good.
+function TourOverlay({ steps, index, whatsNew, onNext, onBack, onClose, onFinish, onNever }) {
+  const step = tourStepAt(steps, index);
+  const last = onLastTourStep(index, steps.length);
+  if (!step) return null;
   return (
     <View style={s.tourVeil} testID="tour">
       <View style={s.tourCard}>
+        <View style={s.tourHead}>
+          {whatsNew ? <Text style={s.tourNew} testID="tour-whatsnew">{t('tour.whatsNew')}</Text> : <View />}
+          <Pressable testID="tour-close" accessibilityRole="button" accessibilityLabel={t('tour.notNow')} onPress={onClose} hitSlop={10}>
+            <Text style={s.tourClose}>{'\u00d7'}</Text>
+          </Pressable>
+        </View>
         <Text style={s.tourArt}>{step.icon}</Text>
         <Text style={s.h2} testID="tour-title">{t(step.title)}</Text>
         <Text style={s.body} testID="tour-body">{t(step.body)}</Text>
         <View style={s.tourDots}>
-          {TOUR_STEPS.map((x, i) => <View key={x.key} testID={`tour-dot-${x.key}`} style={[s.tourDot, i === index && s.tourDotOn]} />)}
+          {steps.map((x, i) => <View key={x.key} testID={`tour-dot-${x.key}`} style={[s.tourDot, i === index && s.tourDotOn]} />)}
         </View>
-        <Text style={s.muted} testID="tour-progress">{t('tour.step', { step: index + 1, count: TOUR_STEPS.length })}</Text>
+        <Text style={s.muted} testID="tour-progress">{t('tour.step', { step: index + 1, count: steps.length })}</Text>
         <View style={s.tourButtons}>
-          <Btn testID="tour-skip" kind="quiet" label={t('tour.skip')} onPress={onClose} />
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            {index > 0 && <Btn testID="tour-back" kind="outline" label={t('tour.back')} onPress={onBack} />}
-            <Btn testID="tour-next" label={last ? t('tour.done') : t('tour.next')} onPress={last ? onClose : onNext} />
-          </View>
+          {index > 0 ? <Btn testID="tour-back" kind="outline" label={t('tour.back')} onPress={onBack} /> : <View />}
+          <Btn testID="tour-next" label={last ? t('tour.done') : t('tour.next')} onPress={last ? onFinish : onNext} />
         </View>
+        <Btn testID="tour-never" kind="quiet" label={t('tour.never')} onPress={onNever} />
       </View>
     </View>
   );
@@ -2783,8 +2808,10 @@ function AppBody() {
   const [themeChoice, setThemeChoice] = useState('system');
   const phoneTheme = useColorScheme();
   const [addresses, setAddresses] = useState([]);
-  // which card of the tour is showing; below zero means it is not showing at all
-  const [tour, setTour] = useState(-1);
+  // the cards being shown and which one is in front, or nothing at all when the tour is not up
+  const [tour, setTour] = useState(null);
+  // the highest version of the tour this phone has been through, or "never"
+  const [tourSeen, setTourSeen] = useState(null);
   // false only when the address-book migration has not been run: the app then hides the whole thing
   const [addressBookOn, setAddressBookOn] = useState(true);
   const [biometrics, setBiometrics] = useState('none');
@@ -2860,11 +2887,16 @@ function AppBody() {
     return () => { data?.subscription?.unsubscribe(); app?.remove?.(); };
   }, [unlockOn]);
 
-  // Closing it is final: it is a welcome, not a thing to dismiss again every time the app opens.
-  function closeTour() {
-    setTour(-1);
-    AsyncStorage.setItem(TOUR_SETTING, '1').catch(() => {});
-  }
+  // Closing it says nothing: it will be here again next time the app opens.
+  const closeTour = () => setTour(null);
+  const rememberTour = (value) => {
+    setTourSeen(value);
+    setTour(null);
+    AsyncStorage.setItem(TOUR_SETTING, value).catch(() => {});
+  };
+  const finishTour = () => rememberTour(tourAfterFinish(tourSeen));
+  const neverTour = () => rememberTour(TOUR_NEVER);
+  const showWholeTour = () => setTour({ steps: TOUR_STEPS, index: 0, whatsNew: false });
 
   const refreshAddresses = useCallback(async () => {
     const res = await loadAddresses(supabase);
@@ -2894,7 +2926,12 @@ function AppBody() {
       }
     });
     AsyncStorage.getItem(BIOMETRIC_SETTING).then((v) => { if (alive) setUnlockOn(v === 'on'); });
-    AsyncStorage.getItem(TOUR_SETTING).then((v) => { if (alive && shouldShowTour(v)) setTour(0); }).catch(() => {});
+    AsyncStorage.getItem(TOUR_SETTING).then((saved) => {
+      if (!alive) return;
+      setTourSeen(saved);
+      const steps = tourToShow(saved);
+      if (steps.length) setTour({ steps, index: 0, whatsNew: steps.length < TOUR_STEPS.length });
+    }).catch(() => {});
     biometricKind(LocalAuthentication).then((kind) => { if (alive) setBiometrics(kind); });
     return () => { alive = false; };
     // language is left out on purpose: this runs when the person signs in, not every time they switch language
@@ -3049,7 +3086,7 @@ function AppBody() {
           addresses={addresses}
           addressBookOn={addressBookOn}
           onAddressesChanged={refreshAddresses}
-          onShowTour={() => { setScreen('discover'); setTour(0); }}
+          onShowTour={() => { setScreen('discover'); showWholeTour(); }}
           themeChoice={themeChoice}
           onPickTheme={chooseTheme}
           onDeleted={() => { setScreen('discover'); supabase.auth.signOut(); }}
@@ -3077,8 +3114,17 @@ function AppBody() {
           addresses={addressBookOn ? addresses : null} onSavedAddress={refreshAddresses} userId={session?.user?.id ?? null} />
       </View>
       {/* last of all, so it lies over whatever is underneath */}
-      {tour >= 0 && (
-        <TourOverlay index={tour} onNext={() => setTour((i) => nextTourIndex(i, 1))} onBack={() => setTour((i) => nextTourIndex(i, -1))} onClose={closeTour} />
+      {!!tour && (
+        <TourOverlay
+          steps={tour.steps}
+          index={tour.index}
+          whatsNew={tour.whatsNew}
+          onNext={() => setTour((x) => ({ ...x, index: nextTourIndex(x.index, 1, x.steps.length) }))}
+          onBack={() => setTour((x) => ({ ...x, index: nextTourIndex(x.index, -1, x.steps.length) }))}
+          onClose={closeTour}
+          onFinish={finishTour}
+          onNever={neverTour}
+        />
       )}
       {screen === 'school' && school && (
         <SchoolScreen
@@ -3178,6 +3224,9 @@ function makeStyles(C) {
   badge: { backgroundColor: C.blueSoft, color: C.blue, fontSize: 12, fontWeight: '700', paddingVertical: 3, paddingHorizontal: 8, borderRadius: 999, overflow: 'hidden' },
   tourVeil: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: C.veil, alignItems: 'center', justifyContent: 'center', padding: 20 },
   tourCard: { backgroundColor: C.card, borderRadius: 20, padding: 20, width: '100%', maxWidth: 420, gap: 8 },
+  tourHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 24 },
+  tourNew: { color: C.blue, fontWeight: '800', fontSize: 13, letterSpacing: 0.3 },
+  tourClose: { color: C.grey, fontSize: 26, lineHeight: 26, paddingHorizontal: 6 },
   tourArt: { fontSize: 44, textAlign: 'center' },
   tourDots: { flexDirection: 'row', gap: 6, justifyContent: 'center', paddingVertical: 4 },
   tourDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.line },

@@ -466,7 +466,6 @@
   "tour.you.title": "属于你的",
   "tour.you.body": "你的名字、头像、语言和保存的地点，都在右上角那个按钮后面。",
   "tour.step": "第 {step} 步，共 {count} 步",
-  "tour.skip": "跳过",
   "tour.back": "上一步",
   "tour.next": "下一步",
   "tour.done": "开始查找",
@@ -476,5 +475,10 @@
   "settings.lookHelp": "除非你另作选择，Kidscover 会跟随手机的设置。",
   "theme.system": "跟随手机",
   "theme.light": "浅色",
-  "theme.dark": "深色"
+  "theme.dark": "深色",
+  "tour.places.title": "把你查找的起点保存下来",
+  "tour.places.body": "现在在家吗？把这个位置存成“家”。以后在任何地方都能查找家附近的学校，不用再打开定位。",
+  "tour.whatsNew": "新功能",
+  "tour.notNow": "暂时不用",
+  "tour.never": "不要再显示"
 }

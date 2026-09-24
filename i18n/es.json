@@ -466,7 +466,6 @@
   "tour.you.title": "Tuyo",
   "tour.you.body": "Tu nombre, tu foto, tu idioma y tus lugares guardados están detrás del botón de arriba a la derecha.",
   "tour.step": "Paso {step} de {count}",
-  "tour.skip": "Saltar",
   "tour.back": "Atrás",
   "tour.next": "Siguiente",
   "tour.done": "Empezar a buscar",
@@ -476,5 +475,10 @@
   "settings.lookHelp": "Kidscover sigue a tu móvil salvo que elijas otra cosa.",
   "theme.system": "Seguir mi móvil",
   "theme.light": "Claro",
-  "theme.dark": "Oscuro"
+  "theme.dark": "Oscuro",
+  "tour.places.title": "Guarda desde dónde buscas",
+  "tour.places.body": "¿Estás en casa? Guarda ese punto como \"Casa\". Después podrás buscar alrededor de casa desde cualquier sitio, sin volver a encender la ubicación.",
+  "tour.whatsNew": "Novedades",
+  "tour.notNow": "Ahora no",
+  "tour.never": "No volver a mostrar"
 }

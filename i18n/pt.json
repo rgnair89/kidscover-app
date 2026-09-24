@@ -466,7 +466,6 @@
   "tour.you.title": "Seu",
   "tour.you.body": "O seu nome, a sua imagem, o seu idioma e os seus lugares guardados estão por trás do botão no canto superior direito.",
   "tour.step": "Passo {step} de {count}",
-  "tour.skip": "Saltar",
   "tour.back": "Voltar",
   "tour.next": "Seguinte",
   "tour.done": "Começar a procurar",
@@ -476,5 +475,10 @@
   "settings.lookHelp": "O Kidscover segue o seu telemóvel, a não ser que escolha outra coisa.",
   "theme.system": "Seguir o telemóvel",
   "theme.light": "Claro",
-  "theme.dark": "Escuro"
+  "theme.dark": "Escuro",
+  "tour.places.title": "Guarde de onde procura",
+  "tour.places.body": "Está em casa? Guarde esse sítio como \"Casa\". Depois pode procurar à volta de casa a partir de qualquer lado, sem voltar a ligar a localização.",
+  "tour.whatsNew": "Novidades",
+  "tour.notNow": "Agora não",
+  "tour.never": "Não mostrar outra vez"
 }

@@ -466,7 +466,6 @@
   "tour.you.title": "あなたのもの",
   "tour.you.body": "お名前、画像、ことば、保存した場所は、右上のボタンの中にあります。",
   "tour.step": "ステップ {step} / {count}",
-  "tour.skip": "とばす",
   "tour.back": "もどる",
   "tour.next": "つぎへ",
   "tour.done": "探しはじめる",
@@ -476,5 +475,10 @@
   "settings.lookHelp": "別の選び方をしないかぎり、Kidscover はスマホの設定に合わせます。",
   "theme.system": "スマホに合わせる",
   "theme.light": "明るめ",
-  "theme.dark": "暗め"
+  "theme.dark": "暗め",
+  "tour.places.title": "どこから探すかを保存する",
+  "tour.places.body": "いま家にいますか。その場所を「家」として保存しておくと、どこにいても家のまわりを探せます。位置情報を入れ直す必要もありません。",
+  "tour.whatsNew": "新しくなったところ",
+  "tour.notNow": "あとで",
+  "tour.never": "今後は表示しない"
 }

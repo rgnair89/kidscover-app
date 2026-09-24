@@ -16,7 +16,7 @@ const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'lev
   'BOARD_CHOICES', 'boardSourceText', 'admissionText',
   'CATEGORY_CHOICES', 'categoryOf', 'categoryFilters', 'isSchoolPlace',
   'FACILITY_INFO', 'ACHIEVEMENT_INFO', 'SOURCE_TEXT', 'facilityText', 'sourcesText', 'photoCreditText', 'artColours', 'ART_COLOURS', 'loadFacilities', 'loadAchievements',
-  'setTranslator', 't', 'setMoneyLocale', 'setDateLocale', 'rupees', 'budgetLabel', 'BUDGET_CHOICES', 'FEE_PARTS', 'feeForLevel', 'feeSummaryText', 'loadFeeSchedules', 'loadTiles', 'leaveByText', 'clockText', 'dayText', 'noteOutboundClick', 'messageFrom', 'EN_GRADES', 'classLabel', 'stageText', 'academicYearChoices', 'APPLY_CLASSES', 'APPLY_RELATIONS', 'APPLY_GENDERS', 'EMPTY_APPLICATION', 'validateApplication', 'submitApplication', 'loadApplications', 'loadApplicationEvents', 'withdrawApplication', 'deleteApplication', 'isMissingApplications', 'liveApplications', 'MAX_COMPARE', 'toggleCompare', 'compareRows', 'registerForPush', 'forgetPush', 'loadNotifications', 'markNotificationsRead', 'initialsOf', 'backTargetFor', 'BACK_FROM', 'THEME_SETTING', 'THEME_CHOICES', 'themeFor', 'themeChoiceOf', 'TOUR_SETTING', 'TOUR_STEPS', 'tourStepAt', 'nextTourIndex', 'onLastTourStep', 'shouldShowTour', 'ADDRESS_COLUMNS', 'MAX_ADDRESSES', 'MAX_ADDRESS_NAME', 'MAX_ADDRESS_TEXT', 'isMissingAddresses', 'addressPlace', 'validateAddress', 'loadAddresses', 'saveAddress', 'deleteAddress', 'describePlace', 'addressHere', 'PROFILE_GENDERS', 'PROFILE_AVATARS', 'AUTO_AVATAR', 'avatarFor', 'profileComplete', 'saveProfile', 'loadSettings', 'saveLanguage', 'savePushChoice', 'deleteAccount', 'biometricKind', 'unlockWithBiometrics', 'shouldLock', 'BIOMETRIC_SETTING', 'LANGUAGE_SETTING', 'LOCK_AFTER_MS', 'APPLICATION_COLUMNS'];
+  'setTranslator', 't', 'setMoneyLocale', 'setDateLocale', 'rupees', 'budgetLabel', 'BUDGET_CHOICES', 'FEE_PARTS', 'feeForLevel', 'feeSummaryText', 'loadFeeSchedules', 'loadTiles', 'leaveByText', 'clockText', 'dayText', 'noteOutboundClick', 'messageFrom', 'EN_GRADES', 'classLabel', 'stageText', 'academicYearChoices', 'APPLY_CLASSES', 'APPLY_RELATIONS', 'APPLY_GENDERS', 'EMPTY_APPLICATION', 'validateApplication', 'submitApplication', 'loadApplications', 'loadApplicationEvents', 'withdrawApplication', 'deleteApplication', 'isMissingApplications', 'liveApplications', 'MAX_COMPARE', 'toggleCompare', 'compareRows', 'registerForPush', 'forgetPush', 'loadNotifications', 'markNotificationsRead', 'initialsOf', 'backTargetFor', 'BACK_FROM', 'THEME_SETTING', 'THEME_CHOICES', 'themeFor', 'themeChoiceOf', 'TOUR_SETTING', 'TOUR_NEVER', 'TOUR_STEPS', 'TOUR_VERSION', 'tourToShow', 'tourAfterFinish', 'tourStepAt', 'nextTourIndex', 'onLastTourStep', 'ADDRESS_COLUMNS', 'MAX_ADDRESSES', 'MAX_ADDRESS_NAME', 'MAX_ADDRESS_TEXT', 'isMissingAddresses', 'addressPlace', 'validateAddress', 'loadAddresses', 'saveAddress', 'deleteAddress', 'describePlace', 'addressHere', 'PROFILE_GENDERS', 'PROFILE_AVATARS', 'AUTO_AVATAR', 'avatarFor', 'profileComplete', 'saveProfile', 'loadSettings', 'saveLanguage', 'savePushChoice', 'deleteAccount', 'biometricKind', 'unlockWithBiometrics', 'shouldLock', 'BIOMETRIC_SETTING', 'LANGUAGE_SETTING', 'LOCK_AFTER_MS', 'APPLICATION_COLUMNS'];
 fs.writeFileSync(path.join(here, '.tmp', 'logic.mjs'), src.slice(a, b) + `\nexport { ${names.join(', ')} };\n`);
 const L = await import(pathToFileURL(path.join(here, '.tmp', 'logic.mjs')).href);
 // the words of the app come from the language packs; the tests read the English one
@@ -471,21 +471,34 @@ check('a phone with no address lookup at all is not a problem', await L.addressH
 check('...nor is one whose lookup fails', await L.addressHere({ reverseGeocodeAsync: async () => { throw new Error('no service'); } }, { lat: 19, lng: 72 }) === '');
 check('...and when it does work, the address is offered ready to keep or change', await L.addressHere({ reverseGeocodeAsync: async () => [{ street: 'Hill Road', city: 'Mumbai' }] }, { lat: 19, lng: 72 }) === 'Hill Road, Mumbai');
 console.log('\n=== the tour ===');
-check('there are five cards, each with a picture and words of its own', L.TOUR_STEPS.length === 5
-  && L.TOUR_STEPS.every((x) => x.key && x.icon && x.title && x.body)
-  && new Set(L.TOUR_STEPS.map((x) => x.key)).size === 5);
-check('...and every word the tour asks for is in the language packs', L.TOUR_STEPS.every((x) => EN[x.title] && EN[x.body]),
-  L.TOUR_STEPS.filter((x) => !EN[x.title] || !EN[x.body]).map((x) => x.key).join());
-check('the cards come in an order a parent would meet them in: find, near, compare, ask, and then their own profile',
-  L.TOUR_STEPS.map((x) => x.key).join() === 'find,near,compare,ask,you');
-check('asking for a card past the end gives the last one, not nothing', L.tourStepAt(99).key === 'you' && L.tourStepAt(-4).key === 'find');
-check('...and nonsense gives the first', L.tourStepAt(undefined).key === 'find' && L.tourStepAt(null).key === 'find' && L.tourStepAt('x').key === 'find');
-check('next stops at the last card rather than running off the end', L.nextTourIndex(0) === 1 && L.nextTourIndex(4) === 4 && L.nextTourIndex(99) === 4);
-check('...and back stops at the first', L.nextTourIndex(2, -1) === 1 && L.nextTourIndex(0, -1) === 0);
-check('the last card is the one that finishes', L.onLastTourStep(4) && !L.onLastTourStep(3) && L.onLastTourStep(9));
-check('a phone that has never been here is shown the tour', L.shouldShowTour(null) && L.shouldShowTour(undefined) && L.shouldShowTour(''));
-check('...one that has seen it is not, and a half-written answer counts as not seen', !L.shouldShowTour('1') && L.shouldShowTour('0') && L.shouldShowTour('yes'));
-check('what is kept on the phone is one plain yes, under a name that says what it is', L.TOUR_SETTING === 'kidscover.tourSeen');
+const STEPS = L.TOUR_STEPS;
+check('every card has a picture, words of its own, and the version it arrived in', STEPS.length >= 5
+  && STEPS.every((x) => x.key && x.icon && x.title && x.body && x.added >= 1)
+  && new Set(STEPS.map((x) => x.key)).size === STEPS.length);
+check('...and every word the tour asks for is in the language packs', STEPS.every((x) => EN[x.title] && EN[x.body]),
+  STEPS.filter((x) => !EN[x.title] || !EN[x.body]).map((x) => x.key).join());
+check('the cards come in an order a parent would meet them in', STEPS.map((x) => x.key).join().startsWith('find,near,compare,ask,you'));
+check('the version of the tour is the newest card in it', L.TOUR_VERSION === Math.max(...STEPS.map((x) => x.added)));
+check('a phone that has never been here is shown all of it', L.tourToShow(null).length === STEPS.length && L.tourToShow(undefined).length === STEPS.length && L.tourToShow('').length === STEPS.length);
+check('...one that has been through all of it is shown none of it', L.tourToShow(String(L.TOUR_VERSION)).length === 0);
+check('...and one that asked not to be shown it again is shown none of it either', L.tourToShow(L.TOUR_NEVER).length === 0);
+{
+  // two versions of a pretend tour, so the "only what is new" rule is checked on its own rather than on today's cards
+  const pretend = [{ key: 'a', added: 1 }, { key: 'b', added: 1 }, { key: 'c', added: 2 }, { key: 'd', added: 3 }];
+  check('somebody who read version one is shown only what came after it', L.tourToShow('1', pretend).map((x) => x.key).join() === 'c,d');
+  check('...and somebody up to date with version two sees only the newest card', L.tourToShow('2', pretend).map((x) => x.key).join() === 'd');
+  check('...and a new parent still sees the whole thing', L.tourToShow(null, pretend).length === 4);
+  check('a half-written or older answer is treated as having seen nothing, never as having seen everything', L.tourToShow('yes', pretend).length === 4 && L.tourToShow('0', pretend).length === 4 && L.tourToShow('-3', pretend).length === 4);
+}
+check('reaching the end remembers the version just read', L.tourAfterFinish('1') === String(L.TOUR_VERSION) && L.tourAfterFinish(null) === String(L.TOUR_VERSION));
+check('...but asking to see it again does not undo "do not show me this again"', L.tourAfterFinish(L.TOUR_NEVER) === L.TOUR_NEVER);
+check('asking for a card past the end gives the last one, not nothing', L.tourStepAt(STEPS, 99).key === STEPS[STEPS.length - 1].key && L.tourStepAt(STEPS, -4).key === 'find');
+check('...and nonsense gives the first', L.tourStepAt(STEPS, undefined).key === 'find' && L.tourStepAt(STEPS, null).key === 'find' && L.tourStepAt(STEPS, 'x').key === 'find');
+check('...and a run with no cards in it gives nothing at all rather than failing', L.tourStepAt([], 0) === undefined && L.tourStepAt(undefined, 0) === undefined);
+check('next stops at the last card of this run rather than running off the end', L.nextTourIndex(0, 1, 3) === 1 && L.nextTourIndex(2, 1, 3) === 2 && L.nextTourIndex(99, 1, 3) === 2);
+check('...and back stops at the first', L.nextTourIndex(2, -1, 3) === 1 && L.nextTourIndex(0, -1, 3) === 0);
+check('the last card of a run is the one that finishes, however long the run is', L.onLastTourStep(2, 3) && !L.onLastTourStep(1, 3) && L.onLastTourStep(0, 1));
+check('what is kept on the phone is one word, under a name that says what it is', L.TOUR_SETTING === 'kidscover.tourSeen' && L.TOUR_NEVER === 'never');
 console.log('\n=== light and dark ===');
 check('there are three answers: follow the phone, light, dark', L.THEME_CHOICES.join() === 'system,light,dark');
 check('following the phone means whatever the phone says', L.themeFor('system', 'dark') === 'dark' && L.themeFor('system', 'light') === 'light');

@@ -466,7 +466,6 @@
   "tour.you.title": "Ihres",
   "tour.you.body": "Ihr Name, Ihr Bild, Ihre Sprache und Ihre gespeicherten Orte liegen hinter der Schaltfläche oben rechts.",
   "tour.step": "Schritt {step} von {count}",
-  "tour.skip": "Überspringen",
   "tour.back": "Zurück",
   "tour.next": "Weiter",
   "tour.done": "Losschauen",
@@ -476,5 +475,10 @@
   "settings.lookHelp": "Kidscover richtet sich nach Ihrem Handy, solange Sie nichts anderes wählen.",
   "theme.system": "Wie mein Handy",
   "theme.light": "Hell",
-  "theme.dark": "Dunkel"
+  "theme.dark": "Dunkel",
+  "tour.places.title": "Speichern Sie, von wo aus Sie suchen",
+  "tour.places.body": "Zuhause gerade? Speichern Sie diesen Ort als \"Zuhause\". Danach können Sie von überall rund um Zuhause suchen, ohne den Standort erneut einzuschalten.",
+  "tour.whatsNew": "Neu",
+  "tour.notNow": "Jetzt nicht",
+  "tour.never": "Nicht mehr anzeigen"
 }

@@ -466,7 +466,6 @@
   "tour.you.title": "خاص بك",
   "tour.you.body": "اسمك وصورتك ولغتك وأماكنك المحفوظة خلف الزر في أعلى اليمين.",
   "tour.step": "الخطوة {step} من {count}",
-  "tour.skip": "تخطٍّ",
   "tour.back": "رجوع",
   "tour.next": "التالي",
   "tour.done": "ابدأ البحث",
@@ -476,5 +475,10 @@
   "settings.lookHelp": "يتبع Kidscover إعداد هاتفك ما لم تختر غير ذلك.",
   "theme.system": "اتبع هاتفي",
   "theme.light": "فاتح",
-  "theme.dark": "داكن"
+  "theme.dark": "داكن",
+  "tour.places.title": "احفظ المكان الذي تبحث منه",
+  "tour.places.body": "هل أنت في البيت؟ احفظ هذا المكان باسم \"البيت\". بعدها يمكنك البحث حول البيت من أي مكان، دون تشغيل الموقع مرة أخرى.",
+  "tour.whatsNew": "ما الجديد",
+  "tour.notNow": "ليس الآن",
+  "tour.never": "لا تعرض هذا مرة أخرى"
 }

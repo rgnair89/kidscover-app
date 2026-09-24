@@ -466,7 +466,6 @@
   "tour.you.title": "À vous",
   "tour.you.body": "Votre nom, votre image, votre langue et vos lieux enregistrés sont derrière le bouton en haut à droite.",
   "tour.step": "Étape {step} sur {count}",
-  "tour.skip": "Passer",
   "tour.back": "Retour",
   "tour.next": "Suivant",
   "tour.done": "Commencer à chercher",
@@ -476,5 +475,10 @@
   "settings.lookHelp": "Kidscover suit votre téléphone, sauf si vous choisissez autrement.",
   "theme.system": "Suivre mon téléphone",
   "theme.light": "Clair",
-  "theme.dark": "Sombre"
+  "theme.dark": "Sombre",
+  "tour.places.title": "Enregistrez d'où vous cherchez",
+  "tour.places.body": "Vous êtes chez vous ? Enregistrez cet endroit comme « Maison ». Ensuite, vous pourrez chercher autour de chez vous de partout, sans réactiver la localisation.",
+  "tour.whatsNew": "Nouveautés",
+  "tour.notNow": "Pas maintenant",
+  "tour.never": "Ne plus afficher"
 }

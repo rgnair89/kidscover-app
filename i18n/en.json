@@ -466,7 +466,6 @@
   "tour.you.title": "Yours to keep",
   "tour.you.body": "Your name, your picture, your language and your saved places are behind the button at the top right.",
   "tour.step": "Step {step} of {count}",
-  "tour.skip": "Skip",
   "tour.back": "Back",
   "tour.next": "Next",
   "tour.done": "Start looking",
@@ -476,5 +475,10 @@
   "settings.lookHelp": "Kidscover follows your phone unless you choose otherwise.",
   "theme.system": "Follow my phone",
   "theme.light": "Light",
-  "theme.dark": "Dark"
+  "theme.dark": "Dark",
+  "tour.places.title": "Save where you search from",
+  "tour.places.body": "Standing at home? Save that spot as \"Home\". After that you can look around home from anywhere, without turning your location on again.",
+  "tour.whatsNew": "What's new",
+  "tour.notNow": "Not now",
+  "tour.never": "Don't show me this again"
 }

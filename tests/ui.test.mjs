@@ -454,11 +454,12 @@ const check = (name, ok, detail = '') => { ok ? pass++ : fail++; console.log(`${
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function waitFor(fn, ms = 4000) { const t0 = Date.now(); while (Date.now() - t0 < ms) { try { if (fn()) return true; } catch { /* keep waiting */ } await sleep(15); } return false; }
 // `remembered` is what a previous visit had already saved on this phone. By default a test starts on a phone that
-// has already seen the welcome tour, so the tour is not standing in front of every other test; a test about the tour
-// itself asks for a phone that has not seen it by passing that key as null.
+// has been through the whole of today's tour, so the tour is not standing in front of every other test; a test about
+// the tour itself asks for a phone that has seen none of it, or an older version of it.
+const TOUR_UP_TO_DATE = '2';
 async function mount(state, mod = keyed, remembered = {}) {
   globalThis.__db = makeDb(state);
-  globalThis.__preset = { 'kidscover.tourSeen': '1', ...remembered };
+  globalThis.__preset = { 'kidscover.tourSeen': TOUR_UP_TO_DATE, ...remembered };
   globalThis.__removed = [];
   const container = document.createElement('div'); document.body.appendChild(container);
   const rootEl = mod.createRoot(container); rootEl.render(mod.React.createElement(mod.App));
@@ -1637,44 +1638,96 @@ await ui.unmount();
 console.log('\n=== the tour a new parent is shown ===');
 globalThis.__bio = { hasHardwareAsync: () => false, isEnrolledAsync: () => false, supportedAuthenticationTypesAsync: () => [] };
 const FIRST_TIME = { 'kidscover.tourSeen': null };
+const READ_V1 = { 'kidscover.tourSeen': '1' };
+const kept = () => globalThis.__stored.filter(([k]) => k === 'kidscover.tourSeen').map(([, v]) => String(v));
+const cards = (u) => u.all('tour-dot-').length;
+
 st = seed(); ui = await mount(st, keyed, FIRST_TIME); globalThis.__stored = [];
 check('a phone that has not been here before is not shown the tour until somebody signs in', await waitFor(() => !!ui.id('auth-submit')) && !ui.id('tour'));
 await signIn(ui, 'ann@x.in', 'password1');
 check('once signed in it comes up by itself, without being asked for', await waitFor(() => !!ui.id('tour')) && !!ui.id('tour-title'));
-check('...on the first card, which is about finding a school', /Find the right school/.test(ui.id('tour-title').textContent) && /Step 1 of 5/.test(ui.id('tour-progress').textContent), ui.id('tour-title').textContent);
-check('...with no way back from the first card, and a way out from the very start', !ui.id('tour-back') && !!ui.id('tour-skip'));
+check('...on the first card, which is about finding a school', /Find the right school/.test(ui.id('tour-title').textContent) && /Step 1 of 6/.test(ui.id('tour-progress').textContent), ui.id('tour-title').textContent);
+check('...showing the whole tour, because they have seen none of it', cards(ui) === 6 && !ui.id('tour-whatsnew'));
+check('...with no way back from the first card, and two ways out from the very start', !ui.id('tour-back') && !!ui.id('tour-close') && !!ui.id('tour-never'));
 check('...and the school list is behind it, ready for when it closes', ui.cards() > 0);
 await ui.click('tour-next');
-check('next moves on a card', await waitFor(() => /Step 2 of 5/.test(ui.id('tour-progress')?.textContent ?? '')) && /home/i.test(ui.id('tour-title').textContent), ui.id('tour-title')?.textContent);
+check('next moves on a card', await waitFor(() => /Step 2 of 6/.test(ui.id('tour-progress')?.textContent ?? '')) && /home/i.test(ui.id('tour-title').textContent), ui.id('tour-title')?.textContent);
 await ui.click('tour-back');
-check('...and back returns to the one before', await waitFor(() => /Step 1 of 5/.test(ui.id('tour-progress')?.textContent ?? '')) && !ui.id('tour-back'));
-for (let i = 0; i < 4; i++) await ui.click('tour-next');
-check('four more cards reach the last one, which is about their own profile', /Step 5 of 5/.test(ui.id('tour-progress')?.textContent ?? '') && /Yours to keep/.test(ui.id('tour-title').textContent), ui.id('tour-title')?.textContent);
+check('...and back returns to the one before', await waitFor(() => /Step 1 of 6/.test(ui.id('tour-progress')?.textContent ?? '')) && !ui.id('tour-back'));
+await ui.click('tour-close');
+check('the cross is only "not now": it closes, and writes nothing at all', await waitFor(() => !ui.id('tour')) && !!ui.id('search') && kept().length === 0, JSON.stringify(globalThis.__stored));
+await ui.unmount();
+
+st = seed(); ui = await mount(st, keyed, FIRST_TIME); globalThis.__stored = [];
+await signIn(ui, 'ann@x.in', 'password1');
+check('...so the next time the app opens, there it is again', await waitFor(() => !!ui.id('tour')) && /Step 1 of 6/.test(ui.id('tour-progress').textContent));
+for (let i = 0; i < 5; i++) await ui.click('tour-next');
+check('five more cards reach the last one, which is about saving where you search from', /Step 6 of 6/.test(ui.id('tour-progress')?.textContent ?? '') && /Save where you search from/.test(ui.id('tour-title').textContent), ui.id('tour-title')?.textContent);
 check('...and the button there finishes rather than promising another card', /Start looking/.test(ui.id('tour-next').textContent), ui.id('tour-next')?.textContent);
-check('nothing is written to the phone while the tour is still going', !globalThis.__stored.some(([k]) => k === 'kidscover.tourSeen'), JSON.stringify(globalThis.__stored.map(([k]) => k)));
+check('nothing is written to the phone while the tour is still going', kept().length === 0, JSON.stringify(globalThis.__stored));
 await ui.click('tour-next');
 check('finishing it puts the parent on the school list', await waitFor(() => !ui.id('tour')) && !!ui.id('search') && ui.cards() > 0);
-check('...and the phone remembers it has been seen, as a plain yes', globalThis.__stored.filter(([k]) => k === 'kidscover.tourSeen').map(([, v]) => v).join() === '1');
+check('...and the phone remembers which version was read all the way through', kept().join() === '2', kept().join());
 await ui.unmount();
 
 st = seed(); ui = await mount(st, keyed, FIRST_TIME); globalThis.__stored = [];
 await signIn(ui, 'ann@x.in', 'password1');
 await waitFor(() => !!ui.id('tour'));
-await ui.click('tour-skip');
-check('a parent who would rather get on with it can leave at the first card', await waitFor(() => !ui.id('tour')) && !!ui.id('search'));
-check('...and it is not held against them: the phone remembers, so it does not come back', globalThis.__stored.filter(([k]) => k === 'kidscover.tourSeen').map(([, v]) => v).join() === '1');
+await ui.click('tour-never');
+check('a parent who never wants to see it can say so on any card', await waitFor(() => !ui.id('tour')) && !!ui.id('search'));
+check('...and that is what the phone keeps', kept().join() === 'never', kept().join());
+await ui.unmount();
+st = seed(); ui = await mount(st, keyed, { 'kidscover.tourSeen': 'never' });
+await signIn(ui, 'ann@x.in', 'password1');
+check('...so it never comes up on opening again', await waitFor(() => ui.cards() === 20) && !ui.id('tour'));
 await ui.unmount();
 
+// somebody who read the tour before the newest card was added
+st = seed(); ui = await mount(st, keyed, READ_V1); globalThis.__stored = [];
+await signIn(ui, 'ann@x.in', 'password1');
+check('a parent who read the tour before the last update is shown what is new, and only that', await waitFor(() => !!ui.id('tour'))
+  && cards(ui) === 1 && /Step 1 of 1/.test(ui.id('tour-progress').textContent) && /Save where you search from/.test(ui.id('tour-title').textContent), ui.id('tour-title')?.textContent);
+check("...said as what it is, rather than pretending to be the welcome again", !!ui.id('tour-whatsnew') && /new/i.test(ui.id('tour-whatsnew').textContent), ui.id('tour-whatsnew')?.textContent);
+check('...with nothing to go back to, and the one card finishing it', !ui.id('tour-back') && /Start looking/.test(ui.id('tour-next').textContent));
+await ui.click('tour-next');
+check('...and reading it brings them up to date', await waitFor(() => !ui.id('tour')) && kept().join() === '2', kept().join());
+await ui.unmount();
+st = seed(); ui = await mount(st, keyed, READ_V1);
+await signIn(ui, 'ann@x.in', 'password1');
+await waitFor(() => !!ui.id('tour'));
+await ui.click('tour-close');
+check('a what-is-new card closed with the cross comes back too, because it has not been read', await waitFor(() => !ui.id('tour')));
+await ui.unmount();
+
+// asking for it, as often as you like
 st = seed(); ui = await mount(st);
 await signIn(ui, 'ann@x.in', 'password1');
 await waitFor(() => ui.cards() === 20);
-check('a phone that has seen it once is never shown it again by itself', !ui.id('tour'));
+check('a phone that is up to date is not shown it on opening', !ui.id('tour'));
 await ui.click('settings');
-check('...but the profile offers it, for anyone who wants another look', await waitFor(() => !!ui.id('settings-screen')) && !!ui.id('settings-tour'));
+check('...but the profile has a button for it, with a line saying what it is', await waitFor(() => !!ui.id('settings-screen')) && !!ui.id('settings-tour'));
 await ui.click('settings-tour');
-check('asking for it again brings it back at the first card, over the school list', await waitFor(() => !!ui.id('tour')) && /Step 1 of 5/.test(ui.id('tour-progress').textContent) && !!ui.id('search'));
-await ui.click('tour-skip');
+check('asking for it brings back the whole tour, not just what is new, over the school list', await waitFor(() => !!ui.id('tour'))
+  && cards(ui) === 6 && /Step 1 of 6/.test(ui.id('tour-progress').textContent) && !ui.id('tour-whatsnew') && !!ui.id('search'));
+await ui.click('tour-close');
+await waitFor(() => !ui.id('tour'));
+await ui.click('settings');
+await ui.click('settings-tour');
+check('...and again, as many times as they want', await waitFor(() => !!ui.id('tour')) && cards(ui) === 6);
+await ui.click('tour-close');
 check('...and closing it leaves them where they were going anyway', await waitFor(() => !ui.id('tour')) && !!ui.id('search'));
+await ui.unmount();
+
+// somebody who said "never" and then asked to see it once more
+st = seed(); ui = await mount(st, keyed, { 'kidscover.tourSeen': 'never' }); globalThis.__stored = [];
+await signIn(ui, 'ann@x.in', 'password1');
+await waitFor(() => ui.cards() === 20);
+await ui.click('settings');
+await ui.click('settings-tour');
+await waitFor(() => !!ui.id('tour'));
+for (let i = 0; i < 5; i++) await ui.click('tour-next');
+await ui.click('tour-next');
+check('somebody who asked never to see it, then asked for one more look, is not signed back up for it', await waitFor(() => !ui.id('tour')) && kept().join() === 'never', kept().join());
 await ui.unmount();
 // =============================================================================================================
 console.log('\n=== light and dark ===');

@@ -466,7 +466,6 @@
   "tour.you.title": "अहाँक अपन",
   "tour.you.body": "अहाँक नाम, चित्र, भाषा आ सहेजल ठाम ऊपर दहिना दिस के बटनक पाछाँ अछि।",
   "tour.step": "चरण {step} / {count}",
-  "tour.skip": "छोड़ू",
   "tour.back": "पाछाँ",
   "tour.next": "आगाँ",
   "tour.done": "ताकब शुरू करू",
@@ -476,5 +475,10 @@
   "settings.lookHelp": "जाबत अहाँ दोसर नै चुनब, Kidscover अहाँक फोनक हिसाबे चलैत अछि।",
   "theme.system": "फोनक हिसाबे",
   "theme.light": "इजोत",
-  "theme.dark": "अन्हार"
+  "theme.dark": "अन्हार",
+  "tour.places.title": "जतऽ सँ खोजैत छी ओ ठाम सहेजू",
+  "tour.places.body": "घर पर छी? ओ ठाम \"घर\" के नाम सँ सहेजि लिअ। तखन कतहु सँ घरक आसपास देख सकैत छी, फेर सँ लोकेशन चालू केने बिना।",
+  "tour.whatsNew": "नव की अछि",
+  "tour.notNow": "अखन नै",
+  "tour.never": "ई फेर नै देखाउ"
 }

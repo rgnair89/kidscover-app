@@ -40,6 +40,9 @@ export function SafeAreaProvider({ children }) { return React.createElement(Reac
 export function useSafeAreaInsets() { return INSETS; }
 `);
 fs.writeFileSync(path.join(tmp, 'stub-crypto.mjs'), `export const getRandomBytesAsync = async (n) => new Uint8Array(n).fill(7);`);
+// the phone's own pictures: each test sets globalThis.__pics to what it should answer with
+fs.writeFileSync(path.join(tmp, 'fake-picker.mjs'), `export const requestMediaLibraryPermissionsAsync = async () => globalThis.__pics.requestMediaLibraryPermissionsAsync();
+export const launchImageLibraryAsync = async (...a) => globalThis.__pics.launchImageLibraryAsync(...a);`);
 
 const appSource = fs.readFileSync(process.env.APP_FILE ?? path.join(root, 'App.js'), 'utf8');
 const EN = JSON.parse(fs.readFileSync(path.join(root, 'i18n', 'en.json'), 'utf8'));
@@ -64,6 +67,7 @@ async function bundle(name, source) {
       'expo-constants': path.join(tmp, 'stub-constants.mjs'),
       'react-native-safe-area-context': path.join(tmp, 'stub-safe-area.mjs'),
       'expo-crypto': path.join(tmp, 'stub-crypto.mjs'),
+      'expo-image-picker': path.join(tmp, 'fake-picker.mjs'),
     },
     define: { 'process.env.NODE_ENV': '"development"', __DEV__: 'true' },
   });
@@ -143,7 +147,7 @@ function seed() {
         first_year_total: 231000, note: null, source: 'kidscover', source_url: null },
     ],
     applications: [], appEvents: [], notifications: [], pushTokens: [], clicks: [], profiles: {},
-    addresses: [], nextAddress: 0,
+    addresses: [], nextAddress: 0, files: [],
     deleteAccountResult: { ok: true },
     threads: [], tmsgs: [], nextT: 1, rpcCalls: [], clock: Date.now(),
     fnCalls: [], fnMode: 'ok', lookupsLeft: undefined,
@@ -424,6 +428,38 @@ function makeDb(state) {
       startAutoRefresh() {}, stopAutoRefresh() {},
     },
     from: (t) => new Query(state, t),
+    // the private bucket, with the rules the migration puts on it: a person writes only inside their own folder,
+    // only these three kinds of picture, and nothing larger than three megabytes
+    storage: {
+      from: (bucket) => {
+        const me = () => state.session?.user?.id;
+        const mine = (path) => ['parents', 'children'].includes(String(path).split('/')[0]) && String(path).split('/')[1] === me() && !!String(path).split('/')[2];
+        const refused = { data: null, error: { message: 'new row violates row-level security policy', statusCode: '403' } };
+        return {
+          upload: async (path, bytes, opts) => {
+            if (bucket !== 'people') return refused;
+            if (!me() || !mine(path)) return refused;
+            if (!['image/jpeg', 'image/png', 'image/webp'].includes(opts?.contentType)) return { data: null, error: { message: 'mime type not supported' } };
+            if ((bytes?.length ?? 0) > 3 * 1024 * 1024) return { data: null, error: { message: 'The object exceeded the maximum allowed size' } };
+            state.files = state.files.filter((f) => f.path !== path);
+            state.files.push({ bucket, path, bytes: bytes?.length ?? 0, mime: opts?.contentType, owner: me() });
+            return { data: { path }, error: null };
+          },
+          remove: async (paths) => {
+            const gone = (paths ?? []).filter((path) => mine(path));
+            state.removed = (state.removed ?? []).concat(gone);
+            state.files = state.files.filter((f) => !gone.includes(f.path));
+            return { data: null, error: null };
+          },
+          createSignedUrl: async (path, seconds) => {
+            state.signed = (state.signed ?? []).concat([[path, seconds]]);
+            const found = state.files.find((f) => f.path === path && f.bucket === bucket);
+            if (!found || !(mine(path) || state.staffCanSee === path)) return { data: null, error: { message: 'Object not found' } };
+            return { data: { signedUrl: 'https://files.example/' + path + '?for=' + seconds }, error: null };
+          },
+        };
+      },
+    },
     rpc: (fn, args) => Object.assign(new Query(state, 'rpc:' + fn), { args }),
     // the commute-times edge function: a fixed rule for the minutes, and one school (s6) that has no road to it
     functions: {
@@ -454,11 +490,12 @@ const check = (name, ok, detail = '') => { ok ? pass++ : fail++; console.log(`${
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function waitFor(fn, ms = 4000) { const t0 = Date.now(); while (Date.now() - t0 < ms) { try { if (fn()) return true; } catch { /* keep waiting */ } await sleep(15); } return false; }
 // `remembered` is what a previous visit had already saved on this phone. By default a test starts on a phone that
-// has already seen the welcome tour, so the tour is not standing in front of every other test; a test about the tour
-// itself asks for a phone that has not seen it by passing that key as null.
+// has been through the whole of today's tour, so the tour is not standing in front of every other test; a test about
+// the tour itself asks for a phone that has seen none of it, or an older version of it.
+const TOUR_UP_TO_DATE = '2';
 async function mount(state, mod = keyed, remembered = {}) {
   globalThis.__db = makeDb(state);
-  globalThis.__preset = { 'kidscover.tourSeen': '1', ...remembered };
+  globalThis.__preset = { 'kidscover.tourSeen': TOUR_UP_TO_DATE, ...remembered };
   globalThis.__removed = [];
   const container = document.createElement('div'); document.body.appendChild(container);
   const rootEl = mod.createRoot(container); rootEl.render(mod.React.createElement(mod.App));
@@ -1637,44 +1674,96 @@ await ui.unmount();
 console.log('\n=== the tour a new parent is shown ===');
 globalThis.__bio = { hasHardwareAsync: () => false, isEnrolledAsync: () => false, supportedAuthenticationTypesAsync: () => [] };
 const FIRST_TIME = { 'kidscover.tourSeen': null };
+const READ_V1 = { 'kidscover.tourSeen': '1' };
+const kept = () => globalThis.__stored.filter(([k]) => k === 'kidscover.tourSeen').map(([, v]) => String(v));
+const cards = (u) => u.all('tour-dot-').length;
+
 st = seed(); ui = await mount(st, keyed, FIRST_TIME); globalThis.__stored = [];
 check('a phone that has not been here before is not shown the tour until somebody signs in', await waitFor(() => !!ui.id('auth-submit')) && !ui.id('tour'));
 await signIn(ui, 'ann@x.in', 'password1');
 check('once signed in it comes up by itself, without being asked for', await waitFor(() => !!ui.id('tour')) && !!ui.id('tour-title'));
-check('...on the first card, which is about finding a school', /Find the right school/.test(ui.id('tour-title').textContent) && /Step 1 of 5/.test(ui.id('tour-progress').textContent), ui.id('tour-title').textContent);
-check('...with no way back from the first card, and a way out from the very start', !ui.id('tour-back') && !!ui.id('tour-skip'));
+check('...on the first card, which is about finding a school', /Find the right school/.test(ui.id('tour-title').textContent) && /Step 1 of 6/.test(ui.id('tour-progress').textContent), ui.id('tour-title').textContent);
+check('...showing the whole tour, because they have seen none of it', cards(ui) === 6 && !ui.id('tour-whatsnew'));
+check('...with no way back from the first card, and two ways out from the very start', !ui.id('tour-back') && !!ui.id('tour-close') && !!ui.id('tour-never'));
 check('...and the school list is behind it, ready for when it closes', ui.cards() > 0);
 await ui.click('tour-next');
-check('next moves on a card', await waitFor(() => /Step 2 of 5/.test(ui.id('tour-progress')?.textContent ?? '')) && /home/i.test(ui.id('tour-title').textContent), ui.id('tour-title')?.textContent);
+check('next moves on a card', await waitFor(() => /Step 2 of 6/.test(ui.id('tour-progress')?.textContent ?? '')) && /home/i.test(ui.id('tour-title').textContent), ui.id('tour-title')?.textContent);
 await ui.click('tour-back');
-check('...and back returns to the one before', await waitFor(() => /Step 1 of 5/.test(ui.id('tour-progress')?.textContent ?? '')) && !ui.id('tour-back'));
-for (let i = 0; i < 4; i++) await ui.click('tour-next');
-check('four more cards reach the last one, which is about their own profile', /Step 5 of 5/.test(ui.id('tour-progress')?.textContent ?? '') && /Yours to keep/.test(ui.id('tour-title').textContent), ui.id('tour-title')?.textContent);
+check('...and back returns to the one before', await waitFor(() => /Step 1 of 6/.test(ui.id('tour-progress')?.textContent ?? '')) && !ui.id('tour-back'));
+await ui.click('tour-close');
+check('the cross is only "not now": it closes, and writes nothing at all', await waitFor(() => !ui.id('tour')) && !!ui.id('search') && kept().length === 0, JSON.stringify(globalThis.__stored));
+await ui.unmount();
+
+st = seed(); ui = await mount(st, keyed, FIRST_TIME); globalThis.__stored = [];
+await signIn(ui, 'ann@x.in', 'password1');
+check('...so the next time the app opens, there it is again', await waitFor(() => !!ui.id('tour')) && /Step 1 of 6/.test(ui.id('tour-progress').textContent));
+for (let i = 0; i < 5; i++) await ui.click('tour-next');
+check('five more cards reach the last one, which is about saving where you search from', /Step 6 of 6/.test(ui.id('tour-progress')?.textContent ?? '') && /Save where you search from/.test(ui.id('tour-title').textContent), ui.id('tour-title')?.textContent);
 check('...and the button there finishes rather than promising another card', /Start looking/.test(ui.id('tour-next').textContent), ui.id('tour-next')?.textContent);
-check('nothing is written to the phone while the tour is still going', !globalThis.__stored.some(([k]) => k === 'kidscover.tourSeen'), JSON.stringify(globalThis.__stored.map(([k]) => k)));
+check('nothing is written to the phone while the tour is still going', kept().length === 0, JSON.stringify(globalThis.__stored));
 await ui.click('tour-next');
 check('finishing it puts the parent on the school list', await waitFor(() => !ui.id('tour')) && !!ui.id('search') && ui.cards() > 0);
-check('...and the phone remembers it has been seen, as a plain yes', globalThis.__stored.filter(([k]) => k === 'kidscover.tourSeen').map(([, v]) => v).join() === '1');
+check('...and the phone remembers which version was read all the way through', kept().join() === '2', kept().join());
 await ui.unmount();
 
 st = seed(); ui = await mount(st, keyed, FIRST_TIME); globalThis.__stored = [];
 await signIn(ui, 'ann@x.in', 'password1');
 await waitFor(() => !!ui.id('tour'));
-await ui.click('tour-skip');
-check('a parent who would rather get on with it can leave at the first card', await waitFor(() => !ui.id('tour')) && !!ui.id('search'));
-check('...and it is not held against them: the phone remembers, so it does not come back', globalThis.__stored.filter(([k]) => k === 'kidscover.tourSeen').map(([, v]) => v).join() === '1');
+await ui.click('tour-never');
+check('a parent who never wants to see it can say so on any card', await waitFor(() => !ui.id('tour')) && !!ui.id('search'));
+check('...and that is what the phone keeps', kept().join() === 'never', kept().join());
+await ui.unmount();
+st = seed(); ui = await mount(st, keyed, { 'kidscover.tourSeen': 'never' });
+await signIn(ui, 'ann@x.in', 'password1');
+check('...so it never comes up on opening again', await waitFor(() => ui.cards() === 20) && !ui.id('tour'));
 await ui.unmount();
 
+// somebody who read the tour before the newest card was added
+st = seed(); ui = await mount(st, keyed, READ_V1); globalThis.__stored = [];
+await signIn(ui, 'ann@x.in', 'password1');
+check('a parent who read the tour before the last update is shown what is new, and only that', await waitFor(() => !!ui.id('tour'))
+  && cards(ui) === 1 && /Step 1 of 1/.test(ui.id('tour-progress').textContent) && /Save where you search from/.test(ui.id('tour-title').textContent), ui.id('tour-title')?.textContent);
+check("...said as what it is, rather than pretending to be the welcome again", !!ui.id('tour-whatsnew') && /new/i.test(ui.id('tour-whatsnew').textContent), ui.id('tour-whatsnew')?.textContent);
+check('...with nothing to go back to, and the one card finishing it', !ui.id('tour-back') && /Start looking/.test(ui.id('tour-next').textContent));
+await ui.click('tour-next');
+check('...and reading it brings them up to date', await waitFor(() => !ui.id('tour')) && kept().join() === '2', kept().join());
+await ui.unmount();
+st = seed(); ui = await mount(st, keyed, READ_V1);
+await signIn(ui, 'ann@x.in', 'password1');
+await waitFor(() => !!ui.id('tour'));
+await ui.click('tour-close');
+check('a what-is-new card closed with the cross comes back too, because it has not been read', await waitFor(() => !ui.id('tour')));
+await ui.unmount();
+
+// asking for it, as often as you like
 st = seed(); ui = await mount(st);
 await signIn(ui, 'ann@x.in', 'password1');
 await waitFor(() => ui.cards() === 20);
-check('a phone that has seen it once is never shown it again by itself', !ui.id('tour'));
+check('a phone that is up to date is not shown it on opening', !ui.id('tour'));
 await ui.click('settings');
-check('...but the profile offers it, for anyone who wants another look', await waitFor(() => !!ui.id('settings-screen')) && !!ui.id('settings-tour'));
+check('...but the profile has a button for it, with a line saying what it is', await waitFor(() => !!ui.id('settings-screen')) && !!ui.id('settings-tour'));
 await ui.click('settings-tour');
-check('asking for it again brings it back at the first card, over the school list', await waitFor(() => !!ui.id('tour')) && /Step 1 of 5/.test(ui.id('tour-progress').textContent) && !!ui.id('search'));
-await ui.click('tour-skip');
+check('asking for it brings back the whole tour, not just what is new, over the school list', await waitFor(() => !!ui.id('tour'))
+  && cards(ui) === 6 && /Step 1 of 6/.test(ui.id('tour-progress').textContent) && !ui.id('tour-whatsnew') && !!ui.id('search'));
+await ui.click('tour-close');
+await waitFor(() => !ui.id('tour'));
+await ui.click('settings');
+await ui.click('settings-tour');
+check('...and again, as many times as they want', await waitFor(() => !!ui.id('tour')) && cards(ui) === 6);
+await ui.click('tour-close');
 check('...and closing it leaves them where they were going anyway', await waitFor(() => !ui.id('tour')) && !!ui.id('search'));
+await ui.unmount();
+
+// somebody who said "never" and then asked to see it once more
+st = seed(); ui = await mount(st, keyed, { 'kidscover.tourSeen': 'never' }); globalThis.__stored = [];
+await signIn(ui, 'ann@x.in', 'password1');
+await waitFor(() => ui.cards() === 20);
+await ui.click('settings');
+await ui.click('settings-tour');
+await waitFor(() => !!ui.id('tour'));
+for (let i = 0; i < 5; i++) await ui.click('tour-next');
+await ui.click('tour-next');
+check('somebody who asked never to see it, then asked for one more look, is not signed back up for it', await waitFor(() => !ui.id('tour')) && kept().join() === 'never', kept().join());
 await ui.unmount();
 // =============================================================================================================
 console.log('\n=== light and dark ===');
@@ -1726,5 +1815,127 @@ await signIn(ui, 'ann@x.in', 'password1');
 check('a word the app does not know means "follow the phone", not a blank screen', await waitFor(() => ui.cards() === 20) && page(ui) === 'rgb(18,17,31)', page(ui));
 await ui.unmount();
 globalThis.__scheme = 'light';
+console.log('\n=== photographs of people ===');
+// everything the form needs apart from the photograph
+async function fillApplication(u) {
+  await u.type('apply-child-first', 'Ananya'); await u.type('apply-child-last', 'Nair');
+  await u.type('apply-dob', '2021-06-30');
+  await u.click('apply-class-jr_kg');
+  await u.type('apply-parent-name', 'Priya Nair');
+  await u.type('apply-phone', '98200 11111');
+  await u.type('apply-email', 'priya@x.in');
+  await u.type('apply-address', '12 Hill Road, Bandra West');
+  await u.type('apply-pincode', '400050');
+  await u.click('apply-consent');
+}
+
+
+globalThis.__bio = { hasHardwareAsync: () => false, isEnrolledAsync: () => false, supportedAuthenticationTypesAsync: () => [] };
+const asBase64 = (n) => Buffer.from(Uint8Array.from({ length: n }, () => 7)).toString('base64');
+const phoneWith = (answer, allowed = { status: 'granted', canAskAgain: true }) => {
+  const calls = [];
+  globalThis.__pics = {
+    requestMediaLibraryPermissionsAsync: async () => { calls.push('permission'); return allowed; },
+    launchImageLibraryAsync: async (opts) => { calls.push(opts); return answer; },
+  };
+  return calls;
+};
+const aPhoto = (n = 5000, mime = 'image/jpeg') => ({ assets: [{ base64: asBase64(n), mimeType: mime, fileName: 'photo.jpg' }] });
+
+st = seed(); ui = await mount(st);
+let picks = phoneWith(aPhoto());
+await signIn(ui, 'ann@x.in', 'password1');
+await waitFor(() => !!ui.id('top-avatar'));
+check('a parent with no photograph is drawn, as before', ui.id('top-avatar').tagName.toLowerCase() === 'svg');
+await ui.click('settings');
+await waitFor(() => !!ui.id('profile-card'));
+check('the profile offers a photograph, and says who can see it', !!ui.id('profile-photo') && /Only you can see this/.test(ui.text()));
+check('...and offers no way to take one away, because there is none', !ui.id('profile-photo-remove'));
+await ui.click('profile-photo');
+check('choosing one asks the phone for permission first, and asks for a square picture',
+  await waitFor(() => st.files.length === 1) && picks[0] === 'permission' && picks[1]?.allowsEditing === true && JSON.stringify(picks[1]?.aspect) === '[1,1]', JSON.stringify(picks));
+check('...and it goes into the parent\'s own folder, as a photograph, at the size the phone gave',
+  st.files[0].path.startsWith('parents/u1/') && st.files[0].mime === 'image/jpeg' && st.files[0].bytes === 5000, JSON.stringify(st.files));
+check('...with the profile pointed at it and nothing else changed', await waitFor(() => (st.profiles.u1 ?? {}).photo_path === st.files[0].path)
+  && Object.keys(st.profiles.u1).every((k) => ['photo_path', 'language', 'notify_push'].includes(k)), JSON.stringify(st.profiles.u1));
+check('the photograph is what is shown, in the profile and at the top of every screen',
+  await waitFor(() => !!ui.id('profile-avatar-photo')) && await waitFor(() => !!ui.id('top-avatar-photo')) && !ui.id('profile-avatar'), ui.id('profile-card')?.innerHTML.slice(0, 200));
+check('...fetched through an address that runs out, not a public link',
+  (st.signed ?? []).some(([path, seconds]) => path === st.files[0].path && seconds > 0 && seconds <= 3600), JSON.stringify(st.signed));
+{
+  const was = st.files[0].path;
+  picks = phoneWith(aPhoto(6000, 'image/png'));
+  await ui.click('profile-photo');
+  check('changing it puts the new one up and takes the old one away', await waitFor(() => st.files.length === 1 && st.files[0].path !== was)
+    && (st.removed ?? []).includes(was), JSON.stringify({ files: st.files.map((f) => f.path), removed: st.removed }));
+}
+await ui.click('profile-photo-remove');
+check('going back to a drawing takes the file away and forgets it', await waitFor(() => (st.profiles.u1 ?? {}).photo_path === null) && await waitFor(() => st.files.length === 0), JSON.stringify(st.files));
+check('...and the drawing is back on the screen at once', await waitFor(() => !!ui.id('profile-avatar')) && !ui.id('profile-avatar-photo'));
+await ui.unmount();
+
+// what the parent is told when it does not work
+st = seed(); ui = await mount(st);
+phoneWith(null, { status: 'denied', canAskAgain: false });
+await signIn(ui, 'ann@x.in', 'password1');
+await ui.click('settings');
+await waitFor(() => !!ui.id('profile-photo'));
+await ui.click('profile-photo');
+check('a phone that will not let the app at the pictures says where to change that', await waitFor(() => /phone settings/.test(ui.id('profile-problem')?.textContent ?? '')) && st.files.length === 0, ui.id('profile-problem')?.textContent);
+phoneWith({ canceled: true });
+await ui.click('profile-photo');
+check('...and changing your mind in the picker is not treated as a problem', await waitFor(() => !ui.id('profile-problem')) && st.files.length === 0);
+phoneWith(aPhoto(4 * 1024 * 1024));
+await ui.click('profile-photo');
+check('a photograph too large is refused here, with the size said, and never sent', await waitFor(() => /larger than 3 MB/.test(ui.id('profile-problem')?.textContent ?? '')) && st.files.length === 0, ui.id('profile-problem')?.textContent);
+phoneWith(aPhoto(1000, 'image/gif'));
+await ui.click('profile-photo');
+check('...and a kind the app does not take is refused before the phone is asked to send it', await waitFor(() => !!ui.id('profile-problem')) && st.files.length === 0);
+await ui.unmount();
+
+// the child on the admission form
+st = seed(); ui = await mount(st);
+picks = phoneWith(aPhoto(9000));
+await signIn(ui, 'ann@x.in', 'password1');
+await ui.click('school-n2');
+await waitFor(() => !!ui.id('apply-start'));
+await ui.click('apply-start');
+await waitFor(() => !!ui.id('apply-screen'));
+check('the form asks for a photograph of the child, and says exactly who will see it',
+  !!ui.id('apply-photo') && /Only the school you are applying to/.test(ui.text()));
+check('...and nothing is shown or offered for removal until there is one', !ui.id('apply-photo-shown') && !ui.id('apply-photo-remove'));
+await ui.click('apply-photo');
+check('adding one puts it in the family\'s own children folder', await waitFor(() => st.files.length === 1) && st.files[0].path.startsWith('children/u1/'), JSON.stringify(st.files));
+check('...and shows the parent what the school will see', await waitFor(() => !!ui.id('apply-photo-shown')) && !!ui.id('apply-photo-remove'));
+{
+  const was = st.files[0].path;
+  picks = phoneWith(aPhoto(7000));
+  await ui.click('apply-photo');
+  check('changing it leaves only the new one behind', await waitFor(() => st.files.length === 1 && st.files[0].path !== was) && (st.removed ?? []).includes(was), JSON.stringify({ files: st.files.map((f) => f.path), removed: st.removed }));
+}
+await ui.click('apply-photo-remove');
+check('taking it off the form takes the file away too', await waitFor(() => st.files.length === 0) && await waitFor(() => !ui.id('apply-photo-shown')));
+picks = phoneWith(aPhoto(8000));
+await ui.click('apply-photo');
+await waitFor(() => st.files.length === 1);
+const childPhoto = st.files[0].path;
+await fillApplication(ui);
+await ui.click('apply-send');
+check('the form is sent with the photograph attached to it', await waitFor(() => st.applications.length === 1) && st.applications[0].child_photo_path === childPhoto, JSON.stringify(st.applications[0] ?? {}));
+await ui.unmount();
+
+// and a form without one is still a form
+st = seed(); ui = await mount(st);
+phoneWith({ canceled: true });
+await signIn(ui, 'ann@x.in', 'password1');
+await ui.click('school-n2');
+await waitFor(() => !!ui.id('apply-start'));
+await ui.click('apply-start');
+await waitFor(() => !!ui.id('apply-screen'));
+await fillApplication(ui);
+await ui.click('apply-send');
+check('a family that would rather not send a photograph sends a complete form without one',
+  await waitFor(() => st.applications.length === 1) && !st.applications[0].child_photo_path && st.files.length === 0, JSON.stringify(st.applications[0] ?? {}));
+await ui.unmount();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

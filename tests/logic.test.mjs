@@ -16,7 +16,7 @@ const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'lev
   'BOARD_CHOICES', 'boardSourceText', 'admissionText',
   'CATEGORY_CHOICES', 'categoryOf', 'categoryFilters', 'isSchoolPlace',
   'FACILITY_INFO', 'ACHIEVEMENT_INFO', 'SOURCE_TEXT', 'facilityText', 'sourcesText', 'photoCreditText', 'artColours', 'ART_COLOURS', 'loadFacilities', 'loadAchievements',
-  'setTranslator', 't', 'setMoneyLocale', 'setDateLocale', 'rupees', 'budgetLabel', 'BUDGET_CHOICES', 'FEE_PARTS', 'feeForLevel', 'feeSummaryText', 'loadFeeSchedules', 'loadTiles', 'leaveByText', 'clockText', 'dayText', 'noteOutboundClick', 'messageFrom', 'EN_GRADES', 'classLabel', 'stageText', 'academicYearChoices', 'APPLY_CLASSES', 'APPLY_RELATIONS', 'APPLY_GENDERS', 'EMPTY_APPLICATION', 'validateApplication', 'submitApplication', 'loadApplications', 'loadApplicationEvents', 'withdrawApplication', 'deleteApplication', 'isMissingApplications', 'liveApplications', 'MAX_COMPARE', 'toggleCompare', 'compareRows', 'registerForPush', 'forgetPush', 'loadNotifications', 'markNotificationsRead', 'initialsOf', 'backTargetFor', 'BACK_FROM', 'PHOTO_BUCKET', 'PHOTO_MAX_BYTES', 'PHOTO_TYPES', 'PHOTO_URL_SECONDS', 'bytesFromBase64', 'photoTypeOf', 'photoPathFor', 'isOwnPhotoPath', 'validatePhoto', 'pickPhoto', 'photoProblemText', 'uploadPhoto', 'removePhoto', 'signedPhotoUrl', 'THEME_SETTING', 'THEME_CHOICES', 'themeFor', 'themeChoiceOf', 'TOUR_SETTING', 'TOUR_NEVER', 'TOUR_STEPS', 'TOUR_VERSION', 'tourToShow', 'tourAfterFinish', 'tourStepAt', 'nextTourIndex', 'onLastTourStep', 'ADDRESS_COLUMNS', 'MAX_ADDRESSES', 'MAX_ADDRESS_NAME', 'MAX_ADDRESS_TEXT', 'isMissingAddresses', 'addressPlace', 'validateAddress', 'loadAddresses', 'saveAddress', 'deleteAddress', 'describePlace', 'addressHere', 'PROFILE_GENDERS', 'PROFILE_AVATARS', 'AUTO_AVATAR', 'avatarFor', 'profileComplete', 'saveProfile', 'loadSettings', 'saveLanguage', 'savePushChoice', 'deleteAccount', 'biometricKind', 'unlockWithBiometrics', 'shouldLock', 'BIOMETRIC_SETTING', 'LANGUAGE_SETTING', 'LOCK_AFTER_MS', 'APPLICATION_COLUMNS'];
+  'setTranslator', 't', 'setMoneyLocale', 'setDateLocale', 'rupees', 'budgetLabel', 'BUDGET_CHOICES', 'FEE_PARTS', 'feeForLevel', 'feeSummaryText', 'loadFeeSchedules', 'loadTiles', 'leaveByText', 'clockText', 'dayText', 'noteOutboundClick', 'messageFrom', 'EN_GRADES', 'classLabel', 'stageText', 'academicYearChoices', 'APPLY_CLASSES', 'APPLY_RELATIONS', 'APPLY_GENDERS', 'EMPTY_APPLICATION', 'validateApplication', 'submitApplication', 'loadApplications', 'loadApplicationEvents', 'withdrawApplication', 'deleteApplication', 'isMissingApplications', 'liveApplications', 'MAX_COMPARE', 'toggleCompare', 'compareRows', 'registerForPush', 'forgetPush', 'loadNotifications', 'markNotificationsRead', 'initialsOf', 'backTargetFor', 'BACK_FROM', 'STAFF_COLUMNS', 'SCHOOL_ENQUIRY_COLUMNS', 'APPLY_STAGES', 'MAX_STAGE_NOTE', 'loadMySchools', 'loadSchoolEnquiries', 'staffUnreadCount', 'familyName', 'loadSchoolApplications', 'validateStageNote', 'setApplicationStage', 'stageCanChange', 'PHOTO_BUCKET', 'PHOTO_MAX_BYTES', 'PHOTO_TYPES', 'PHOTO_URL_SECONDS', 'bytesFromBase64', 'photoTypeOf', 'photoPathFor', 'isOwnPhotoPath', 'validatePhoto', 'pickPhoto', 'photoProblemText', 'uploadPhoto', 'removePhoto', 'signedPhotoUrl', 'THEME_SETTING', 'THEME_CHOICES', 'themeFor', 'themeChoiceOf', 'TOUR_SETTING', 'TOUR_NEVER', 'TOUR_STEPS', 'TOUR_VERSION', 'tourToShow', 'tourAfterFinish', 'tourStepAt', 'nextTourIndex', 'onLastTourStep', 'ADDRESS_COLUMNS', 'MAX_ADDRESSES', 'MAX_ADDRESS_NAME', 'MAX_ADDRESS_TEXT', 'isMissingAddresses', 'addressPlace', 'validateAddress', 'loadAddresses', 'saveAddress', 'deleteAddress', 'describePlace', 'addressHere', 'PROFILE_GENDERS', 'PROFILE_AVATARS', 'AUTO_AVATAR', 'avatarFor', 'profileComplete', 'saveProfile', 'loadSettings', 'saveLanguage', 'savePushChoice', 'deleteAccount', 'biometricKind', 'unlockWithBiometrics', 'shouldLock', 'BIOMETRIC_SETTING', 'LANGUAGE_SETTING', 'LOCK_AFTER_MS', 'APPLICATION_COLUMNS'];
 fs.writeFileSync(path.join(here, '.tmp', 'logic.mjs'), src.slice(a, b) + `\nexport { ${names.join(', ')} };\n`);
 const L = await import(pathToFileURL(path.join(here, '.tmp', 'logic.mjs')).href);
 // the words of the app come from the language packs; the tests read the English one
@@ -579,5 +579,60 @@ check('...even when the network itself fails', (await L.signedPhotoUrl(store, 'p
 store = bucket({});
 await L.removePhoto(store, '');
 check('taking away nothing asks the server nothing', store.calls.length === 0);
+console.log('\n=== the school\'s own side ===');
+{
+  const db = fakeDb((rec) => (rec.table === 'school_staff'
+    ? { data: [{ school_id: 's2', schools: { name: 'Zebra High' } }, { school_id: 's1', schools: [{ name: 'Apple Preschool' }] }, { school_id: null, schools: null }], error: null }
+    : { data: [], error: null }));
+  const got = await L.loadMySchools(db);
+  check('the app never asks who is staff: it asks the database, which already knows', ops(db.recs[0])[0] === `select("${L.STAFF_COLUMNS}")`, ops(db.recs[0]).join(' '));
+  check('...and gets back the schools by name, in an order a person could scan', got.rows.map((x) => x.name).join() === 'Apple Preschool,Zebra High');
+  check('...with anything half-written left out rather than shown as a blank school', got.rows.length === 2 && got.rows.every((x) => x.id && x.name));
+}
+check('a parent who works nowhere sees nothing of this', (await L.loadMySchools(fakeDb(() => ({ data: [], error: null })))).rows.length === 0);
+check('...and so does one the database refuses, rather than the app guessing', (await L.loadMySchools(fakeDb(() => ({ data: null, error: { message: 'no' } })))).rows.length === 0);
+
+{
+  const db = fakeDb(() => ({ data: [], error: null }));
+  await L.loadSchoolEnquiries(db, 's1');
+  check('a school is shown only its own enquiries, newest first', ops(db.recs[0]).join(' ') === `select("${L.SCHOOL_ENQUIRY_COLUMNS}") eq("school_id","s1") order("last_message_at",{"ascending":false}) limit(100)`, ops(db.recs[0]).join(' '));
+  check('...and the columns include who the family is and whether the school has read it', L.SCHOOL_ENQUIRY_COLUMNS.includes('parent_first_name') && L.SCHOOL_ENQUIRY_COLUMNS.includes('unread_for_staff'));
+}
+check('nothing is asked for when there is no school to ask about', (await L.loadSchoolEnquiries(fakeDb(() => { throw new Error('should not be asked'); }), null)).rows.length === 0);
+check('the button at the top counts the families still waiting', L.staffUnreadCount([{ unread_for_staff: true }, { unread_for_staff: false }, { unread_for_staff: true }]) === 2 && L.staffUnreadCount([]) === 0 && L.staffUnreadCount(null) === 0);
+check('a family is named as they named themselves', L.familyName({ parent_first_name: 'Ann', parent_last_name: 'Rao' }) === 'Ann Rao' && L.familyName({ parent_first_name: ' Ann ' }) === 'Ann');
+check('...and nothing is invented when they gave nothing', L.familyName({}) === '' && L.familyName(null) === '');
+
+{
+  const db = fakeDb(() => ({ data: [], error: null }));
+  await L.loadSchoolApplications(db, 's1');
+  check('a school is shown only its own applications, newest first', ops(db.recs[0]).join(' ') === `select("${L.APPLICATION_COLUMNS}") eq("school_id","s1") order("created_at",{"ascending":false}) limit(100)`, ops(db.recs[0]).join(' '));
+}
+check('the six stages a school can move an application to are the six the database accepts',
+  L.APPLY_STAGES.join() === 'in_review,visit_scheduled,offered,waitlisted,accepted,declined');
+check('...and every one of them has words a parent will read', L.APPLY_STAGES.every((k) => EN[`stage.${k}`]));
+{
+  const db = fakeDb(() => ({ error: null }));
+  const res = await L.setApplicationStage(db, 'a1', 'offered', '  Come and see us on the 4th.  ');
+  check('moving an application along sends the stage and the line for the family, tidied up', res.error === null
+    && db.recs[0].table === 'rpc:set_admission_status' && eq(db.recs[0].args, { p_app: 'a1', p_status: 'offered', p_note: 'Come and see us on the 4th.' }), JSON.stringify(db.recs[0]?.args));
+}
+{
+  const db = fakeDb(() => ({ error: null }));
+  await L.setApplicationStage(db, 'a1', 'accepted', '   ');
+  check('...and a note of nothing but spaces is sent as no note at all', db.recs[0].args.p_note === null);
+}
+{
+  const db = fakeDb(() => ({ error: null }));
+  const res = await L.setApplicationStage(db, 'a1', 'gone_quiet', '');
+  check('a stage the database would refuse is refused here, and nothing is sent', !!res.error && db.recs.length === 0);
+}
+{
+  const db = fakeDb(() => ({ error: null }));
+  const res = await L.setApplicationStage(db, 'a1', 'offered', 'x'.repeat(L.MAX_STAGE_NOTE + 1));
+  check('...as is a note longer than the database allows, saying how long is allowed', res.error?.message === 'Keep the note under 500 characters.' && db.recs.length === 0, res.error?.message);
+}
+check('a note that just fits is allowed', L.validateStageNote('x'.repeat(L.MAX_STAGE_NOTE)) === null && L.validateStageNote('') === null && L.validateStageNote(null) === null);
+check('a family that withdrew is not one to chase, and the app knows before asking', !L.stageCanChange('withdrawn') && L.stageCanChange('submitted') && L.stageCanChange('in_review'));
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

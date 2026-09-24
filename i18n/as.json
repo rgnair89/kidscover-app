@@ -480,5 +480,20 @@
   "tour.places.body": "ঘৰত আছে নেকি? সেই ঠাইটো \"ঘৰ\" নামেৰে সাঁচি থওক। তাৰ পিছত ক’ৰ পৰাও ঘৰৰ কাষত চাব পাৰিব, আকৌ লোকেশন নচলাই।",
   "tour.whatsNew": "নতুন কি",
   "tour.notNow": "এতিয়া নালাগে",
-  "tour.never": "এইটো আকৌ নেদেখুৱাব"
+  "tour.never": "এইটো আকৌ নেদেখুৱাব",
+  "photo.notRead": "সেই ছবিখন পঢ়িব পৰা নগ’ল। আন এখন চাওক।",
+  "photo.wrongKind": "Kidscover এ JPG, PNG আৰু WebP ছবি লয়।",
+  "photo.tooBig": "সেই ছবিখন {mb} MB তকৈ ডাঙৰ। সৰু এখন বাছক।",
+  "photo.blocked": "আপোনাৰ ছবিলৈ Kidscover পাব পৰা নাই। ফোনৰ ছেটিংছত অনুমতি দিব পাৰে।",
+  "photo.denied": "এখন ছবি ল’বলৈ Kidscover এ আপোনাৰ ছবি চাব লাগিব।",
+  "photo.sending": "ছবি পঠিওৱা হৈছে...",
+  "profile.usePhoto": "মোৰ ফটো ব্যৱহাৰ কৰক",
+  "profile.changePhoto": "ফটো সলনি কৰক",
+  "profile.useDrawing": "অঁকা ছবিয়েই থাকক",
+  "profile.photoHelp": "নামভৰ্তিৰ ফৰ্মত নিদিলে এইখন কেৱল আপুনিয়েই দেখিব। অঁকা ছবিও হ’ব।",
+  "apply.childPhoto": "আপোনাৰ সন্তানৰ ফটো",
+  "apply.childPhotoHelp": "আপুনি য’ত আবেদন কৰিছে কেৱল সেই স্কুলে, আৰু কেৱল এই ফৰ্মতেই দেখিব। নিদিলেও হ’ব।",
+  "apply.addPhoto": "ফটো যোগ কৰক",
+  "apply.changePhoto": "ফটো সলনি কৰক",
+  "apply.removePhoto": "ফটো আঁতৰাওক"
 }

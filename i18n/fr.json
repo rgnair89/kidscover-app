@@ -480,5 +480,20 @@
   "tour.places.body": "Vous êtes chez vous ? Enregistrez cet endroit comme « Maison ». Ensuite, vous pourrez chercher autour de chez vous de partout, sans réactiver la localisation.",
   "tour.whatsNew": "Nouveautés",
   "tour.notNow": "Pas maintenant",
-  "tour.never": "Ne plus afficher"
+  "tour.never": "Ne plus afficher",
+  "photo.notRead": "Cette image n'a pas pu être lue. Essayez-en une autre.",
+  "photo.wrongKind": "Kidscover accepte les images JPG, PNG et WebP.",
+  "photo.tooBig": "Cette image dépasse {mb} Mo. Choisissez-en une plus petite.",
+  "photo.blocked": "Kidscover n'a pas accès à vos photos. Vous pouvez l'autoriser dans les réglages du téléphone.",
+  "photo.denied": "Kidscover doit voir vos photos pour en utiliser une.",
+  "photo.sending": "Envoi de la photo...",
+  "profile.usePhoto": "Utiliser une photo de moi",
+  "profile.changePhoto": "Changer ma photo",
+  "profile.useDrawing": "Garder le dessin",
+  "profile.photoHelp": "Vous seul la voyez, sauf si vous la mettez sur un dossier d'admission. Le dessin convient aussi.",
+  "apply.childPhoto": "Une photo de votre enfant",
+  "apply.childPhotoHelp": "Seule l'école à laquelle vous postulez la voit, et uniquement sur ce dossier. Vous pouvez la laisser de côté.",
+  "apply.addPhoto": "Ajouter une photo",
+  "apply.changePhoto": "Changer la photo",
+  "apply.removePhoto": "Retirer la photo"
 }

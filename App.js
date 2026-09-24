@@ -22,6 +22,7 @@ import {
   StyleSheet, Switch, Text, TextInput, useColorScheme, View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import * as SecureStore from 'expo-secure-store';
 import * as LocalAuthentication from 'expo-local-authentication';
@@ -644,9 +645,139 @@ async function saveProfile(db, userId, patch) {
   if ('last_name' in patch) clean.last_name = String(patch.last_name ?? '').trim().slice(0, 60);
   if ('gender' in patch && PROFILE_GENDERS.includes(patch.gender)) clean.gender = patch.gender;
   if ('avatar' in patch && PROFILE_AVATARS.includes(patch.avatar)) clean.avatar = patch.avatar;
+  // a photograph, or null to go back to a drawing. Anything that is not this person's own file is dropped here
+  // rather than sent for the database to refuse.
+  if ('photo_path' in patch && (patch.photo_path === null || isOwnPhotoPath(patch.photo_path, 'parent', userId))) clean.photo_path = patch.photo_path ?? null;
   if (Object.keys(clean).length === 0) return { error: null, saved: {} };
   const { error } = await db.from('profiles').update(clean).eq('id', userId);
   return { error: error ?? null, saved: clean };
+}
+
+// ---- photographs of people ----
+// A parent may use a photograph of themselves instead of a drawn one, and may put a photograph of their child on an
+// admission form. Neither is ever required: the drawings stay, and a form without a photograph is a complete form.
+//
+// The files live in a private bucket, so nothing here can be opened by a link alone. The app asks the database for a
+// signed address when it wants to show one, and that address lasts minutes.
+const PHOTO_BUCKET = 'people';
+const PHOTO_MAX_BYTES = 3 * 1024 * 1024;
+const PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const PHOTO_ENDINGS = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+const PHOTO_FOLDERS = { parent: 'parents', child: 'children' };
+const PHOTO_URL_SECONDS = 1800;
+
+// The phone hands over a picture as base64 text. Turning it into bytes is six lines, so it is six lines here rather
+// than a package.
+const B64_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+function bytesFromBase64(text) {
+  const clean = String(text ?? '').replace(/[^A-Za-z0-9+/]/g, '');
+  const out = new Uint8Array(Math.floor((clean.length * 3) / 4));
+  let bits = 0, held = 0, at = 0;
+  for (const letter of clean) {
+    const value = B64_LETTERS.indexOf(letter);
+    if (value < 0) continue;
+    bits = (bits << 6) | value;
+    held += 6;
+    if (held >= 8) { held -= 8; out[at] = (bits >> held) & 0xff; at += 1; }
+  }
+  return out.subarray(0, at);
+}
+
+// What the phone says a picture is, made into one of the three kinds the bucket takes, or nothing.
+function photoTypeOf(mime, name) {
+  const said = String(mime ?? '').toLowerCase().split(';')[0].trim();
+  if (PHOTO_TYPES.includes(said)) return said;
+  if (said === 'image/jpg') return 'image/jpeg';
+  const ending = String(name ?? '').toLowerCase().split('.').pop();
+  if (ending === 'jpg' || ending === 'jpeg') return 'image/jpeg';
+  if (ending === 'png') return 'image/png';
+  if (ending === 'webp') return 'image/webp';
+  return null;
+}
+
+// Where a file goes: the person's own folder, and a name nobody could guess or collide with.
+function photoPathFor(kind, userId, mime, now = Date.now(), dice = Math.random()) {
+  const folder = PHOTO_FOLDERS[kind];
+  const ending = PHOTO_ENDINGS[mime];
+  if (!folder || !ending || !userId) return null;
+  const when = Math.floor(now).toString(36);
+  const luck = Math.floor(Math.abs(dice) * 1e12).toString(36);
+  return `${folder}/${userId}/${when}${luck}.${ending}`;
+}
+// The same rule the database enforces, so the app never sends something that will be refused.
+const isOwnPhotoPath = (path, kind, userId) => {
+  const folder = PHOTO_FOLDERS[kind];
+  return !!folder && !!userId && new RegExp(`^${folder}/${userId}/[A-Za-z0-9._-]{1,80}$`).test(String(path ?? ''));
+};
+
+function validatePhoto({ bytes, mime }) {
+  if (!bytes || !bytes.length) return t('photo.notRead');
+  if (!PHOTO_TYPES.includes(mime)) return t('photo.wrongKind');
+  if (bytes.length > PHOTO_MAX_BYTES) return t('photo.tooBig', { mb: Math.round(PHOTO_MAX_BYTES / (1024 * 1024)) });
+  return null;
+}
+
+// Asks the phone for a picture. Only from what is already on it: Kidscover does not ask for the camera, so a parent
+// takes the photograph in their own camera app and then chooses it here.
+async function pickPhoto(picker) {
+  try {
+    const allowed = await picker.requestMediaLibraryPermissionsAsync();
+    if (allowed?.status !== 'granted') return { problem: allowed?.canAskAgain === false ? 'blocked' : 'denied' };
+    const chosen = await picker.launchImageLibraryAsync({
+      mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.6, base64: true, exif: false,
+    });
+    if (chosen?.canceled) return { cancelled: true };
+    const picture = chosen?.assets?.[0];
+    const mime = photoTypeOf(picture?.mimeType, picture?.fileName);
+    if (!picture?.base64 || !mime) return { problem: 'unreadable' };
+    return { bytes: bytesFromBase64(picture.base64), mime };
+  } catch {
+    return { problem: 'unreadable' };
+  }
+}
+
+const photoProblemText = (problem) => {
+  if (problem === 'blocked') return t('photo.blocked');
+  if (problem === 'denied') return t('photo.denied');
+  return t('photo.notRead');
+};
+
+async function uploadPhoto(storage, path, bytes, mime) {
+  const { error } = await storage.from(PHOTO_BUCKET).upload(path, bytes, { contentType: mime, upsert: false });
+  return { error: error ?? null };
+}
+async function removePhoto(storage, path) {
+  if (!path) return { error: null };
+  const { error } = await storage.from(PHOTO_BUCKET).remove([path]);
+  return { error: error ?? null };
+}
+// A short-lived address for one file. Anything that goes wrong is answered with nothing to show, never a broken
+// picture: the drawing takes its place.
+async function signedPhotoUrl(storage, path, seconds = PHOTO_URL_SECONDS) {
+  if (!path) return { url: '', error: null };
+  try {
+    const { data, error } = await storage.from(PHOTO_BUCKET).createSignedUrl(path, seconds);
+    return { url: error ? '' : (data?.signedUrl ?? ''), error: error ?? null };
+  } catch (e) {
+    return { url: '', error: e };
+  }
+}
+// The whole round trip for the parent's own picture: check it, put it somewhere, point the profile at it, and take
+// the old one away. If the profile cannot be pointed at it, the new file is taken away again rather than left behind.
+async function replaceMyPhoto(supa, userId, { bytes, mime, was }, now = Date.now(), dice = Math.random()) {
+  const problem = validatePhoto({ bytes, mime });
+  if (problem) return { error: { message: problem }, path: null };
+  const path = photoPathFor('parent', userId, mime, now, dice);
+  if (!path) return { error: { message: t('photo.notRead') }, path: null };
+  const up = await uploadPhoto(supa.storage, path, bytes, mime);
+  if (up.error) return { error: up.error, path: null };
+  const saved = await saveProfile(supa, userId, { photo_path: path });
+  if (saved.error) {
+    await removePhoto(supa.storage, path);
+    return { error: saved.error, path: null };
+  }
+  if (was && was !== path) await removePhoto(supa.storage, was);
+  return { error: null, path };
 }
 
 function validateReview({ rating, title, body }) {
@@ -884,7 +1015,7 @@ function academicYearChoices(today = new Date()) {
 const EMPTY_APPLICATION = {
   child_first_name: '', child_last_name: '', child_dob: '', child_gender: '', class_applying: '', academic_year: '',
   current_school: '', parent_name: '', parent_relation: 'mother', parent_phone: '', parent_email: '', address: '',
-  pincode: '', notes: '', consent: false,
+  pincode: '', notes: '', consent: false, child_photo_path: null,
 };
 
 // Everything the form must have before it is worth sending. The database checks all of this again.
@@ -921,6 +1052,7 @@ async function submitApplication(db, schoolId, form) {
   };
   if (form.child_gender) clean.child_gender = form.child_gender;
   if (String(form.current_school ?? '').trim()) clean.current_school = form.current_school.trim();
+  if (form.child_photo_path) clean.child_photo_path = form.child_photo_path;
   if (String(form.notes ?? '').trim()) clean.notes = form.notes.trim();
   const { data, error } = await db.rpc('submit_admission_application', { p_school: schoolId, p_form: clean });
   return { id: data ?? null, error: error ?? null };
@@ -1031,7 +1163,7 @@ const BACK_FROM = {
 const backTargetFor = (screen) => BACK_FROM[screen] ?? null;
 
 async function loadSettings(db, userId) {
-  const { data, error } = await db.from('profiles').select('language,notify_push,first_name,last_name,email,gender,avatar').eq('id', userId).maybeSingle();
+  const { data, error } = await db.from('profiles').select('language,notify_push,first_name,last_name,email,gender,avatar,photo_path').eq('id', userId).maybeSingle();
   return { settings: data ?? null, error: error ?? null };
 }
 // These run the moment they are called: a query that is only built and never waited for is never sent.
@@ -2238,8 +2370,16 @@ function EnquiriesScreen({ myId, onBack, onChanged }) {
   );
 }
 
+// What the school will see. Square, small, and only while the form is open.
+function ChildPhoto({ path }) {
+  const url = usePhotoUrl(path);
+  if (!url) return <ActivityIndicator testID="apply-photo-loading" />;
+  return <Image testID="apply-photo-shown" source={{ uri: url }} accessibilityIgnoresInvertColors
+    style={{ width: 64, height: 64, borderRadius: 12, backgroundColor: C.blueSoft }} />;
+}
+
 // ---------------------------------------------------------------------------------------------- applying
-function ApplyScreen({ school, profile, onDone, onCancel }) {
+function ApplyScreen({ school, profile, onDone, onCancel, userId }) {
   const [form, setForm] = useState({
     ...EMPTY_APPLICATION,
     academic_year: academicYearChoices()[1],
@@ -2247,8 +2387,32 @@ function ApplyScreen({ school, profile, onDone, onCancel }) {
     parent_email: profile?.email ?? '',
   });
   const [busy, setBusy] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
   const [error, setError] = useState('');
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  // as in the profile: which photograph is on the form right now, without waiting for a redraw
+  const childPhotoNow = useRef(null);
+  const holdChildPhoto = (path) => { childPhotoNow.current = path; set({ child_photo_path: path }); };
+
+  // The photograph goes up as soon as it is chosen, so the parent can see what the school will see. It is stored in
+  // the family's own folder; the school can only ever see the one that is attached to a form sent to them.
+  async function addChildPhoto() {
+    setError('');
+    setPhotoBusy(true);
+    const res = await choosePhoto('child', userId);
+    setPhotoBusy(false);
+    if (res.cancelled) return;
+    if (res.problem) { setError(res.problem); return; }
+    const was = childPhotoNow.current;
+    holdChildPhoto(res.path);
+    if (was && was !== res.path) await removePhoto(supabase.storage, was);
+  }
+
+  async function dropChildPhoto() {
+    const was = childPhotoNow.current;
+    holdChildPhoto(null);
+    await removePhoto(supabase.storage, was);
+  }
 
   async function submit() {
     setBusy(true);
@@ -2300,6 +2464,14 @@ function ApplyScreen({ school, profile, onDone, onCancel }) {
         <TextInput testID="apply-address" style={[s.input, { minHeight: 70, textAlignVertical: 'top' }]} multiline placeholder={t('apply.address')} value={form.address} onChangeText={(v) => set({ address: v })} />
         <TextInput testID="apply-pincode" style={s.input} placeholder={t('apply.pincode')} keyboardType="number-pad" value={form.pincode} onChangeText={(v) => set({ pincode: v.replace(/[^0-9]/g, '').slice(0, 6) })} />
         <TextInput testID="apply-notes" style={[s.input, { minHeight: 70, textAlignVertical: 'top' }]} multiline placeholder={t('apply.notes')} value={form.notes} onChangeText={(v) => set({ notes: v })} />
+
+        <Text style={s.label}>{t('apply.childPhoto')}</Text>
+        <Text style={s.muted}>{t('apply.childPhotoHelp')}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          {!!form.child_photo_path && <ChildPhoto path={form.child_photo_path} />}
+          <Btn testID="apply-photo" kind="outline" label={photoBusy ? t('photo.sending') : form.child_photo_path ? t('apply.changePhoto') : t('apply.addPhoto')} onPress={addChildPhoto} disabled={photoBusy} />
+          {!!form.child_photo_path && <Btn testID="apply-photo-remove" kind="quiet" label={t('apply.removePhoto')} onPress={dropChildPhoto} />}
+        </View>
         <Text style={s.muted}>{t('apply.notesHint')}</Text>
       </View>
 
@@ -2400,12 +2572,54 @@ function ApplicationsScreen({ onBack, onChanged }) {
 // ---------------------------------------------------------------------------------------------- settings
 // Who you are: the picture a school sees, your name, and how you would like to be described. It sits at the top of
 // this screen because that is where someone looks for "my profile", and everything else here belongs to it anyway.
+// A short-lived address for a photo in the private bucket. It is asked for again whenever the file changes, and
+// anything that goes wrong simply leaves nothing to show.
+function usePhotoUrl(path) {
+  const [url, setUrl] = useState('');
+  useEffect(() => {
+    let alive = true;
+    if (!path) { setUrl(''); return undefined; }
+    signedPhotoUrl(supabase.storage, path).then((res) => { if (alive) setUrl(res.url); });
+    return () => { alive = false; };
+  }, [path]);
+  return url;
+}
+
+// A person's picture: their photograph if they have one and it can be fetched, and the drawing otherwise. A photo
+// that will not load is never a hole in the screen - the drawing is simply still there.
+function PersonPhoto({ path, look, size = 76, testID }) {
+  const url = usePhotoUrl(path);
+  if (!url) return <ParentAvatar look={look} size={size} testID={testID} />;
+  return <Image testID={`${testID}-photo`} source={{ uri: url }} accessibilityIgnoresInvertColors
+    style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: C.blueSoft }} />;
+}
+
+// Choosing a picture from the phone, checking it, and putting it in the person's own folder. Everything a parent
+// could be told about goes back as a line they can read.
+async function choosePhoto(kind, userId) {
+  const picked = await pickPhoto(ImagePicker);
+  if (picked.cancelled) return { cancelled: true };
+  if (picked.problem) return { problem: photoProblemText(picked.problem) };
+  const wrong = validatePhoto(picked);
+  if (wrong) return { problem: wrong };
+  const path = photoPathFor(kind, userId, picked.mime);
+  if (!path) return { problem: t('photo.notRead') };
+  const up = await uploadPhoto(supabase.storage, path, picked.bytes, picked.mime);
+  if (up.error) return { problem: friendlyError(up.error) };
+  return { path };
+}
+
 function ProfileCard({ settings, userId, onSaved }) {
   const [first, setFirst] = useState(settings?.first_name ?? '');
   const [last, setLast] = useState(settings?.last_name ?? '');
   const [gender, setGender] = useState(settings?.gender ?? null);
   const [avatar, setAvatar] = useState(settings?.avatar ?? 'auto');
   const [busy, setBusy] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photo, setPhoto] = useState(settings?.photo_path ?? null);
+  // the same value, readable the moment a button is pressed rather than after the next drawing of the screen
+  const photoNow = useRef(settings?.photo_path ?? null);
+  const holdPhoto = (path) => { photoNow.current = path; setPhoto(path); };
   const [problem, setProblem] = useState('');
   const [done, setDone] = useState('');
   const shown = avatarFor({ avatar, gender });
@@ -2423,13 +2637,49 @@ function ProfileCard({ settings, userId, onSaved }) {
     onSaved?.(res.saved);
   }
 
+  // The photograph is saved the moment it is chosen, rather than waiting for "Save changes": a picture that looks
+  // as though it has been chosen but has not been saved is a trap.
+  async function usePhoto() {
+    setProblem(''); setDone('');
+    setPhotoBusy(true);
+    const res = await choosePhoto('parent', userId);
+    if (res.cancelled) { setPhotoBusy(false); return; }
+    if (res.problem) { setPhotoBusy(false); setProblem(res.problem); return; }
+    const saved = await saveProfile(supabase, userId, { photo_path: res.path });
+    setPhotoBusy(false);
+    if (saved.error) { await removePhoto(supabase.storage, res.path); setProblem(friendlyError(saved.error)); return; }
+    const was = photoNow.current;
+    holdPhoto(res.path);
+    if (was && was !== res.path) await removePhoto(supabase.storage, was);
+    setDone(t('profile.saved'));
+    onSaved?.({ photo_path: res.path });
+  }
+
+  async function useDrawing() {
+    setProblem(''); setDone('');
+    setPhotoBusy(true);
+    const saved = await saveProfile(supabase, userId, { photo_path: null });
+    setPhotoBusy(false);
+    if (saved.error) { setProblem(friendlyError(saved.error)); return; }
+    const was = photoNow.current;
+    holdPhoto(null);
+    await removePhoto(supabase.storage, was);
+    setDone(t('profile.saved'));
+    onSaved?.({ photo_path: null });
+  }
+
   return (
     <View style={s.card} testID="profile-card">
       <Text style={s.h2}>{t('profile.title')}</Text>
       {!complete && <Notice tone="amber" text={t('profile.welcome')} testID="profile-welcome" />}
       <View style={{ alignItems: 'center', paddingVertical: 6 }}>
-        <ParentAvatar look={shown} size={76} testID="profile-avatar" />
+        <PersonPhoto path={photo} look={shown} size={76} testID="profile-avatar" />
       </View>
+      <View style={{ flexDirection: 'row', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+        <Btn testID="profile-photo" kind="outline" label={photoBusy ? t('photo.sending') : photo ? t('profile.changePhoto') : t('profile.usePhoto')} onPress={usePhoto} disabled={photoBusy} />
+        {!!photo && <Btn testID="profile-photo-remove" kind="quiet" label={t('profile.useDrawing')} onPress={useDrawing} />}
+      </View>
+      <Text style={s.muted}>{t('profile.photoHelp')}</Text>
       <Text style={s.label}>{t('profile.picture')}</Text>
       <View style={s.wrap}>
         {PROFILE_AVATARS.map((look) => (
@@ -3051,7 +3301,7 @@ function AppBody() {
             <Text style={s.topTitle} numberOfLines={1}>Kidscover</Text>
           </View>
           <Pressable testID="settings" accessibilityRole="button" accessibilityLabel={t('profile.title')} onPress={() => setScreen('settings')} style={s.profileButton}>
-            {settings ? <ParentAvatar look={avatarFor(settings)} size={36} testID="top-avatar" /> : <Text style={s.profileInitials}>{initialsOf(settings)}</Text>}
+            {settings ? <PersonPhoto path={settings.photo_path} look={avatarFor(settings)} size={36} testID="top-avatar" /> : <Text style={s.profileInitials}>{initialsOf(settings)}</Text>}
             {settings && !profileComplete(settings) && <View style={s.profileDot} testID="profile-dot" />}
           </Pressable>
         </View>
@@ -3100,7 +3350,7 @@ function AppBody() {
         <ApplicationsScreen onBack={() => setScreen('discover')} onChanged={onApplicationsChanged} />
       )}
       {screen === 'apply' && applyTo && (
-        <ApplyScreen school={applyTo} profile={{ ...settings, email: session?.user?.email }}
+        <ApplyScreen school={applyTo} profile={{ ...settings, email: session?.user?.email }} userId={session?.user?.id ?? null}
           onCancel={() => setScreen(school ? 'school' : 'discover')}
           onDone={async () => { setScreen('applications'); const res = await loadApplications(supabase); if (!res.error) setLiveApps(liveApplications(res.rows)); }} />
       )}

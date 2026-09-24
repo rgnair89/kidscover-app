@@ -480,5 +480,20 @@
   "tour.places.body": "ઘરે છો? એ જગ્યા \"ઘર\" તરીકે સાચવી લો. પછી ક્યાંયથી પણ ઘરની આસપાસ જોઈ શકશો, ફરી લોકેશન ચાલુ કર્યા વિના.",
   "tour.whatsNew": "નવું શું છે",
   "tour.notNow": "હમણાં નહીં",
-  "tour.never": "આ ફરી ન બતાવો"
+  "tour.never": "આ ફરી ન બતાવો",
+  "photo.notRead": "એ ચિત્ર વાંચી શકાયું નહીં. બીજું અજમાવો.",
+  "photo.wrongKind": "Kidscover JPG, PNG અને WebP ચિત્રો લે છે.",
+  "photo.tooBig": "એ ચિત્ર {mb} MB કરતાં મોટું છે. નાનું પસંદ કરો.",
+  "photo.blocked": "તમારાં ચિત્રો સુધી Kidscover પહોંચી શકતું નથી. ફોનનાં સેટિંગ્સમાં પરવાનગી આપી શકો છો.",
+  "photo.denied": "ચિત્ર વાપરવા Kidscover ને તમારાં ચિત્રો જોવાં પડશે.",
+  "photo.sending": "ફોટો મોકલાઈ રહ્યો છે...",
+  "profile.usePhoto": "મારો ફોટો વાપરો",
+  "profile.changePhoto": "ફોટો બદલો",
+  "profile.useDrawing": "ચિત્ર જ રહેવા દો",
+  "profile.photoHelp": "પ્રવેશ ફોર્મ પર ન મૂકો ત્યાં સુધી આ ફક્ત તમે જ જોઈ શકશો. ચિત્ર પણ ચાલશે.",
+  "apply.childPhoto": "તમારા બાળકનો ફોટો",
+  "apply.childPhotoHelp": "તમે જે શાળામાં અરજી કરો છો ફક્ત તે જ, અને ફક્ત આ ફોર્મ પર જોઈ શકે. છોડી પણ શકાય.",
+  "apply.addPhoto": "ફોટો ઉમેરો",
+  "apply.changePhoto": "ફોટો બદલો",
+  "apply.removePhoto": "ફોટો કાઢો"
 }

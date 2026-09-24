@@ -480,5 +480,20 @@
   "tour.places.body": "Standing at home? Save that spot as \"Home\". After that you can look around home from anywhere, without turning your location on again.",
   "tour.whatsNew": "What's new",
   "tour.notNow": "Not now",
-  "tour.never": "Don't show me this again"
+  "tour.never": "Don't show me this again",
+  "photo.notRead": "That picture could not be read. Try another one.",
+  "photo.wrongKind": "Kidscover takes JPG, PNG and WebP pictures.",
+  "photo.tooBig": "That picture is larger than {mb} MB. Try a smaller one.",
+  "photo.blocked": "Kidscover cannot reach your pictures. You can allow it in your phone settings.",
+  "photo.denied": "Kidscover needs to see your pictures to use one.",
+  "photo.sending": "Sending the photo...",
+  "profile.usePhoto": "Use a photo of me",
+  "profile.changePhoto": "Change my photo",
+  "profile.useDrawing": "Use a drawing instead",
+  "profile.photoHelp": "Only you can see this, unless you put a photo on an admission form. A drawing is fine too.",
+  "apply.childPhoto": "A photo of your child",
+  "apply.childPhotoHelp": "Only the school you are applying to can see it, and only on this form. You can leave it out.",
+  "apply.addPhoto": "Add a photo",
+  "apply.changePhoto": "Change the photo",
+  "apply.removePhoto": "Remove the photo"
 }

@@ -480,5 +480,20 @@
   "tour.places.body": "বাড়িতে আছেন? সেই জায়গাটি \"বাড়ি\" নামে জমা রাখুন। তারপর যেকোনও জায়গা থেকে বাড়ির আশপাশে দেখতে পারবেন, আবার লোকেশন চালু না করেই।",
   "tour.whatsNew": "নতুন কী",
   "tour.notNow": "এখন নয়",
-  "tour.never": "এটি আর দেখাবেন না"
+  "tour.never": "এটি আর দেখাবেন না",
+  "photo.notRead": "ওই ছবিটি পড়া গেল না। অন্য একটি দেখুন।",
+  "photo.wrongKind": "Kidscover JPG, PNG আর WebP ছবি নেয়।",
+  "photo.tooBig": "ওই ছবিটি {mb} MB-র চেয়ে বড়। ছোট একটি বাছুন।",
+  "photo.blocked": "আপনার ছবিগুলিতে Kidscover পৌঁছতে পারছে না। ফোনের সেটিংসে অনুমতি দিতে পারেন।",
+  "photo.denied": "একটি ছবি নিতে হলে Kidscover-কে আপনার ছবি দেখতে হবে।",
+  "photo.sending": "ছবি পাঠানো হচ্ছে...",
+  "profile.usePhoto": "আমার ছবি দিন",
+  "profile.changePhoto": "ছবি বদলান",
+  "profile.useDrawing": "আঁকা ছবিই থাক",
+  "profile.photoHelp": "ভর্তির ফর্মে না দিলে এটি কেবল আপনিই দেখতে পাবেন। আঁকা ছবিও চলবে।",
+  "apply.childPhoto": "আপনার সন্তানের ছবি",
+  "apply.childPhotoHelp": "আপনি যে স্কুলে আবেদন করছেন কেবল তারাই, আর কেবল এই ফর্মেই দেখতে পাবে। না দিলেও চলবে।",
+  "apply.addPhoto": "ছবি দিন",
+  "apply.changePhoto": "ছবি বদলান",
+  "apply.removePhoto": "ছবি সরান"
 }

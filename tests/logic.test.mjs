@@ -16,7 +16,7 @@ const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'lev
   'BOARD_CHOICES', 'boardSourceText', 'admissionText',
   'CATEGORY_CHOICES', 'categoryOf', 'categoryFilters', 'isSchoolPlace',
   'FACILITY_INFO', 'ACHIEVEMENT_INFO', 'SOURCE_TEXT', 'facilityText', 'sourcesText', 'photoCreditText', 'artColours', 'ART_COLOURS', 'loadFacilities', 'loadAchievements',
-  'setTranslator', 't', 'setMoneyLocale', 'setDateLocale', 'rupees', 'budgetLabel', 'BUDGET_CHOICES', 'FEE_PARTS', 'feeForLevel', 'feeSummaryText', 'loadFeeSchedules', 'loadTiles', 'leaveByText', 'clockText', 'dayText', 'noteOutboundClick', 'messageFrom', 'EN_GRADES', 'classLabel', 'stageText', 'academicYearChoices', 'APPLY_CLASSES', 'APPLY_RELATIONS', 'APPLY_GENDERS', 'EMPTY_APPLICATION', 'validateApplication', 'submitApplication', 'loadApplications', 'loadApplicationEvents', 'withdrawApplication', 'deleteApplication', 'isMissingApplications', 'liveApplications', 'MAX_COMPARE', 'toggleCompare', 'compareRows', 'registerForPush', 'forgetPush', 'loadNotifications', 'markNotificationsRead', 'initialsOf', 'backTargetFor', 'BACK_FROM', 'THEME_SETTING', 'THEME_CHOICES', 'themeFor', 'themeChoiceOf', 'TOUR_SETTING', 'TOUR_NEVER', 'TOUR_STEPS', 'TOUR_VERSION', 'tourToShow', 'tourAfterFinish', 'tourStepAt', 'nextTourIndex', 'onLastTourStep', 'ADDRESS_COLUMNS', 'MAX_ADDRESSES', 'MAX_ADDRESS_NAME', 'MAX_ADDRESS_TEXT', 'isMissingAddresses', 'addressPlace', 'validateAddress', 'loadAddresses', 'saveAddress', 'deleteAddress', 'describePlace', 'addressHere', 'PROFILE_GENDERS', 'PROFILE_AVATARS', 'AUTO_AVATAR', 'avatarFor', 'profileComplete', 'saveProfile', 'loadSettings', 'saveLanguage', 'savePushChoice', 'deleteAccount', 'biometricKind', 'unlockWithBiometrics', 'shouldLock', 'BIOMETRIC_SETTING', 'LANGUAGE_SETTING', 'LOCK_AFTER_MS', 'APPLICATION_COLUMNS'];
+  'setTranslator', 't', 'setMoneyLocale', 'setDateLocale', 'rupees', 'budgetLabel', 'BUDGET_CHOICES', 'FEE_PARTS', 'feeForLevel', 'feeSummaryText', 'loadFeeSchedules', 'loadTiles', 'leaveByText', 'clockText', 'dayText', 'noteOutboundClick', 'messageFrom', 'EN_GRADES', 'classLabel', 'stageText', 'academicYearChoices', 'APPLY_CLASSES', 'APPLY_RELATIONS', 'APPLY_GENDERS', 'EMPTY_APPLICATION', 'validateApplication', 'submitApplication', 'loadApplications', 'loadApplicationEvents', 'withdrawApplication', 'deleteApplication', 'isMissingApplications', 'liveApplications', 'MAX_COMPARE', 'toggleCompare', 'compareRows', 'registerForPush', 'forgetPush', 'loadNotifications', 'markNotificationsRead', 'initialsOf', 'backTargetFor', 'BACK_FROM', 'PHOTO_BUCKET', 'PHOTO_MAX_BYTES', 'PHOTO_TYPES', 'PHOTO_URL_SECONDS', 'bytesFromBase64', 'photoTypeOf', 'photoPathFor', 'isOwnPhotoPath', 'validatePhoto', 'pickPhoto', 'photoProblemText', 'uploadPhoto', 'removePhoto', 'signedPhotoUrl', 'THEME_SETTING', 'THEME_CHOICES', 'themeFor', 'themeChoiceOf', 'TOUR_SETTING', 'TOUR_NEVER', 'TOUR_STEPS', 'TOUR_VERSION', 'tourToShow', 'tourAfterFinish', 'tourStepAt', 'nextTourIndex', 'onLastTourStep', 'ADDRESS_COLUMNS', 'MAX_ADDRESSES', 'MAX_ADDRESS_NAME', 'MAX_ADDRESS_TEXT', 'isMissingAddresses', 'addressPlace', 'validateAddress', 'loadAddresses', 'saveAddress', 'deleteAddress', 'describePlace', 'addressHere', 'PROFILE_GENDERS', 'PROFILE_AVATARS', 'AUTO_AVATAR', 'avatarFor', 'profileComplete', 'saveProfile', 'loadSettings', 'saveLanguage', 'savePushChoice', 'deleteAccount', 'biometricKind', 'unlockWithBiometrics', 'shouldLock', 'BIOMETRIC_SETTING', 'LANGUAGE_SETTING', 'LOCK_AFTER_MS', 'APPLICATION_COLUMNS'];
 fs.writeFileSync(path.join(here, '.tmp', 'logic.mjs'), src.slice(a, b) + `\nexport { ${names.join(', ')} };\n`);
 const L = await import(pathToFileURL(path.join(here, '.tmp', 'logic.mjs')).href);
 // the words of the app come from the language packs; the tests read the English one
@@ -508,5 +508,76 @@ check('a word the app does not know means following the phone, never a blank scr
 check('...and the three it does know are kept as they are', L.THEME_CHOICES.every((c) => L.themeChoiceOf(c) === c));
 check('what is kept on the phone is the word itself, under a name that says what it is', L.THEME_SETTING === 'kidscover.theme');
 
+console.log('\n=== photographs ===');
+const b64 = (bytes) => Buffer.from(bytes).toString('base64');
+check('a picture handed over as text comes back as the same bytes', (() => {
+  const want = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x01]);
+  const got = L.bytesFromBase64(b64(want));
+  return got.length === want.length && want.every((x, i) => got[i] === x);
+})());
+check('...whatever length it is, and with the line breaks a phone may put in', (() => {
+  for (let n = 0; n < 40; n++) {
+    const want = Uint8Array.from(Array.from({ length: n }, (_, i) => (i * 37 + 11) % 256));
+    const text = b64(want).replace(/(.{8})/g, '$1\n');
+    const got = L.bytesFromBase64(text);
+    if (got.length !== want.length || !want.every((x, i) => got[i] === x)) return false;
+  }
+  return true;
+})());
+check('...and nothing at all comes back as nothing, rather than as a crash', L.bytesFromBase64('').length === 0 && L.bytesFromBase64(null).length === 0 && L.bytesFromBase64(undefined).length === 0);
+
+check('what a phone says a picture is, made into one of the three kinds the bucket takes',
+  L.photoTypeOf('image/jpeg') === 'image/jpeg' && L.photoTypeOf('image/jpg') === 'image/jpeg'
+  && L.photoTypeOf('IMAGE/PNG; charset=binary') === 'image/png' && L.photoTypeOf('image/webp') === 'image/webp');
+check('...worked out from the file name when the phone will not say', L.photoTypeOf(null, 'DSC_0001.JPG') === 'image/jpeg' && L.photoTypeOf('', 'sketch.png') === 'image/png');
+check('...and anything else is nothing, so it is never sent to be refused', L.photoTypeOf('image/gif') === null && L.photoTypeOf('application/pdf', 'x.pdf') === null && L.photoTypeOf(null, null) === null);
+
+const WHO = 'u1';
+check('a file goes in the person\'s own folder, under a name nobody could guess', (() => {
+  const path = L.photoPathFor('parent', WHO, 'image/jpeg', 1700000000000, 0.5);
+  return path.startsWith(`parents/${WHO}/`) && path.endsWith('.jpg') && L.isOwnPhotoPath(path, 'parent', WHO);
+})(), L.photoPathFor('parent', WHO, 'image/jpeg'));
+check('...the child in the children folder, keeping the kind of picture it is', L.photoPathFor('child', WHO, 'image/png').startsWith(`children/${WHO}/`) && L.photoPathFor('child', WHO, 'image/png').endsWith('.png'));
+check('...two pictures never land on the same name', L.photoPathFor('parent', WHO, 'image/jpeg', 1, 0.1) !== L.photoPathFor('parent', WHO, 'image/jpeg', 1, 0.9));
+check('...and nothing is made up when there is nobody to make it for', L.photoPathFor('parent', null, 'image/jpeg') === null && L.photoPathFor('other', WHO, 'image/jpeg') === null && L.photoPathFor('parent', WHO, 'image/gif') === null);
+check('somebody else\'s path is never mistaken for your own', !L.isOwnPhotoPath(`parents/u2/a.jpg`, 'parent', WHO) && !L.isOwnPhotoPath(`children/${WHO}/a.jpg`, 'parent', WHO) && !L.isOwnPhotoPath(`parents/${WHO}/../u2/a.jpg`, 'parent', WHO) && !L.isOwnPhotoPath(null, 'parent', WHO));
+
+const someBytes = (n) => Uint8Array.from({ length: n }, () => 1);
+check('a picture that could not be read is said to be, rather than sent', L.validatePhoto({ bytes: someBytes(0), mime: 'image/jpeg' }) === EN['photo.notRead'] && L.validatePhoto({}) === EN['photo.notRead']);
+check('...a kind the bucket will not take is refused here, not at the server', L.validatePhoto({ bytes: someBytes(10), mime: 'image/gif' }) === EN['photo.wrongKind']);
+check('...and one too large is refused with the size said out loud', L.validatePhoto({ bytes: someBytes(L.PHOTO_MAX_BYTES + 1), mime: 'image/jpeg' }) === 'That picture is larger than 3 MB. Try a smaller one.');
+check('...while an ordinary photograph passes', L.validatePhoto({ bytes: someBytes(200000), mime: 'image/jpeg' }) === null);
+
+// a stand-in phone, and a stand-in bucket
+const phone = (answer) => ({ requestMediaLibraryPermissionsAsync: async () => ({ status: 'granted', canAskAgain: true }), launchImageLibraryAsync: async () => answer });
+got = await L.pickPhoto(phone({ canceled: true }));
+check('changing your mind in the picker is not a problem to report', got.cancelled === true && !got.problem);
+got = await L.pickPhoto({ requestMediaLibraryPermissionsAsync: async () => ({ status: 'denied', canAskAgain: true }) });
+check('...a phone that says no is said plainly', got.problem === 'denied' && L.photoProblemText('denied') === EN['photo.denied']);
+got = await L.pickPhoto({ requestMediaLibraryPermissionsAsync: async () => ({ status: 'denied', canAskAgain: false }) });
+check('...and one that will not ask again says where to change it', got.problem === 'blocked' && L.photoProblemText('blocked') === EN['photo.blocked']);
+got = await L.pickPhoto(phone({ assets: [{ base64: b64([1, 2, 3]), mimeType: 'image/jpeg', fileName: 'a.jpg' }] }));
+check('a picture chosen comes back as bytes and a kind', got.bytes.length === 3 && got.mime === 'image/jpeg' && !got.problem);
+got = await L.pickPhoto(phone({ assets: [{ base64: b64([1]), mimeType: 'image/heic', fileName: 'a.heic' }] }));
+check('...and one the app cannot use says so instead of failing later', got.problem === 'unreadable');
+got = await L.pickPhoto({ requestMediaLibraryPermissionsAsync: async () => { throw new Error('no picker here'); } });
+check('...as does a phone with no picker at all', got.problem === 'unreadable');
+
+const bucket = (result) => { const calls = []; return { calls, from: () => ({ upload: async (...a) => { calls.push(['upload', ...a]); return result.upload ?? { error: null }; }, remove: async (...a) => { calls.push(['remove', ...a]); return { error: null }; }, createSignedUrl: async (...a) => { calls.push(['signed', ...a]); return result.signed ?? { data: { signedUrl: 'https://x/y' }, error: null }; } }) }; };
+let store = bucket({});
+await L.uploadPhoto(store, 'parents/u1/a.jpg', someBytes(5), 'image/jpeg');
+check('a picture is put where it was told, saying what kind it is and never replacing something already there',
+  store.calls[0][0] === 'upload' && store.calls[0][1] === 'parents/u1/a.jpg' && store.calls[0][3].contentType === 'image/jpeg' && store.calls[0][3].upsert === false, JSON.stringify(store.calls[0]));
+store = bucket({});
+const link = await L.signedPhotoUrl(store, 'parents/u1/a.jpg');
+check('showing a photo asks for an address that runs out', link.url === 'https://x/y' && store.calls[0][2] === L.PHOTO_URL_SECONDS);
+check('...and asking for nothing asks the server nothing', (await L.signedPhotoUrl(bucket({}), '')).url === '');
+store = bucket({ signed: { data: null, error: { message: 'Object not found' } } });
+check('...and a photo that cannot be fetched leaves nothing to show, not a broken picture', (await L.signedPhotoUrl(store, 'parents/u1/a.jpg')).url === '');
+store = { from: () => ({ createSignedUrl: async () => { throw new Error('offline'); } }) };
+check('...even when the network itself fails', (await L.signedPhotoUrl(store, 'parents/u1/a.jpg')).url === '');
+store = bucket({});
+await L.removePhoto(store, '');
+check('taking away nothing asks the server nothing', store.calls.length === 0);
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

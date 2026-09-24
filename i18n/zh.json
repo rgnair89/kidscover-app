@@ -480,5 +480,20 @@
   "tour.places.body": "现在在家吗？把这个位置存成“家”。以后在任何地方都能查找家附近的学校，不用再打开定位。",
   "tour.whatsNew": "新功能",
   "tour.notNow": "暂时不用",
-  "tour.never": "不要再显示"
+  "tour.never": "不要再显示",
+  "photo.notRead": "这张图片读不出来，换一张试试。",
+  "photo.wrongKind": "Kidscover 支持 JPG、PNG 和 WebP 图片。",
+  "photo.tooBig": "这张图片超过 {mb} MB，请换小一点的。",
+  "photo.blocked": "Kidscover 无法访问你的照片，可以在手机设置里允许。",
+  "photo.denied": "要使用照片，Kidscover 需要查看你的照片。",
+  "photo.sending": "正在上传照片……",
+  "profile.usePhoto": "用我的照片",
+  "profile.changePhoto": "换一张照片",
+  "profile.useDrawing": "还是用插画",
+  "profile.photoHelp": "除非你把它放到入学申请上，否则只有你能看到。用插画也可以。",
+  "apply.childPhoto": "孩子的照片",
+  "apply.childPhotoHelp": "只有你申请的那所学校能看到，而且只在这份申请上。也可以不放。",
+  "apply.addPhoto": "添加照片",
+  "apply.changePhoto": "更换照片",
+  "apply.removePhoto": "移除照片"
 }

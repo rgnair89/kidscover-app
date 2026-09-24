@@ -480,5 +480,20 @@
   "tour.places.body": "いま家にいますか。その場所を「家」として保存しておくと、どこにいても家のまわりを探せます。位置情報を入れ直す必要もありません。",
   "tour.whatsNew": "新しくなったところ",
   "tour.notNow": "あとで",
-  "tour.never": "今後は表示しない"
+  "tour.never": "今後は表示しない",
+  "photo.notRead": "その画像は読み取れませんでした。別のものをお試しください。",
+  "photo.wrongKind": "Kidscover は JPG・PNG・WebP の画像に対応しています。",
+  "photo.tooBig": "その画像は {mb} MB を超えています。小さいものを選んでください。",
+  "photo.blocked": "Kidscover から写真にアクセスできません。スマホの設定で許可できます。",
+  "photo.denied": "写真を使うには、Kidscover が写真を見られるようにする必要があります。",
+  "photo.sending": "写真を送っています…",
+  "profile.usePhoto": "自分の写真を使う",
+  "profile.changePhoto": "写真を変える",
+  "profile.useDrawing": "イラストのままにする",
+  "profile.photoHelp": "入学申し込みに載せないかぎり、見えるのはあなただけです。イラストのままでもかまいません。",
+  "apply.childPhoto": "お子さんの写真",
+  "apply.childPhotoHelp": "申し込む学校だけが、この申し込みでだけ見られます。入れなくてもかまいません。",
+  "apply.addPhoto": "写真を追加",
+  "apply.changePhoto": "写真を変える",
+  "apply.removePhoto": "写真を外す"
 }

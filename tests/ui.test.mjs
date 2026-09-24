@@ -40,6 +40,9 @@ export function SafeAreaProvider({ children }) { return React.createElement(Reac
 export function useSafeAreaInsets() { return INSETS; }
 `);
 fs.writeFileSync(path.join(tmp, 'stub-crypto.mjs'), `export const getRandomBytesAsync = async (n) => new Uint8Array(n).fill(7);`);
+// the phone's own pictures: each test sets globalThis.__pics to what it should answer with
+fs.writeFileSync(path.join(tmp, 'fake-picker.mjs'), `export const requestMediaLibraryPermissionsAsync = async () => globalThis.__pics.requestMediaLibraryPermissionsAsync();
+export const launchImageLibraryAsync = async (...a) => globalThis.__pics.launchImageLibraryAsync(...a);`);
 
 const appSource = fs.readFileSync(process.env.APP_FILE ?? path.join(root, 'App.js'), 'utf8');
 const EN = JSON.parse(fs.readFileSync(path.join(root, 'i18n', 'en.json'), 'utf8'));
@@ -64,6 +67,7 @@ async function bundle(name, source) {
       'expo-constants': path.join(tmp, 'stub-constants.mjs'),
       'react-native-safe-area-context': path.join(tmp, 'stub-safe-area.mjs'),
       'expo-crypto': path.join(tmp, 'stub-crypto.mjs'),
+      'expo-image-picker': path.join(tmp, 'fake-picker.mjs'),
     },
     define: { 'process.env.NODE_ENV': '"development"', __DEV__: 'true' },
   });
@@ -143,7 +147,7 @@ function seed() {
         first_year_total: 231000, note: null, source: 'kidscover', source_url: null },
     ],
     applications: [], appEvents: [], notifications: [], pushTokens: [], clicks: [], profiles: {},
-    addresses: [], nextAddress: 0,
+    addresses: [], nextAddress: 0, files: [],
     deleteAccountResult: { ok: true },
     threads: [], tmsgs: [], nextT: 1, rpcCalls: [], clock: Date.now(),
     fnCalls: [], fnMode: 'ok', lookupsLeft: undefined,
@@ -424,6 +428,38 @@ function makeDb(state) {
       startAutoRefresh() {}, stopAutoRefresh() {},
     },
     from: (t) => new Query(state, t),
+    // the private bucket, with the rules the migration puts on it: a person writes only inside their own folder,
+    // only these three kinds of picture, and nothing larger than three megabytes
+    storage: {
+      from: (bucket) => {
+        const me = () => state.session?.user?.id;
+        const mine = (path) => ['parents', 'children'].includes(String(path).split('/')[0]) && String(path).split('/')[1] === me() && !!String(path).split('/')[2];
+        const refused = { data: null, error: { message: 'new row violates row-level security policy', statusCode: '403' } };
+        return {
+          upload: async (path, bytes, opts) => {
+            if (bucket !== 'people') return refused;
+            if (!me() || !mine(path)) return refused;
+            if (!['image/jpeg', 'image/png', 'image/webp'].includes(opts?.contentType)) return { data: null, error: { message: 'mime type not supported' } };
+            if ((bytes?.length ?? 0) > 3 * 1024 * 1024) return { data: null, error: { message: 'The object exceeded the maximum allowed size' } };
+            state.files = state.files.filter((f) => f.path !== path);
+            state.files.push({ bucket, path, bytes: bytes?.length ?? 0, mime: opts?.contentType, owner: me() });
+            return { data: { path }, error: null };
+          },
+          remove: async (paths) => {
+            const gone = (paths ?? []).filter((path) => mine(path));
+            state.removed = (state.removed ?? []).concat(gone);
+            state.files = state.files.filter((f) => !gone.includes(f.path));
+            return { data: null, error: null };
+          },
+          createSignedUrl: async (path, seconds) => {
+            state.signed = (state.signed ?? []).concat([[path, seconds]]);
+            const found = state.files.find((f) => f.path === path && f.bucket === bucket);
+            if (!found || !(mine(path) || state.staffCanSee === path)) return { data: null, error: { message: 'Object not found' } };
+            return { data: { signedUrl: 'https://files.example/' + path + '?for=' + seconds }, error: null };
+          },
+        };
+      },
+    },
     rpc: (fn, args) => Object.assign(new Query(state, 'rpc:' + fn), { args }),
     // the commute-times edge function: a fixed rule for the minutes, and one school (s6) that has no road to it
     functions: {
@@ -1779,5 +1815,127 @@ await signIn(ui, 'ann@x.in', 'password1');
 check('a word the app does not know means "follow the phone", not a blank screen', await waitFor(() => ui.cards() === 20) && page(ui) === 'rgb(18,17,31)', page(ui));
 await ui.unmount();
 globalThis.__scheme = 'light';
+console.log('\n=== photographs of people ===');
+// everything the form needs apart from the photograph
+async function fillApplication(u) {
+  await u.type('apply-child-first', 'Ananya'); await u.type('apply-child-last', 'Nair');
+  await u.type('apply-dob', '2021-06-30');
+  await u.click('apply-class-jr_kg');
+  await u.type('apply-parent-name', 'Priya Nair');
+  await u.type('apply-phone', '98200 11111');
+  await u.type('apply-email', 'priya@x.in');
+  await u.type('apply-address', '12 Hill Road, Bandra West');
+  await u.type('apply-pincode', '400050');
+  await u.click('apply-consent');
+}
+
+
+globalThis.__bio = { hasHardwareAsync: () => false, isEnrolledAsync: () => false, supportedAuthenticationTypesAsync: () => [] };
+const asBase64 = (n) => Buffer.from(Uint8Array.from({ length: n }, () => 7)).toString('base64');
+const phoneWith = (answer, allowed = { status: 'granted', canAskAgain: true }) => {
+  const calls = [];
+  globalThis.__pics = {
+    requestMediaLibraryPermissionsAsync: async () => { calls.push('permission'); return allowed; },
+    launchImageLibraryAsync: async (opts) => { calls.push(opts); return answer; },
+  };
+  return calls;
+};
+const aPhoto = (n = 5000, mime = 'image/jpeg') => ({ assets: [{ base64: asBase64(n), mimeType: mime, fileName: 'photo.jpg' }] });
+
+st = seed(); ui = await mount(st);
+let picks = phoneWith(aPhoto());
+await signIn(ui, 'ann@x.in', 'password1');
+await waitFor(() => !!ui.id('top-avatar'));
+check('a parent with no photograph is drawn, as before', ui.id('top-avatar').tagName.toLowerCase() === 'svg');
+await ui.click('settings');
+await waitFor(() => !!ui.id('profile-card'));
+check('the profile offers a photograph, and says who can see it', !!ui.id('profile-photo') && /Only you can see this/.test(ui.text()));
+check('...and offers no way to take one away, because there is none', !ui.id('profile-photo-remove'));
+await ui.click('profile-photo');
+check('choosing one asks the phone for permission first, and asks for a square picture',
+  await waitFor(() => st.files.length === 1) && picks[0] === 'permission' && picks[1]?.allowsEditing === true && JSON.stringify(picks[1]?.aspect) === '[1,1]', JSON.stringify(picks));
+check('...and it goes into the parent\'s own folder, as a photograph, at the size the phone gave',
+  st.files[0].path.startsWith('parents/u1/') && st.files[0].mime === 'image/jpeg' && st.files[0].bytes === 5000, JSON.stringify(st.files));
+check('...with the profile pointed at it and nothing else changed', await waitFor(() => (st.profiles.u1 ?? {}).photo_path === st.files[0].path)
+  && Object.keys(st.profiles.u1).every((k) => ['photo_path', 'language', 'notify_push'].includes(k)), JSON.stringify(st.profiles.u1));
+check('the photograph is what is shown, in the profile and at the top of every screen',
+  await waitFor(() => !!ui.id('profile-avatar-photo')) && await waitFor(() => !!ui.id('top-avatar-photo')) && !ui.id('profile-avatar'), ui.id('profile-card')?.innerHTML.slice(0, 200));
+check('...fetched through an address that runs out, not a public link',
+  (st.signed ?? []).some(([path, seconds]) => path === st.files[0].path && seconds > 0 && seconds <= 3600), JSON.stringify(st.signed));
+{
+  const was = st.files[0].path;
+  picks = phoneWith(aPhoto(6000, 'image/png'));
+  await ui.click('profile-photo');
+  check('changing it puts the new one up and takes the old one away', await waitFor(() => st.files.length === 1 && st.files[0].path !== was)
+    && (st.removed ?? []).includes(was), JSON.stringify({ files: st.files.map((f) => f.path), removed: st.removed }));
+}
+await ui.click('profile-photo-remove');
+check('going back to a drawing takes the file away and forgets it', await waitFor(() => (st.profiles.u1 ?? {}).photo_path === null) && await waitFor(() => st.files.length === 0), JSON.stringify(st.files));
+check('...and the drawing is back on the screen at once', await waitFor(() => !!ui.id('profile-avatar')) && !ui.id('profile-avatar-photo'));
+await ui.unmount();
+
+// what the parent is told when it does not work
+st = seed(); ui = await mount(st);
+phoneWith(null, { status: 'denied', canAskAgain: false });
+await signIn(ui, 'ann@x.in', 'password1');
+await ui.click('settings');
+await waitFor(() => !!ui.id('profile-photo'));
+await ui.click('profile-photo');
+check('a phone that will not let the app at the pictures says where to change that', await waitFor(() => /phone settings/.test(ui.id('profile-problem')?.textContent ?? '')) && st.files.length === 0, ui.id('profile-problem')?.textContent);
+phoneWith({ canceled: true });
+await ui.click('profile-photo');
+check('...and changing your mind in the picker is not treated as a problem', await waitFor(() => !ui.id('profile-problem')) && st.files.length === 0);
+phoneWith(aPhoto(4 * 1024 * 1024));
+await ui.click('profile-photo');
+check('a photograph too large is refused here, with the size said, and never sent', await waitFor(() => /larger than 3 MB/.test(ui.id('profile-problem')?.textContent ?? '')) && st.files.length === 0, ui.id('profile-problem')?.textContent);
+phoneWith(aPhoto(1000, 'image/gif'));
+await ui.click('profile-photo');
+check('...and a kind the app does not take is refused before the phone is asked to send it', await waitFor(() => !!ui.id('profile-problem')) && st.files.length === 0);
+await ui.unmount();
+
+// the child on the admission form
+st = seed(); ui = await mount(st);
+picks = phoneWith(aPhoto(9000));
+await signIn(ui, 'ann@x.in', 'password1');
+await ui.click('school-n2');
+await waitFor(() => !!ui.id('apply-start'));
+await ui.click('apply-start');
+await waitFor(() => !!ui.id('apply-screen'));
+check('the form asks for a photograph of the child, and says exactly who will see it',
+  !!ui.id('apply-photo') && /Only the school you are applying to/.test(ui.text()));
+check('...and nothing is shown or offered for removal until there is one', !ui.id('apply-photo-shown') && !ui.id('apply-photo-remove'));
+await ui.click('apply-photo');
+check('adding one puts it in the family\'s own children folder', await waitFor(() => st.files.length === 1) && st.files[0].path.startsWith('children/u1/'), JSON.stringify(st.files));
+check('...and shows the parent what the school will see', await waitFor(() => !!ui.id('apply-photo-shown')) && !!ui.id('apply-photo-remove'));
+{
+  const was = st.files[0].path;
+  picks = phoneWith(aPhoto(7000));
+  await ui.click('apply-photo');
+  check('changing it leaves only the new one behind', await waitFor(() => st.files.length === 1 && st.files[0].path !== was) && (st.removed ?? []).includes(was), JSON.stringify({ files: st.files.map((f) => f.path), removed: st.removed }));
+}
+await ui.click('apply-photo-remove');
+check('taking it off the form takes the file away too', await waitFor(() => st.files.length === 0) && await waitFor(() => !ui.id('apply-photo-shown')));
+picks = phoneWith(aPhoto(8000));
+await ui.click('apply-photo');
+await waitFor(() => st.files.length === 1);
+const childPhoto = st.files[0].path;
+await fillApplication(ui);
+await ui.click('apply-send');
+check('the form is sent with the photograph attached to it', await waitFor(() => st.applications.length === 1) && st.applications[0].child_photo_path === childPhoto, JSON.stringify(st.applications[0] ?? {}));
+await ui.unmount();
+
+// and a form without one is still a form
+st = seed(); ui = await mount(st);
+phoneWith({ canceled: true });
+await signIn(ui, 'ann@x.in', 'password1');
+await ui.click('school-n2');
+await waitFor(() => !!ui.id('apply-start'));
+await ui.click('apply-start');
+await waitFor(() => !!ui.id('apply-screen'));
+await fillApplication(ui);
+await ui.click('apply-send');
+check('a family that would rather not send a photograph sends a complete form without one',
+  await waitFor(() => st.applications.length === 1) && !st.applications[0].child_photo_path && st.files.length === 0, JSON.stringify(st.applications[0] ?? {}));
+await ui.unmount();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

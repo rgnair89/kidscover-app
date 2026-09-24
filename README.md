@@ -39,6 +39,7 @@ Run these in the Supabase SQL editor, in order, from the `kidscover-admin` repos
 | `20260921000100_profile_gender_and_avatar.sql` | the profile: how a parent is addressed, and the picture shown for them |
 | `20260921000200_parent_addresses.sql` | the address book: the places a parent searches from |
 | `20260921000300_people_photos.sql` | photographs of parents and children, in a private bucket |
+| `20260925000100_send_push_schedule.sql` | asks send-push, once a minute, to empty the queue - read its notes first |
 
 Edge functions (paste each into the Supabase dashboard): `commute-times`, `read-school-websites`, `send-push`,
 `crm-deliver`, `delete-account`. The last three need the secret `SB_SECRET_KEY` (a `sb_secret_…` key) set in
@@ -65,7 +66,7 @@ which is the mark you see beside the name inside the app.
 ```bash
 npm install
 npm start          # then press w for the browser, or scan the QR code with Expo Go
-npm test           # the app's own checks: 323 on the logic, 444 on the screens, plus the language packs
+npm test           # the app's own checks: 339 on the logic, 451 on the screens, plus the language packs
 ```
 
 In Expo Go the fingerprint unlock works, but **push notifications do not** (Android stopped allowing them in Expo Go).
@@ -87,16 +88,39 @@ npx eas-cli init
 `init` writes your own project id into `app.json`, as `extra.eas.projectId`. Commit that change. Run `init` before
 the first build: without it `eas build` stops with "Invalid UUID appId", because there is no project to build into.
 
-**2. Notifications on Android (once, optional).** Push needs Firebase:
+**2. Notifications on Android (once).** Android delivers notifications only through Firebase, so until this is done
+everything else works and the notifications simply stay quiet.
 
-- In the [Firebase console](https://console.firebase.google.com), create a project (any name).
-- Add an **Android app** with the package name `in.kidscover.app`. Download `google-services.json`.
-- In Firebase → Project settings → Service accounts → **Generate new private key**: a `.json` file.
-- Give that service-account file to Expo: `npx eas-cli credentials` → Android → *FCM V1 service account key* → upload.
-- In [expo.dev](https://expo.dev) → your project → Notifications, switch on **Enhanced Security for Push**, make an
-  access token, and set it in Supabase → Edge Functions → Secrets as `EXPO_ACCESS_TOKEN`.
+- In the [Firebase console](https://console.firebase.google.com), make a project. Any name; Analytics is not needed.
+- In it: **Add app → Android**, with the package name `in.kidscover.app`, spelled exactly like that. Leave the SHA-1
+  fingerprint blank; it is only needed for Google sign-in, which Kidscover does not use.
+- Download **`google-services.json`** and put it in this folder, beside `app.json`. Commit it. It is not a secret: it
+  holds your Firebase project's numbers and an Android key tied to that package name, and a copy sits inside every APK
+  you hand out. Commit it because `eas build` sends Expo what git has, so a file left uncommitted never reaches the
+  build. Nothing else to change: `app.config.js` notices the file and points the build at it.
+- Then Firebase → **Project settings → Service accounts → Generate new private key**. That file *is* secret - it can
+  send notifications to anyone's phone as you. Hand it straight to Expo and delete your copy:
 
-Skip this and everything else still works; only the notifications stay quiet.
+```bash
+npx eas-cli credentials --platform android
+```
+
+  Pick the build profile, then **Push Notifications: Manage your FCM V1 service account key** → *Upload a new service
+  account key*. It never goes near this repository, and there is nothing to commit afterwards.
+
+- Worth doing while you are there: in [expo.dev](https://expo.dev) → your project → **Notifications**, switch on
+  *Enhanced Security for Push*, make an access token, and put it in Supabase → Edge Functions → Secrets as
+  `EXPO_ACCESS_TOKEN`. Without it, anyone who learned a push token could send to that phone; with it, only
+  `send-push` can.
+- Build again (step 3) and install. The first time the app opens, Android asks whether Kidscover may send
+  notifications. If someone says no, Android remembers it: the switch in Settings will not bring it back, only the
+  phone's own settings for the app will.
+
+To see that it works, reply to one of your own enquiries from the Partner Portal. The phone shows the school's name
+and one line - never the words of the message.
+
+(If you would rather the Firebase file stayed out of git: `eas secret:create --name GOOGLE_SERVICES_JSON --type file
+--value ./google-services.json`, and add `google-services.json` to `.gitignore`. `app.config.js` reads that too.)
 
 **3. Build the APK.**
 
@@ -157,6 +181,7 @@ locked screen that a stranger should not read.
 | `i18n/` | `index.js` (the languages and the translator), one `.json` per language, `check.cjs` |
 | `index.js` | where the app starts on a phone |
 | `app.json`, `eas.json` | the Expo and build settings (Android package `in.kidscover.app`) |
+| `app.config.js` | adds the Firebase file to the Android build, but only once there is one |
 | `tests/logic.test.mjs` | the logic on its own, against a stand-in database |
 | `tests/ui.test.mjs` | the real screens in a simulated browser, against a stand-in database and a stand-in phone |
 | `tests/mutate.mjs` | breaks the app on purpose, to prove the tests notice |

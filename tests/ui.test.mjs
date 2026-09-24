@@ -30,7 +30,7 @@ fs.writeFileSync(path.join(tmp, 'fake-supabase.mjs'), `export const createClient
 fs.writeFileSync(path.join(tmp, 'stub-securestore.mjs'), `export const setItemAsync = async () => {}; export const getItemAsync = async () => null; export const deleteItemAsync = async () => {};`);
 // the fingerprint reader and the notifications: each test sets globalThis.__bio / globalThis.__push
 fs.writeFileSync(path.join(tmp, 'fake-biometrics.mjs'), `export const AuthenticationType = { FINGERPRINT: 1, FACIAL_RECOGNITION: 2, IRIS: 3 };\nexport const hasHardwareAsync = async () => globalThis.__bio?.hasHardwareAsync?.() ?? false;\nexport const isEnrolledAsync = async () => globalThis.__bio?.isEnrolledAsync?.() ?? false;\nexport const supportedAuthenticationTypesAsync = async () => globalThis.__bio?.supportedAuthenticationTypesAsync?.() ?? [];\nexport const authenticateAsync = async (...a) => globalThis.__bio?.authenticateAsync?.(...a) ?? { success: false };`);
-fs.writeFileSync(path.join(tmp, 'fake-notifications.mjs'), `export const getPermissionsAsync = async () => globalThis.__push?.getPermissionsAsync?.() ?? { granted: false, status: 'undetermined' };\nexport const requestPermissionsAsync = async () => globalThis.__push?.requestPermissionsAsync?.() ?? { granted: false, status: 'denied' };\nexport const getExpoPushTokenAsync = async (...a) => globalThis.__push?.getExpoPushTokenAsync?.(...a) ?? { data: '' };\nexport const addNotificationResponseReceivedListener = (fn) => { globalThis.__push?.listen?.(fn); return { remove() {} }; };`);
+fs.writeFileSync(path.join(tmp, 'fake-notifications.mjs'), `export const getPermissionsAsync = async () => globalThis.__push?.getPermissionsAsync?.() ?? { granted: false, status: 'undetermined' };\nexport const requestPermissionsAsync = async () => globalThis.__push?.requestPermissionsAsync?.() ?? { granted: false, status: 'denied' };\nexport const getExpoPushTokenAsync = async (...a) => globalThis.__push?.getExpoPushTokenAsync?.(...a) ?? { data: '' };\nexport const addNotificationResponseReceivedListener = (fn) => { globalThis.__push?.listen?.(fn); return { remove() {} }; };\nexport const setNotificationHandler = (h) => { globalThis.__pushHandler = h; };\nexport const setNotificationChannelAsync = async (id, opts) => { (globalThis.__channels ??= []).push([id, opts]); };\nexport const AndroidImportance = { HIGH: 4, MAX: 5 };`);
 fs.writeFileSync(path.join(tmp, 'stub-constants.mjs'), `export default { expoConfig: { extra: { eas: { projectId: 'test-project' } } } };`);
 // A stand-in phone that has taken 32 points at the top for its clock and 48 at the bottom for its navigation buttons,
 // which is roughly what the Android phone that showed the cut-off buttons reports.
@@ -382,7 +382,13 @@ class Query {
         st.appEvents = st.appEvents.filter((e) => e.application_id !== args.p_app);
         return before === st.applications.length ? { data: null, error: { code: '42501', message: 'This application is not yours' } } : { data: null, error: null };
       }
-      if (fn === 'register_push_device') { st.pushTokens.push({ token: args.p_token, platform: args.p_platform, user: me?.id }); return { data: null, error: null }; }
+      if (fn === 'register_push_device') {
+        // the real table keys on the token, so the same phone twice is one row, not two
+        const already = st.pushTokens.find((x) => x.token === args.p_token);
+        if (already) Object.assign(already, { platform: args.p_platform, user: me?.id });
+        else st.pushTokens.push({ token: args.p_token, platform: args.p_platform, user: me?.id });
+        return { data: null, error: null };
+      }
       if (fn === 'unregister_push_device') { st.pushTokens = st.pushTokens.filter((x) => x.token !== args.p_token); return { data: null, error: null }; }
       if (fn === 'log_outbound_click') { st.clicks.push({ school: args.p_school, kind: args.p_kind, user: me?.id }); return { data: null, error: null }; }
       if (fn === 'mark_notifications_read') { st.notifications.filter((n) => n.user_id === me?.id).forEach((n) => { n.read_at = tick(st); }); return { data: null, error: null }; }
@@ -2092,5 +2098,55 @@ check('the family sees their own enquiry, and no way into anybody\'s school', !u
 await ui.click('enquiries');
 check('...and reads it as their own conversation, as before', await waitFor(() => !!ui.id('thread-t-staff')) && !ui.id('staff-thread-t-staff'));
 await ui.unmount();
+
+// =============================================================================================================
+console.log('\n=== the phone is told where to send notifications ===');
+globalThis.__bio = { hasHardwareAsync: () => false, isEnrolledAsync: () => false, supportedAuthenticationTypesAsync: () => [] };
+const phoneSays = (answer) => {
+  globalThis.__channels = [];
+  globalThis.__tokenAsks = [];
+  globalThis.__push = {
+    getPermissionsAsync: () => answer,
+    requestPermissionsAsync: () => answer,
+    getExpoPushTokenAsync: (arg) => { globalThis.__tokenAsks.push(arg ?? null); return { data: 'ExponentPushToken[real]' }; },
+  };
+};
+
+phoneSays({ granted: true, status: 'granted' });
+st = seed(); ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+await waitFor(() => ui.cards() === 20);
+check('a notification arriving while somebody is using the app is shown, not swallowed',
+  !!globalThis.__pushHandler && JSON.stringify(await globalThis.__pushHandler.handleNotification())
+    === JSON.stringify({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false }),
+  JSON.stringify(globalThis.__pushHandler ? await globalThis.__pushHandler.handleNotification() : null));
+check('signing in asks Expo for the token of this project, not whichever one the phone last saw',
+  await waitFor(() => globalThis.__tokenAsks.length > 0)
+  && JSON.stringify(globalThis.__tokenAsks[0]) === JSON.stringify({ projectId: 'test-project' }), JSON.stringify(globalThis.__tokenAsks));
+check('...and the phone is remembered against this account, so a school\'s reply knows where to go',
+  await waitFor(() => st.pushTokens.length === 1) && st.pushTokens[0].token === 'ExponentPushToken[real]'
+  && st.pushTokens[0].user === 'u1' && st.pushTokens[0].platform === 'web', JSON.stringify(st.pushTokens));
+check('...and a browser, which is not an Android phone, is given no channel and is none the worse for it',
+  globalThis.__channels.length === 0, JSON.stringify(globalThis.__channels));
+
+await ui.click('settings');
+await waitFor(() => !!ui.id('settings-push'));
+await ui.toggle('settings-push');
+check('turning notifications off forgets the phone rather than leaving it on a list',
+  await waitFor(() => st.pushTokens.length === 0) && st.profiles.u1?.notify_push === false, JSON.stringify([st.pushTokens, st.profiles.u1]));
+await ui.toggle('settings-push');
+check('...and turning them back on remembers it again, once, not twice',
+  await waitFor(() => st.profiles.u1?.notify_push === true) && st.pushTokens.length === 1, JSON.stringify(st.pushTokens));
+await ui.unmount();
+
+// somebody who tells Android no
+phoneSays({ granted: false, status: 'denied' });
+st = seed(); ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+await waitFor(() => ui.cards() === 20);
+check('a person who refuses the phone\'s own permission is not pestered, and the app carries on as normal',
+  st.pushTokens.length === 0 && globalThis.__tokenAsks.length === 0 && !!ui.id('search'));
+await ui.unmount();
+globalThis.__push = undefined;
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

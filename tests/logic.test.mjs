@@ -16,7 +16,7 @@ const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'lev
   'BOARD_CHOICES', 'boardSourceText', 'admissionText',
   'CATEGORY_CHOICES', 'categoryOf', 'categoryFilters', 'isSchoolPlace',
   'FACILITY_INFO', 'ACHIEVEMENT_INFO', 'SOURCE_TEXT', 'facilityText', 'sourcesText', 'photoCreditText', 'artColours', 'ART_COLOURS', 'loadFacilities', 'loadAchievements',
-  'setTranslator', 't', 'setMoneyLocale', 'setDateLocale', 'rupees', 'budgetLabel', 'BUDGET_CHOICES', 'FEE_PARTS', 'feeForLevel', 'feeSummaryText', 'loadFeeSchedules', 'loadTiles', 'leaveByText', 'clockText', 'dayText', 'noteOutboundClick', 'messageFrom', 'EN_GRADES', 'classLabel', 'stageText', 'academicYearChoices', 'APPLY_CLASSES', 'APPLY_RELATIONS', 'APPLY_GENDERS', 'EMPTY_APPLICATION', 'validateApplication', 'submitApplication', 'loadApplications', 'loadApplicationEvents', 'withdrawApplication', 'deleteApplication', 'isMissingApplications', 'liveApplications', 'MAX_COMPARE', 'toggleCompare', 'compareRows', 'registerForPush', 'forgetPush', 'loadNotifications', 'markNotificationsRead', 'initialsOf', 'backTargetFor', 'BACK_FROM', 'STAFF_COLUMNS', 'SCHOOL_ENQUIRY_COLUMNS', 'APPLY_STAGES', 'MAX_STAGE_NOTE', 'loadMySchools', 'loadSchoolEnquiries', 'staffUnreadCount', 'familyName', 'loadSchoolApplications', 'validateStageNote', 'setApplicationStage', 'stageCanChange', 'PHOTO_BUCKET', 'PHOTO_MAX_BYTES', 'PHOTO_TYPES', 'PHOTO_URL_SECONDS', 'bytesFromBase64', 'photoTypeOf', 'photoPathFor', 'isOwnPhotoPath', 'validatePhoto', 'pickPhoto', 'photoProblemText', 'uploadPhoto', 'removePhoto', 'signedPhotoUrl', 'THEME_SETTING', 'THEME_CHOICES', 'themeFor', 'themeChoiceOf', 'TOUR_SETTING', 'TOUR_NEVER', 'TOUR_STEPS', 'TOUR_VERSION', 'tourToShow', 'tourAfterFinish', 'tourStepAt', 'nextTourIndex', 'onLastTourStep', 'ADDRESS_COLUMNS', 'MAX_ADDRESSES', 'MAX_ADDRESS_NAME', 'MAX_ADDRESS_TEXT', 'isMissingAddresses', 'addressPlace', 'validateAddress', 'loadAddresses', 'saveAddress', 'deleteAddress', 'describePlace', 'addressHere', 'PROFILE_GENDERS', 'PROFILE_AVATARS', 'AUTO_AVATAR', 'avatarFor', 'profileComplete', 'saveProfile', 'loadSettings', 'saveLanguage', 'savePushChoice', 'deleteAccount', 'biometricKind', 'unlockWithBiometrics', 'shouldLock', 'BIOMETRIC_SETTING', 'LANGUAGE_SETTING', 'LOCK_AFTER_MS', 'APPLICATION_COLUMNS'];
+  'setTranslator', 't', 'setMoneyLocale', 'setDateLocale', 'rupees', 'budgetLabel', 'BUDGET_CHOICES', 'FEE_PARTS', 'feeForLevel', 'feeSummaryText', 'loadFeeSchedules', 'loadTiles', 'leaveByText', 'clockText', 'dayText', 'noteOutboundClick', 'messageFrom', 'EN_GRADES', 'classLabel', 'stageText', 'academicYearChoices', 'APPLY_CLASSES', 'APPLY_RELATIONS', 'APPLY_GENDERS', 'EMPTY_APPLICATION', 'validateApplication', 'submitApplication', 'loadApplications', 'loadApplicationEvents', 'withdrawApplication', 'deleteApplication', 'isMissingApplications', 'liveApplications', 'MAX_COMPARE', 'toggleCompare', 'compareRows', 'registerForPush', 'forgetPush', 'ensurePushChannel', 'PUSH_CHANNEL', 'loadNotifications', 'markNotificationsRead', 'initialsOf', 'backTargetFor', 'BACK_FROM', 'STAFF_COLUMNS', 'SCHOOL_ENQUIRY_COLUMNS', 'APPLY_STAGES', 'MAX_STAGE_NOTE', 'loadMySchools', 'loadSchoolEnquiries', 'staffUnreadCount', 'familyName', 'loadSchoolApplications', 'validateStageNote', 'setApplicationStage', 'stageCanChange', 'PHOTO_BUCKET', 'PHOTO_MAX_BYTES', 'PHOTO_TYPES', 'PHOTO_URL_SECONDS', 'bytesFromBase64', 'photoTypeOf', 'photoPathFor', 'isOwnPhotoPath', 'validatePhoto', 'pickPhoto', 'photoProblemText', 'uploadPhoto', 'removePhoto', 'signedPhotoUrl', 'THEME_SETTING', 'THEME_CHOICES', 'themeFor', 'themeChoiceOf', 'TOUR_SETTING', 'TOUR_NEVER', 'TOUR_STEPS', 'TOUR_VERSION', 'tourToShow', 'tourAfterFinish', 'tourStepAt', 'nextTourIndex', 'onLastTourStep', 'ADDRESS_COLUMNS', 'MAX_ADDRESSES', 'MAX_ADDRESS_NAME', 'MAX_ADDRESS_TEXT', 'isMissingAddresses', 'addressPlace', 'validateAddress', 'loadAddresses', 'saveAddress', 'deleteAddress', 'describePlace', 'addressHere', 'PROFILE_GENDERS', 'PROFILE_AVATARS', 'AUTO_AVATAR', 'avatarFor', 'profileComplete', 'saveProfile', 'loadSettings', 'saveLanguage', 'savePushChoice', 'deleteAccount', 'biometricKind', 'unlockWithBiometrics', 'shouldLock', 'BIOMETRIC_SETTING', 'LANGUAGE_SETTING', 'LOCK_AFTER_MS', 'APPLICATION_COLUMNS'];
 fs.writeFileSync(path.join(here, '.tmp', 'logic.mjs'), src.slice(a, b) + `\nexport { ${names.join(', ')} };\n`);
 const L = await import(pathToFileURL(path.join(here, '.tmp', 'logic.mjs')).href);
 // the words of the app come from the language packs; the tests read the English one
@@ -634,5 +634,81 @@ check('...and every one of them has words a parent will read', L.APPLY_STAGES.ev
 }
 check('a note that just fits is allowed', L.validateStageNote('x'.repeat(L.MAX_STAGE_NOTE)) === null && L.validateStageNote('') === null && L.validateStageNote(null) === null);
 check('a family that withdrew is not one to chase, and the app knows before asking', !L.stageCanChange('withdrawn') && L.stageCanChange('submitted') && L.stageCanChange('in_review'));
+
+console.log('\n=== getting a notification to the phone ===');
+// a stand-in phone: the permission it gives, the channel it can make, and the token Firebase would hand back
+const fakePhone = (o = {}) => {
+  const calls = [];
+  return {
+    calls,
+    AndroidImportance: { HIGH: 4, MAX: 5 },
+    getPermissionsAsync: async () => { calls.push('already?'); return o.already ?? { granted: true, status: 'granted' }; },
+    requestPermissionsAsync: async () => { calls.push('please'); return o.asked ?? { granted: true, status: 'granted' }; },
+    setNotificationChannelAsync: async (id, opts) => { calls.push(['channel', id, opts]); if (o.noChannels) throw new Error('an old phone'); },
+    getExpoPushTokenAsync: async (arg) => { calls.push(['token', arg]); if (o.noFirebase) throw new Error('Default FirebaseApp is not initialized'); return { data: 'token' in o ? o.token : 'ExponentPushToken[abc123]' }; },
+  };
+};
+const okDb = () => fakeDb(() => ({ error: null }));
+
+{
+  const phone = fakePhone(); const db = okDb();
+  const res = await L.registerForPush(phone, db, 'android', 'proj-1', 'Notifications');
+  check('a phone that has already said yes is not asked again', res.ok === true && !phone.calls.includes('please'));
+  check('...the notification gets somewhere to go before the token is asked for',
+    phone.calls.findIndex((c) => c[0] === 'channel') < phone.calls.findIndex((c) => c[0] === 'token'), JSON.stringify(phone.calls));
+  check('...the channel is Kidscover\'s own, named in the person\'s language and loud enough to be seen',
+    phone.calls[1][1] === L.PUSH_CHANNEL && phone.calls[1][2].name === 'Notifications' && phone.calls[1][2].importance === 4, JSON.stringify(phone.calls[1]));
+  check('...the token is asked for against this project, not whichever one the phone last saw',
+    eq(phone.calls[2][1], { projectId: 'proj-1' }), JSON.stringify(phone.calls[2]));
+  check('...and the phone is remembered, so the school\'s reply knows where to go',
+    db.recs[0].table === 'rpc:register_push_device' && eq(db.recs[0].args, { p_token: 'ExponentPushToken[abc123]', p_platform: 'android' }), JSON.stringify(db.recs[0]?.args));
+}
+{
+  const phone = fakePhone({ already: { granted: false, status: 'undetermined' } }); const db = okDb();
+  const res = await L.registerForPush(phone, db, 'android', 'proj-1');
+  check('a phone that has not been asked yet is asked, and then carries on', res.ok === true && phone.calls.includes('please'));
+}
+{
+  const phone = fakePhone({ already: { granted: false, status: 'denied' }, asked: { granted: false, status: 'denied' } }); const db = okDb();
+  const res = await L.registerForPush(phone, db, 'android', 'proj-1');
+  check('somebody who says no is taken at their word: no token, nothing saved', res.ok === false && res.reason === 'denied' && db.recs.length === 0);
+}
+{
+  const phone = fakePhone({ noFirebase: true }); const db = okDb();
+  const res = await L.registerForPush(phone, db, 'android', 'proj-1');
+  check('a build with no Firebase behind it fails quietly rather than stopping the app', res.ok === false && res.reason === 'unavailable' && db.recs.length === 0);
+}
+{
+  const phone = fakePhone({ noChannels: true }); const db = okDb();
+  const res = await L.registerForPush(phone, db, 'android', 'proj-1');
+  check('a phone too old for channels still gets its notifications', res.ok === true && db.recs.length === 1);
+}
+{
+  const phone = fakePhone({ token: 'something-else' }); const db = okDb();
+  const res = await L.registerForPush(phone, db, 'android', 'proj-1');
+  check('a token that is not an Expo one is not saved: it would only fail later', res.ok === false && res.reason === 'no_token' && db.recs.length === 0);
+}
+{
+  const phone = fakePhone(); const db = fakeDb(() => ({ error: { message: 'no' } }));
+  const res = await L.registerForPush(phone, db, 'android', 'proj-1');
+  check('if the database will not keep the token, the app says so rather than pretending', res.ok === false && res.reason === 'not_saved');
+}
+check('a phone that cannot do notifications at all is no reason to fail', (await L.registerForPush({}, okDb(), 'android', 'p')).reason === 'unavailable');
+{
+  const phone = fakePhone(); await L.registerForPush(phone, okDb(), 'ios', 'proj-1');
+  check('channels are an Android idea, and iPhones are not bothered with them', !phone.calls.some((c) => c[0] === 'channel'));
+}
+check('...and neither is a stand-in with no channels to set', (await L.ensurePushChannel({}, 'android', 'x')) === false);
+{
+  const phone = fakePhone(); const db = okDb();
+  await L.forgetPush(phone, db, 'android', 'proj-1');
+  check('turning notifications off tells the database to forget this phone',
+    db.recs[0].table === 'rpc:unregister_push_device' && eq(db.recs[0].args, { p_token: 'ExponentPushToken[abc123]' }), JSON.stringify(db.recs[0]?.args));
+}
+{
+  const db = okDb();
+  await L.forgetPush(fakePhone({ noFirebase: true }), db, 'android', 'proj-1');
+  check('...and there is nothing to forget when the phone never had a token', db.recs.length === 0);
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

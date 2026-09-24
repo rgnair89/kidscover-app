@@ -1218,13 +1218,19 @@ function SchoolArt({ seed, height = 180, compact = false, testID }) {
   );
 }
 
+// The same school that is on the home screen. Both are drawn from the one set of shapes: this one here, and the
+// icon files by scripts/make-icons.cjs. A flag, a row of windows and a door, so it reads as a school and not a house.
+const LOGO_WINDOWS = [9.6, 13, 16.4, 19.8];
 function LogoMark({ size = 28 }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 32 32">
       <Rect x="0" y="0" width="32" height="32" rx="9" fill={C.blue} />
-      <Polygon points="6,15 16,7 26,15" fill={C.sun} />
-      <Rect x="9" y="15" width="14" height="10" rx="1.5" fill="#FFFFFF" />
-      <Rect x="14" y="19" width="4" height="6" rx="1" fill={C.coral} />
+      <Rect x="15.7" y="2.6" width="0.7" height="4.2" rx="0.3" fill="#FFFFFF" />
+      <Rect x="16.4" y="2.9" width="3.4" height="2.1" rx="0.5" fill={C.coral} />
+      <Polygon points="4,15.5 16,6.4 28,15.5" fill={C.sun} />
+      <Rect x="8" y="15" width="16" height="10.5" rx="1.5" fill="#FFFFFF" />
+      {LOGO_WINDOWS.map((x) => <Rect key={x} x={x} y="17.1" width="2.6" height="2.3" rx="0.5" fill={C.blue} />)}
+      <Rect x="14.2" y="20.8" width="3.6" height="4.7" rx="0.9" fill={C.coral} />
     </Svg>
   );
 }

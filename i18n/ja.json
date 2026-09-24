@@ -454,5 +454,22 @@
   "address.needName": "この場所に名前をつけてください。",
   "address.nameLong": "名前は {max} 文字までです。",
   "address.nameTaken": "その名前の場所はすでにあります。",
-  "address.full": "場所は {max} 件まで保存できます。"
+  "address.full": "場所は {max} 件まで保存できます。",
+  "tour.find.title": "ぴったりの学校を見つける",
+  "tour.find.body": "名前や地域で探し、学年・教育課程・学費・距離でしぼり込めます。",
+  "tour.near.title": "いまいる場所や、家のまわり",
+  "tour.near.body": "位置情報を入れるか、保存した場所を選ぶと、学校ごとの距離と車での所要時間が出ます。",
+  "tour.compare.title": "並べて見くらべる",
+  "tour.compare.body": "最大4校まで並べて、学費・学年・教育課程・設備を1ページで見くらべられます。",
+  "tour.ask.title": "聞いて、申し込む",
+  "tour.ask.body": "入学について学校にメッセージを送り、スマホから申し込めます。返事はここに戻ってきます。",
+  "tour.you.title": "あなたのもの",
+  "tour.you.body": "お名前、画像、ことば、保存した場所は、右上のボタンの中にあります。",
+  "tour.step": "ステップ {step} / {count}",
+  "tour.skip": "とばす",
+  "tour.back": "もどる",
+  "tour.next": "つぎへ",
+  "tour.done": "探しはじめる",
+  "tour.again": "もう一度見る",
+  "tour.againHelp": "Kidscover をはじめて開いたときの、あの5枚です。"
 }

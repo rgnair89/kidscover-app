@@ -1101,6 +1101,23 @@ const LOCK_AFTER_MS = 2 * 60 * 1000;
 
 const shouldLock = (enabled, leftAt, now = Date.now(), after = LOCK_AFTER_MS) => !!enabled && !!leftAt && now - leftAt >= after;
 
+// ---- the tour a new parent is shown once ----
+// Five cards on the first visit, so the app explains itself instead of hoping the icons do. It can be closed at any
+// point, it never comes back by itself, and it can be asked for again from the profile.
+const TOUR_SETTING = 'kidscover.tourSeen';
+const TOUR_STEPS = [
+  { key: 'find', icon: '\ud83d\udd0e', title: 'tour.find.title', body: 'tour.find.body' },
+  { key: 'near', icon: '\ud83d\udccd', title: 'tour.near.title', body: 'tour.near.body' },
+  { key: 'compare', icon: '\u2696\ufe0f', title: 'tour.compare.title', body: 'tour.compare.body' },
+  { key: 'ask', icon: '\u2709\ufe0f', title: 'tour.ask.title', body: 'tour.ask.body' },
+  { key: 'you', icon: '\ud83d\udc64', title: 'tour.you.title', body: 'tour.you.body' },
+];
+const tourStepAt = (index) => TOUR_STEPS[Math.min(Math.max(Math.trunc(Number(index) || 0), 0), TOUR_STEPS.length - 1)];
+const nextTourIndex = (index, by = 1) => Math.min(Math.max(Math.trunc(Number(index) || 0) + by, 0), TOUR_STEPS.length - 1);
+const onLastTourStep = (index) => Math.trunc(Number(index) || 0) >= TOUR_STEPS.length - 1;
+// Anything other than a plain "yes, this phone has seen it" means it has not been seen.
+const shouldShowTour = (seen) => seen !== '1';
+
 // ==== END pure logic ====
 
 // ---------------------------------------------------------------------------------------------- small pieces
@@ -1548,6 +1565,33 @@ function AddressBook({ rows, available, onChanged }) {
       )}
       {!!problem && <Notice text={problem} testID="address-book-problem" />}
       {!!done && <Notice tone="green" text={done} testID="address-book-done" />}
+    </View>
+  );
+}
+
+// One card at a time, over whatever the parent was looking at. It is a veil rather than a separate screen so that
+// closing it puts them straight back where they were, with nothing to find their way back from.
+function TourOverlay({ index, onNext, onBack, onClose }) {
+  const step = tourStepAt(index);
+  const last = onLastTourStep(index);
+  return (
+    <View style={s.tourVeil} testID="tour">
+      <View style={s.tourCard}>
+        <Text style={s.tourArt}>{step.icon}</Text>
+        <Text style={s.h2} testID="tour-title">{t(step.title)}</Text>
+        <Text style={s.body} testID="tour-body">{t(step.body)}</Text>
+        <View style={s.tourDots}>
+          {TOUR_STEPS.map((x, i) => <View key={x.key} testID={`tour-dot-${x.key}`} style={[s.tourDot, i === index && s.tourDotOn]} />)}
+        </View>
+        <Text style={s.muted} testID="tour-progress">{t('tour.step', { step: index + 1, count: TOUR_STEPS.length })}</Text>
+        <View style={s.tourButtons}>
+          <Btn testID="tour-skip" kind="quiet" label={t('tour.skip')} onPress={onClose} />
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {index > 0 && <Btn testID="tour-back" kind="outline" label={t('tour.back')} onPress={onBack} />}
+            <Btn testID="tour-next" label={last ? t('tour.done') : t('tour.next')} onPress={last ? onClose : onNext} />
+          </View>
+        </View>
+      </View>
     </View>
   );
 }
@@ -2347,7 +2391,7 @@ function ProfileCard({ settings, userId, onSaved }) {
   );
 }
 
-function SettingsScreen({ language, onPickLanguage, settings, onSavePush, biometrics, unlockOn, onSetUnlock, onDeleted, onBack, email, onProfileSaved, userId, addresses, addressBookOn, onAddressesChanged }) {
+function SettingsScreen({ language, onPickLanguage, settings, onSavePush, biometrics, unlockOn, onSetUnlock, onDeleted, onBack, email, onProfileSaved, userId, addresses, addressBookOn, onAddressesChanged, onShowTour }) {
   const [password, setPassword] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -2372,6 +2416,12 @@ function SettingsScreen({ language, onPickLanguage, settings, onSavePush, biomet
 
       <ProfileCard settings={settings} userId={userId} onSaved={onProfileSaved} />
       <AddressBook rows={addresses} available={addressBookOn} onChanged={onAddressesChanged} />
+
+      <View style={s.card}>
+        <Text style={s.h2}>{t('tour.again')}</Text>
+        <Text style={s.muted}>{t('tour.againHelp')}</Text>
+        <Btn testID="settings-tour" kind="outline" label={t('tour.again')} onPress={onShowTour} />
+      </View>
 
       <View style={s.card}>
         <Text style={s.h2}>{t('settings.language')}</Text>
@@ -2680,6 +2730,8 @@ function AppBody() {
   const [liveApps, setLiveApps] = useState(0);
   const [settings, setSettings] = useState(null);
   const [addresses, setAddresses] = useState([]);
+  // which card of the tour is showing; below zero means it is not showing at all
+  const [tour, setTour] = useState(-1);
   // false only when the address-book migration has not been run: the app then hides the whole thing
   const [addressBookOn, setAddressBookOn] = useState(true);
   const [biometrics, setBiometrics] = useState('none');
@@ -2743,6 +2795,12 @@ function AppBody() {
     return () => { data?.subscription?.unsubscribe(); app?.remove?.(); };
   }, [unlockOn]);
 
+  // Closing it is final: it is a welcome, not a thing to dismiss again every time the app opens.
+  function closeTour() {
+    setTour(-1);
+    AsyncStorage.setItem(TOUR_SETTING, '1').catch(() => {});
+  }
+
   const refreshAddresses = useCallback(async () => {
     const res = await loadAddresses(supabase);
     if (res.error) {
@@ -2771,6 +2829,7 @@ function AppBody() {
       }
     });
     AsyncStorage.getItem(BIOMETRIC_SETTING).then((v) => { if (alive) setUnlockOn(v === 'on'); });
+    AsyncStorage.getItem(TOUR_SETTING).then((v) => { if (alive && shouldShowTour(v)) setTour(0); }).catch(() => {});
     biometricKind(LocalAuthentication).then((kind) => { if (alive) setBiometrics(kind); });
     return () => { alive = false; };
     // language is left out on purpose: this runs when the person signs in, not every time they switch language
@@ -2921,6 +2980,7 @@ function AppBody() {
           addresses={addresses}
           addressBookOn={addressBookOn}
           onAddressesChanged={refreshAddresses}
+          onShowTour={() => { setScreen('discover'); setTour(0); }}
           onDeleted={() => { setScreen('discover'); supabase.auth.signOut(); }}
           onBack={() => setScreen('discover')}
         />
@@ -2945,6 +3005,10 @@ function AppBody() {
           onToggleCompare={toggleCompareSchool} onOpenCompare={() => setScreen('compare')}
           addresses={addressBookOn ? addresses : null} onSavedAddress={refreshAddresses} userId={session?.user?.id ?? null} />
       </View>
+      {/* last of all, so it lies over whatever is underneath */}
+      {tour >= 0 && (
+        <TourOverlay index={tour} onNext={() => setTour((i) => nextTourIndex(i, 1))} onBack={() => setTour((i) => nextTourIndex(i, -1))} onClose={closeTour} />
+      )}
       {screen === 'school' && school && (
         <SchoolScreen
           key={school.id}
@@ -3038,6 +3102,13 @@ const s = StyleSheet.create({
   mine: { backgroundColor: C.blueSoft, borderColor: C.blueSoft, marginLeft: 24 },
   theirs: { marginRight: 24 },
   badge: { backgroundColor: C.blueSoft, color: C.blue, fontSize: 12, fontWeight: '700', paddingVertical: 3, paddingHorizontal: 8, borderRadius: 999, overflow: 'hidden' },
+  tourVeil: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(31,27,58,0.55)', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  tourCard: { backgroundColor: C.card, borderRadius: 20, padding: 20, width: '100%', maxWidth: 420, gap: 8 },
+  tourArt: { fontSize: 44, textAlign: 'center' },
+  tourDots: { flexDirection: 'row', gap: 6, justifyContent: 'center', paddingVertical: 4 },
+  tourDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.line },
+  tourDotOn: { backgroundColor: C.blue, width: 20 },
+  tourButtons: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, paddingTop: 4 },
   addressRow: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: C.line, paddingVertical: 6 },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginVertical: 6 },
   notice: { borderRadius: 10, padding: 10, marginVertical: 6 },

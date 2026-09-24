@@ -454,5 +454,22 @@
   "address.needName": "Give this place a name.",
   "address.nameLong": "A name can be up to {max} letters.",
   "address.nameTaken": "You already have a place with that name.",
-  "address.full": "You can keep up to {max} places."
+  "address.full": "You can keep up to {max} places.",
+  "tour.find.title": "Find the right school",
+  "tour.find.body": "Search by name or by area, then narrow it down by level, board, fees or how far away it is.",
+  "tour.near.title": "Near you, or near home",
+  "tour.near.body": "Turn your location on, or pick a place you saved, and every school shows how far it is and how long the drive takes.",
+  "tour.compare.title": "Put them side by side",
+  "tour.compare.body": "Add up to four schools and see their fees, levels, boards and what each one offers, together on one page.",
+  "tour.ask.title": "Ask, and apply",
+  "tour.ask.body": "Message a school about admissions, and apply from your phone. Their replies come back here.",
+  "tour.you.title": "Yours to keep",
+  "tour.you.body": "Your name, your picture, your language and your saved places are behind the button at the top right.",
+  "tour.step": "Step {step} of {count}",
+  "tour.skip": "Skip",
+  "tour.back": "Back",
+  "tour.next": "Next",
+  "tour.done": "Start looking",
+  "tour.again": "Show the tour again",
+  "tour.againHelp": "The five cards you saw when you first opened Kidscover."
 }

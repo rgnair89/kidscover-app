@@ -26,7 +26,11 @@
         "android.permission.RECORD_AUDIO",
         "android.permission.CAMERA",
         "android.permission.READ_CONTACTS"
-      ]
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#5B4BDB"
+      }
     },
     "ios": {
       "bundleIdentifier": "in.kidscover.app",
@@ -35,10 +39,12 @@
         "NSLocationWhenInUseUsageDescription": "Kidscover measures how far each school is from you. Your location is used for that alone and is never saved.",
         "NSFaceIDUsageDescription": "Unlock Kidscover with Face ID instead of typing your password.",
         "ITSAppUsesNonExemptEncryption": false
-      }
+      },
+      "icon": "./assets/icon.png"
     },
     "web": {
-      "bundler": "metro"
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png"
     },
     "plugins": [
       [
@@ -56,10 +62,23 @@
       [
         "expo-notifications",
         {
-          "color": "#5B4BDB"
+          "color": "#5B4BDB",
+          "icon": "./assets/notification-icon.png"
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 180,
+          "resizeMode": "contain",
+          "backgroundColor": "#5B4BDB",
+          "dark": {
+            "backgroundColor": "#12111F"
+          }
+        }
+      ]
     ],
     "extra": {
       "eas": {
@@ -71,6 +90,7 @@
     },
     "updates": {
       "url": "https://u.expo.dev/5256f914-c7ce-4b29-8b70-86b1586baea9"
-    }
+    },
+    "icon": "./assets/icon.png"
   }
 }

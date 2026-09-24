@@ -45,6 +45,20 @@ Supabase → Edge Functions → Secrets.
 
 ---
 
+## The icons
+
+The app's icons are drawn in code, like everything else in it: a school under a sunshine roof, with a flag, a row
+of windows and a coral door, on the brand violet. Nothing is licensed and nothing is downloaded.
+
+```bash
+node scripts/make-icons.cjs   # redraws assets/*.png
+```
+
+Change the shapes in that one file and every size follows. The same shapes are drawn again in App.js as `LogoMark`,
+which is the mark you see beside the name inside the app.
+
+---
+
 ## Running it while you work
 
 ```bash

@@ -23,7 +23,7 @@ export default {
 fs.writeFileSync(path.join(tmp, 'stub-empty.mjs'), `export {};`);
 fs.writeFileSync(path.join(tmp, 'stub-svg.mjs'), `import * as React from 'react';\nconst mk = (tag) => function SvgPart({ testID, children, ...props }) { return React.createElement(tag, { ...props, 'data-testid': testID }, children); };\nexport default mk('svg');\nexport const Circle = mk('circle'), Defs = mk('defs'), Ellipse = mk('ellipse'), G = mk('g'), LinearGradient = mk('linearGradient'), Path = mk('path'), Polygon = mk('polygon'), Rect = mk('rect'), Stop = mk('stop');\n`);
 // the phone's location: each test sets globalThis.__loc to the behaviour it wants
-fs.writeFileSync(path.join(tmp, 'fake-location.mjs'), `export const Accuracy = { Balanced: 3 };\nexport const requestForegroundPermissionsAsync = (...a) => globalThis.__loc.requestForegroundPermissionsAsync(...a);\nexport const getCurrentPositionAsync = (...a) => globalThis.__loc.getCurrentPositionAsync(...a);`);
+fs.writeFileSync(path.join(tmp, 'fake-location.mjs'), `export const Accuracy = { Balanced: 3 };\nexport const requestForegroundPermissionsAsync = (...a) => globalThis.__loc.requestForegroundPermissionsAsync(...a);\nexport const getCurrentPositionAsync = (...a) => globalThis.__loc.getCurrentPositionAsync(...a);\nexport const reverseGeocodeAsync = (...a) => (globalThis.__loc.reverseGeocodeAsync ? globalThis.__loc.reverseGeocodeAsync(...a) : Promise.reject(new Error('no lookup on this phone')));`);
 // the app creates its client when the file loads, before a test has set up its data, so look the real stand-in up on every use
 fs.writeFileSync(path.join(tmp, 'fake-supabase.mjs'), `export const createClient = () => new Proxy({}, { get: (_, prop) => globalThis.__db[prop] });`);
 // the phone's own keystore: on the web there is none, so the app falls back to ordinary storage (as here)
@@ -141,6 +141,7 @@ function seed() {
         first_year_total: 231000, note: null, source: 'kidscover', source_url: null },
     ],
     applications: [], appEvents: [], notifications: [], pushTokens: [], clicks: [], profiles: {},
+    addresses: [], nextAddress: 0,
     deleteAccountResult: { ok: true },
     threads: [], tmsgs: [], nextT: 1, rpcCalls: [], clock: Date.now(),
     fnCalls: [], fnMode: 'ok', lookupsLeft: undefined,
@@ -246,6 +247,41 @@ class Query {
       return this.finish(all(st.applications.filter((a) => a.parent_id === me?.id).map((a) => ({ ...a, schools: { name: st.schools.find((x) => x.id === a.school_id)?.name ?? null } }))));
     }
     if (this.table === 'admission_application_events') return this.finish(all(st.appEvents));
+    // the address book, with the same rules the migration puts in the database: your own rows only, names unique per
+    // person, at most six, and only the name and the address text may be changed
+    if (this.table === 'parent_addresses') {
+      if (st.addressesMissing) return { data: null, error: { code: 'PGRST205', message: 'Could not find the table public.parent_addresses in the schema cache' } };
+      const mine = () => st.addresses.filter((a) => a.user_id === me?.id);
+      const tidy = (v) => (v == null ? null : String(v).trim() || null);
+      if (this.op === 'insert') {
+        const row = this.payload;
+        const label = String(row.label ?? '').trim();
+        if (row.user_id !== me?.id) return { data: null, error: { code: '42501', message: 'new row violates row-level security policy for table "parent_addresses"' } };
+        if (!label || label.length > 40) return { data: null, error: { code: '23514', message: 'violates check constraint "parent_addresses_label_check"' } };
+        if (mine().some((a) => a.label.toLowerCase() === label.toLowerCase())) return { data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint "parent_addresses_one_label_each"' } };
+        if (mine().length >= 6) return { data: null, error: { code: '23514', message: 'You can keep up to 6 places' } };
+        st.addresses.push({ id: 'ad' + (++st.nextAddress), user_id: me?.id, label, address: tidy(row.address), latitude: row.latitude, longitude: row.longitude, created_at: tick(st) });
+        return { data: null, error: null };
+      }
+      if (this.op === 'update') {
+        const beyond = Object.keys(this.payload).filter((k) => !['label', 'address', 'latitude', 'longitude'].includes(k));
+        if (beyond.length) return { data: null, error: { code: '42501', message: 'permission denied for table parent_addresses' } };
+        const label = 'label' in this.payload ? String(this.payload.label ?? '').trim() : null;
+        if (label !== null && mine().some((a) => a.label.toLowerCase() === label.toLowerCase() && !this.preds.every((pr) => pr(a)))) {
+          return { data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint "parent_addresses_one_label_each"' } };
+        }
+        for (const row of mine().filter((r) => this.preds.every((pr) => pr(r)))) {
+          Object.assign(row, this.payload, label !== null ? { label } : {}, 'address' in this.payload ? { address: tidy(this.payload.address) } : {});
+        }
+        return { data: null, error: null };
+      }
+      if (this.op === 'delete') {
+        const going = mine().filter((r) => this.preds.every((pr) => pr(r)));
+        st.addresses = st.addresses.filter((r) => !going.includes(r));
+        return { data: null, error: null };
+      }
+      return this.finish(all(mine()));
+    }
     if (this.table === 'notifications') return this.finish(all(st.notifications.filter((n) => n.user_id === me?.id)));
     if (this.table === 'profiles') {
       if (this.op === 'update') { st.profiles[me?.id] = { ...(st.profiles[me?.id] ?? {}), ...this.payload }; return { error: null }; }
@@ -645,6 +681,10 @@ const fakePhone = (o = {}) => {
     requestForegroundPermissionsAsync: async () => { calls.push('permission'); return o.perm ?? { status: 'granted', canAskAgain: true }; },
     getCurrentPositionAsync: async () => { calls.push('position'); if (o.hang) return new Promise(() => {}); if (o.posThrows) throw new Error('Location services are disabled'); return 'pos' in o ? o.pos : { coords: { latitude: 19.07604, longitude: 72.87771, accuracy: 15 } }; },
   };
+  // only a phone the test says can look an address up gets one; the others behave like a phone with no lookup
+  if (o.found || o.lookupThrows) {
+    globalThis.__loc.reverseGeocodeAsync = async () => { calls.push('lookup'); if (o.lookupThrows) throw new Error('no geocoder'); return o.found; };
+  }
   return calls;
 };
 const DELHI = { coords: { latitude: 28.6139, longitude: 77.209 } };
@@ -1464,6 +1504,128 @@ await ui.click('auth-submit');
 await waitFor(() => st.authCalls.some(([kind]) => kind === 'signup'));
 const signup = st.authCalls.find(([kind]) => kind === 'signup');
 check('...and once answered the answer travels with the new account, so the picture is right on the first screen', !!signup && signup[1]?.options?.data?.gender === 'woman' && signup[1]?.options?.data?.first_name === 'Dee', JSON.stringify(signup?.[1]?.options?.data));
+await ui.unmount();
+// =============================================================================================================
+console.log('\n=== the address book ===');
+globalThis.__bio = { hasHardwareAsync: () => false, isEnrolledAsync: () => false, supportedAuthenticationTypesAsync: () => [] };
+st = seed(); ui = await mount(st);
+calls = fakePhone({ found: [{ name: '4', street: 'Hill Road', district: 'Bandra West', city: 'Mumbai' }] });
+await signIn(ui, 'ann@x.in', 'password1');
+await waitFor(() => ui.cards() === 20);
+check('with nothing saved, the school list offers no places to pick between', !ui.id('address-chips') && !ui.id('address-chips-off'));
+await ui.click('use-location');
+await waitFor(() => !!ui.id('near-me-on'));
+check('once the app knows where the parent is, it offers to remember the place', !!ui.id('address-add'));
+await ui.click('address-add');
+check('the form asks for a name, and fills in the address the phone gave, so there is less to type',
+  await waitFor(() => !!ui.id('address-form')) && await waitFor(() => ui.id('address-text')?.value === '4, Hill Road, Bandra West, Mumbai', 2000), ui.id('address-text')?.value);
+check('...and the phone was asked what is here only after it gave the position', calls.join() === 'permission,position,lookup', calls.join());
+await ui.click('address-save');
+check('saving with no name says so, and writes nothing', await waitFor(() => !!ui.id('address-problem')) && st.addresses.length === 0, ui.id('address-problem')?.textContent);
+await ui.type('address-label', '  Home  ');
+await ui.click('address-save');
+check('naming it saves the place, at the position the phone gave, with the address text', await waitFor(() => st.addresses.length === 1)
+  && st.addresses[0].label === 'Home' && st.addresses[0].latitude === 19.076 && st.addresses[0].longitude === 72.878
+  && st.addresses[0].address === '4, Hill Road, Bandra West, Mumbai', JSON.stringify(st.addresses));
+check('...and the panel now says which place the list is measured from', await waitFor(() => /Searching from Home/.test(ui.id('near-me-title')?.textContent ?? '')), ui.id('near-me-title')?.textContent);
+check('...with the saved place offered beside "where I am now"', await waitFor(() => !!ui.id('address-chips')) && !!ui.id('address-here') && !!ui.id(`address-${st.addresses[0].id}`));
+check('...and a place already in the book is not offered for saving again', !ui.id('address-add') && !ui.id('address-form'));
+await ui.click('address-here');
+check('going back to where I am now asks the phone again, and offers saving again', await waitFor(() => !/Searching from/.test(ui.id('near-me-title')?.textContent ?? '')) && !!ui.id('address-add'));
+await ui.click('address-add');
+await ui.type('address-label', 'home');
+await ui.click('address-save');
+check('a second place with a name already used is refused by the app, before the database is asked', await waitFor(() => /already have a place/.test(ui.id('address-problem')?.textContent ?? '')) && st.addresses.length === 1, ui.id('address-problem')?.textContent);
+await ui.type('address-label', 'Work');
+await ui.click('address-save');
+check('...and a name of its own saves it', await waitFor(() => st.addresses.length === 2) && st.addresses[1].label === 'Work');
+await ui.unmount();
+
+// a phone with no address lookup at all: everything still works, there is just nothing filled in
+st = seed(); ui = await mount(st);
+calls = fakePhone();
+await signIn(ui, 'ann@x.in', 'password1');
+await ui.click('use-location');
+await waitFor(() => !!ui.id('near-me-on'));
+await ui.click('address-add');
+await waitFor(() => !!ui.id('address-form'));
+check('a phone that cannot say what is at a position leaves the address empty, and says nothing about it', ui.id('address-text').value === '' && !ui.id('address-problem'));
+await ui.type('address-label', 'Home');
+await ui.click('address-save');
+check('...and the place saves all the same, with no address text', await waitFor(() => st.addresses.length === 1) && st.addresses[0].address === null, JSON.stringify(st.addresses));
+await ui.unmount();
+
+// coming back later: the places are there, and searching from one asks the phone for nothing
+st = seed();
+st.addresses = [
+  { id: 'ad1', user_id: 'u1', label: 'Home', address: 'Hill Road, Bandra', latitude: 19.0596, longitude: 72.8295, created_at: '2026-09-01T10:00:00Z' },
+  { id: 'ad2', user_id: 'u1', label: 'Work', address: null, latitude: 19.1136, longitude: 72.8697, created_at: '2026-09-02T10:00:00Z' },
+  { id: 'ad3', user_id: 'u2', label: 'Somebody else', address: null, latitude: 19.2, longitude: 73.0, created_at: '2026-09-03T10:00:00Z' },
+];
+ui = await mount(st);
+calls = fakePhone();
+await signIn(ui, 'ann@x.in', 'password1');
+await waitFor(() => ui.cards() === 20);
+check('with the location off, the places saved earlier are offered as a way to search', await waitFor(() => !!ui.id('address-chips-off')) && !!ui.id('address-off-ad1') && !!ui.id('address-off-ad2'));
+check("...and another parent's places are not among them", !ui.id('address-off-ad3') && !/Somebody else/.test(ui.text()));
+{
+  const before = st.log.length;
+  await ui.click('address-off-ad1');
+  check('searching from home lists the nearest schools to home first', await waitFor(() => !!ui.id('near-me-on') && firstCard(ui) === 'school-s1', 4000), firstCard(ui));
+  check('...without asking the phone for permission or for a position', calls.length === 0, calls.join());
+  const rpcs = st.log.slice(before).filter((q) => q.table === 'rpc:schools_nearby');
+  check('...and the position sent is the one saved, and nothing else about the parent', rpcs.length > 0 && rpcs.every((q) => q.args.p_lat === 19.0596 && q.args.p_lng === 72.8295 && Object.keys(q.args).length === 2), JSON.stringify(rpcs.map((q) => q.args)));
+}
+check('the panel says which place, by the name the parent gave it', /Searching from Home/.test(ui.id('near-me-title')?.textContent ?? ''), ui.id('near-me-title')?.textContent);
+await ui.click('address-ad2');
+check('switching to another saved place moves the list with it', await waitFor(() => firstCard(ui) === 'school-s5', 4000) && /Searching from Work/.test(ui.id('near-me-title')?.textContent ?? ''), firstCard(ui));
+await ui.click('stop-location');
+check('turning the location off puts the places back as a way to start again', await waitFor(() => !!ui.id('near-me-off')) && !!ui.id('address-off-ad1'));
+
+// the book itself, in the profile
+await ui.click('settings');
+check('the profile holds the address book, with each place and its address', await waitFor(() => !!ui.id('address-book')) && !!ui.id('book-ad1') && /Hill Road, Bandra/.test(ui.id('book-ad1').textContent) && !!ui.id('book-ad2'));
+await ui.click('book-edit-ad1');
+await ui.type('book-label', 'Work');
+await ui.click('book-save');
+check('renaming one to a name already used is refused', await waitFor(() => /already have a place/.test(ui.id('address-book-problem')?.textContent ?? '')) && st.addresses[0].label === 'Home', ui.id('address-book-problem')?.textContent);
+await ui.type('book-label', 'Grandparents');
+await ui.type('book-text', 'Sion, Mumbai');
+await ui.click('book-save');
+check('renaming it works, and moves nothing', await waitFor(() => st.addresses[0].label === 'Grandparents')
+  && st.addresses[0].address === 'Sion, Mumbai' && st.addresses[0].latitude === 19.0596, JSON.stringify(st.addresses[0]));
+check('...and the new name is what the list shows', await waitFor(() => /Grandparents/.test(ui.id('book-ad1')?.textContent ?? '')));
+await waitFor(() => !ui.id('book-form'));
+await ui.click('book-remove-ad2');
+check('removing a place removes exactly that one', await waitFor(() => st.addresses.filter((a) => a.user_id === 'u1').length === 1) && st.addresses.some((a) => a.id === 'ad1'), JSON.stringify(st.addresses));
+check("...and does not touch anybody else's", st.addresses.some((a) => a.id === 'ad3'));
+await ui.unmount();
+
+// the six, and the database step nobody has run yet
+st = seed();
+st.addresses = ['One', 'Two', 'Three', 'Four', 'Five', 'Six'].map((label, i) => ({ id: 'ad' + i, user_id: 'u1', label, address: null, latitude: 19.05 + i / 100, longitude: 72.83, created_at: '2026-09-0' + (i + 1) + 'T10:00:00Z' }));
+ui = await mount(st);
+calls = fakePhone();
+await signIn(ui, 'ann@x.in', 'password1');
+await ui.click('use-location');
+await waitFor(() => !!ui.id('near-me-on'));
+await ui.click('address-add');
+await ui.type('address-label', 'Seven');
+await ui.click('address-save');
+check('a seventh place is refused with a plain reason, and nothing is sent to the database', await waitFor(() => /up to 6 places/.test(ui.id('address-problem')?.textContent ?? '')) && st.addresses.length === 6, ui.id('address-problem')?.textContent);
+await ui.unmount();
+st = seed(); st.addressesMissing = true; ui = await mount(st);
+calls = fakePhone();
+await signIn(ui, 'ann@x.in', 'password1');
+await ui.click('use-location');
+check('until the database step is run, the school list quietly offers no saving at all', await waitFor(() => !!ui.id('near-me-on')) && !ui.id('address-add') && !ui.id('address-chips'));
+await ui.click('settings');
+check('...and the profile says so once, instead of showing an empty book', await waitFor(() => !!ui.id('address-book')) && !!ui.id('address-book-off') && !ui.id('address-book-empty'));
+await ui.unmount();
+st = seed(); ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+await ui.click('settings');
+check('a parent with the step run but nothing saved is told how to start', await waitFor(() => !!ui.id('address-book-empty')) && !ui.id('address-book-off'));
 await ui.unmount();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

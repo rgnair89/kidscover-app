@@ -16,7 +16,7 @@ const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'lev
   'BOARD_CHOICES', 'boardSourceText', 'admissionText',
   'CATEGORY_CHOICES', 'categoryOf', 'categoryFilters', 'isSchoolPlace',
   'FACILITY_INFO', 'ACHIEVEMENT_INFO', 'SOURCE_TEXT', 'facilityText', 'sourcesText', 'photoCreditText', 'artColours', 'ART_COLOURS', 'loadFacilities', 'loadAchievements',
-  'setTranslator', 't', 'setMoneyLocale', 'setDateLocale', 'rupees', 'budgetLabel', 'BUDGET_CHOICES', 'FEE_PARTS', 'feeForLevel', 'feeSummaryText', 'loadFeeSchedules', 'loadTiles', 'leaveByText', 'clockText', 'dayText', 'noteOutboundClick', 'messageFrom', 'EN_GRADES', 'classLabel', 'stageText', 'academicYearChoices', 'APPLY_CLASSES', 'APPLY_RELATIONS', 'APPLY_GENDERS', 'EMPTY_APPLICATION', 'validateApplication', 'submitApplication', 'loadApplications', 'loadApplicationEvents', 'withdrawApplication', 'deleteApplication', 'isMissingApplications', 'liveApplications', 'MAX_COMPARE', 'toggleCompare', 'compareRows', 'registerForPush', 'forgetPush', 'loadNotifications', 'markNotificationsRead', 'initialsOf', 'backTargetFor', 'BACK_FROM', 'PROFILE_GENDERS', 'PROFILE_AVATARS', 'AUTO_AVATAR', 'avatarFor', 'profileComplete', 'saveProfile', 'loadSettings', 'saveLanguage', 'savePushChoice', 'deleteAccount', 'biometricKind', 'unlockWithBiometrics', 'shouldLock', 'BIOMETRIC_SETTING', 'LANGUAGE_SETTING', 'LOCK_AFTER_MS', 'APPLICATION_COLUMNS'];
+  'setTranslator', 't', 'setMoneyLocale', 'setDateLocale', 'rupees', 'budgetLabel', 'BUDGET_CHOICES', 'FEE_PARTS', 'feeForLevel', 'feeSummaryText', 'loadFeeSchedules', 'loadTiles', 'leaveByText', 'clockText', 'dayText', 'noteOutboundClick', 'messageFrom', 'EN_GRADES', 'classLabel', 'stageText', 'academicYearChoices', 'APPLY_CLASSES', 'APPLY_RELATIONS', 'APPLY_GENDERS', 'EMPTY_APPLICATION', 'validateApplication', 'submitApplication', 'loadApplications', 'loadApplicationEvents', 'withdrawApplication', 'deleteApplication', 'isMissingApplications', 'liveApplications', 'MAX_COMPARE', 'toggleCompare', 'compareRows', 'registerForPush', 'forgetPush', 'loadNotifications', 'markNotificationsRead', 'initialsOf', 'backTargetFor', 'BACK_FROM', 'ADDRESS_COLUMNS', 'MAX_ADDRESSES', 'MAX_ADDRESS_NAME', 'MAX_ADDRESS_TEXT', 'isMissingAddresses', 'addressPlace', 'validateAddress', 'loadAddresses', 'saveAddress', 'deleteAddress', 'describePlace', 'addressHere', 'PROFILE_GENDERS', 'PROFILE_AVATARS', 'AUTO_AVATAR', 'avatarFor', 'profileComplete', 'saveProfile', 'loadSettings', 'saveLanguage', 'savePushChoice', 'deleteAccount', 'biometricKind', 'unlockWithBiometrics', 'shouldLock', 'BIOMETRIC_SETTING', 'LANGUAGE_SETTING', 'LOCK_AFTER_MS', 'APPLICATION_COLUMNS'];
 fs.writeFileSync(path.join(here, '.tmp', 'logic.mjs'), src.slice(a, b) + `\nexport { ${names.join(', ')} };\n`);
 const L = await import(pathToFileURL(path.join(here, '.tmp', 'logic.mjs')).href);
 // the words of the app come from the language packs; the tests read the English one
@@ -419,5 +419,56 @@ check('...a picture the app cannot draw is ignored rather than shown as a hole',
   check('...and a name longer than the column is cut to fit rather than failing at the database', seen[1].first_name.length === 60);
 }
 
+console.log('\n=== the address book ===');
+const ROW = (id, label, extra = {}) => ({ id, label, address: null, latitude: 19.06, longitude: 72.83, created_at: '2026-09-01T10:00:00Z', ...extra });
+check('a saved place turns back into somewhere to search from', eq(L.addressPlace(ROW('a1', 'Home')), { lat: 19.06, lng: 72.83 }));
+check('...and a row with nothing in it is not a place', L.addressPlace(ROW('a2', 'Broken', { latitude: null })) === null && L.addressPlace(null) === null && L.addressPlace({}) === null);
+check('a place needs a name', L.validateAddress({ label: '   ', rows: [] }) === EN['address.needName']);
+check('...a name that would not fit on a button is refused, saying how long is allowed', L.validateAddress({ label: 'x'.repeat(41), rows: [] }) === 'A name can be up to 40 letters.');
+check('...and the same name twice is refused, however it is spaced or capitalised', L.validateAddress({ label: ' home ', rows: [ROW('a1', 'Home')] }) === EN['address.nameTaken']);
+check('renaming a place is not the same name twice', L.validateAddress({ label: 'Home', rows: [ROW('a1', 'Home')], editingId: 'a1' }) === null);
+const six = ['One', 'Two', 'Three', 'Four', 'Five', 'Six'].map((n, i) => ROW('a' + i, n));
+check('six places is the most, and the seventh says so instead of failing at the database', L.validateAddress({ label: 'Seven', rows: six }) === 'You can keep up to 6 places.' && L.MAX_ADDRESSES === 6);
+check('...but renaming one of the six is still allowed', L.validateAddress({ label: 'Second', rows: six, editingId: 'a1' }) === null);
+
+db = fakeDb(() => ({ data: [ROW('a1', 'Home'), ROW('a2', 'No coordinates', { latitude: null, longitude: null }), ROW('a3', 'Work')], error: null }));
+got = await L.loadAddresses(db);
+check('the list is asked for in the order it was saved', ops(db.recs[0]).join(' ') === `select("${L.ADDRESS_COLUMNS}") order("created_at",{"ascending":true})`, ops(db.recs[0]).join(' '));
+check('...and a row the app could not search from is left out rather than offered', got.rows.map((r) => r.label).join() === 'Home,Work' && got.error === null);
+got = await L.loadAddresses(fakeDb(() => ({ data: null, error: { code: 'PGRST205', message: 'Could not find the table public.parent_addresses in the schema cache' } })));
+check('...and when the table is not there yet, the error comes back so the app can hide the whole thing', got.rows.length === 0 && L.isMissingAddresses(got.error));
+check('the two ways a missing table shows up are both recognised', L.isMissingAddresses({ code: '42P01', message: 'relation does not exist' }) && L.isMissingAddresses({ message: 'relation "public.parent_addresses" does not exist' }));
+check('...and an ordinary problem is not mistaken for one', !L.isMissingAddresses({ code: '42501', message: 'permission denied' }) && !L.isMissingAddresses(null));
+
+db = fakeDb(() => ({ error: null }));
+res = await L.saveAddress(db, 'u1', { label: '  Home  ', address: '  Flat 4, Sunrise  ', place: { lat: 19.06, lng: 72.83 } });
+check('saving a new place sends the name, the address and where it is, tidied up', res.error === null
+  && eq(db.recs[0].ops[0], ['insert', { label: 'Home', address: 'Flat 4, Sunrise', user_id: 'u1', latitude: 19.06, longitude: 72.83 }]), JSON.stringify(db.recs[0].ops));
+db = fakeDb(() => ({ error: null }));
+await L.saveAddress(db, 'u1', { label: 'Home', address: '   ', place: { lat: 19.06, lng: 72.83 } });
+check('...address text of nothing but spaces is saved as nothing at all', db.recs[0].ops[0][1].address === null);
+db = fakeDb(() => ({ error: null }));
+await L.saveAddress(db, 'u1', { label: 'H'.repeat(80), address: 'a'.repeat(300), place: { lat: 19.06, lng: 72.83 } });
+check('...and anything longer than the database allows is cut to fit rather than refused there', db.recs[0].ops[0][1].label.length === L.MAX_ADDRESS_NAME && db.recs[0].ops[0][1].address.length === L.MAX_ADDRESS_TEXT);
+db = fakeDb(() => ({ error: null }));
+res = await L.saveAddress(db, 'u1', { label: 'Home', address: '', place: null });
+check('a new place with nowhere to save is not sent at all', !!res.error && db.recs.length === 0);
+db = fakeDb(() => ({ error: null }));
+res = await L.saveAddress(db, 'u1', { id: 'a1', label: 'Grandma', address: 'Sion' });
+check('renaming a place changes only the name and the address, and never moves it', res.error === null
+  && eq(db.recs[0].ops[0], ['update', { label: 'Grandma', address: 'Sion' }]) && eq(db.recs[0].ops[1], ['eq', 'id', 'a1']), JSON.stringify(db.recs[0].ops));
+db = fakeDb(() => ({ error: { message: 'no' } }));
+res = await L.saveAddress(db, 'u1', { id: 'a1', label: 'Grandma' });
+check('...and a refusal from the database comes back rather than being swallowed', !!res.error);
+db = fakeDb(() => ({ error: null }));
+res = await L.deleteAddress(db, 'a1');
+check('removing a place removes exactly that one', res.error === null && eq(db.recs[0].ops, [['delete'], ['eq', 'id', 'a1']]), JSON.stringify(db.recs[0].ops));
+
+check('what the phone says is at a position becomes one line', L.describePlace([{ name: '4', street: 'Hill Road', district: 'Bandra West', city: 'Mumbai', postalCode: '400050' }]) === '4, Hill Road, Bandra West, Mumbai');
+check('...without saying the same thing twice', L.describePlace([{ name: 'Bandra', street: null, district: 'bandra', city: 'Mumbai' }]) === 'Bandra, Mumbai');
+check('...and a phone that answers with nothing leaves the parent to type it', L.describePlace([]) === '' && L.describePlace(null) === '' && L.describePlace([{}]) === '');
+check('a phone with no address lookup at all is not a problem', await L.addressHere({}, { lat: 19, lng: 72 }) === '');
+check('...nor is one whose lookup fails', await L.addressHere({ reverseGeocodeAsync: async () => { throw new Error('no service'); } }, { lat: 19, lng: 72 }) === '');
+check('...and when it does work, the address is offered ready to keep or change', await L.addressHere({ reverseGeocodeAsync: async () => [{ street: 'Hill Road', city: 'Mumbai' }] }, { lat: 19, lng: 72 }) === 'Hill Road, Mumbai');
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

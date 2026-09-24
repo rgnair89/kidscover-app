@@ -148,6 +148,7 @@ function seed() {
     ],
     applications: [], appEvents: [], notifications: [], pushTokens: [], clicks: [], profiles: {},
     addresses: [], nextAddress: 0, files: [],
+    staff: [],   // who works at which school; nobody, unless a test says otherwise
     deleteAccountResult: { ok: true },
     threads: [], tmsgs: [], nextT: 1, rpcCalls: [], clock: Date.now(),
     fnCalls: [], fnMode: 'ok', lookupsLeft: undefined,
@@ -171,11 +172,15 @@ const tick = (st) => new Date((st.clock += 1000)).toISOString();
 // what the enquiry_threads view works out for each thread
 const threadRows = (st) => st.threads.map((t) => {
   const mine = st.tmsgs.filter((m) => m.ticket_id === t.id);
+  const family = st.profiles[t.parent_id] ?? {};
   return {
     ...t,
+    parent_first_name: family.first_name ?? 'Ann',
+    parent_last_name: family.last_name ?? 'Rao',
     message_count: mine.length,
     last_message: mine[mine.length - 1]?.message ?? null,
     unread_for_parent: new Date(t.last_message_at) > new Date(t.parent_read_at ?? 0),
+    unread_for_staff: new Date(t.last_message_at) > new Date(t.staff_read_at ?? 0),
   };
 });
 
@@ -250,7 +255,8 @@ class Query {
     }
     if (this.table === 'admission_applications') {
       if (st.applicationsMissing) return { data: null, error: { code: 'PGRST205', message: 'Could not find the table public.admission_applications in the schema cache' } };
-      return this.finish(all(st.applications.filter((a) => a.parent_id === me?.id).map((a) => ({ ...a, schools: { name: st.schools.find((x) => x.id === a.school_id)?.name ?? null } }))));
+      const mineOrMySchool = (a) => a.parent_id === me?.id || st.staff.some((x) => x.user_id === me?.id && x.school_id === a.school_id);
+      return this.finish(all(st.applications.filter(mineOrMySchool).map((a) => ({ ...a, schools: { name: st.schools.find((x) => x.id === a.school_id)?.name ?? null } }))));
     }
     if (this.table === 'admission_application_events') return this.finish(all(st.appEvents));
     // the address book, with the same rules the migration puts in the database: your own rows only, names unique per
@@ -329,6 +335,7 @@ class Query {
       const args = this.args ?? {};
       st.rpcCalls.push({ fn, args });
       const own = (id) => st.threads.find((t) => t.id === id && t.parent_id === me?.id);
+      const asStaff = (id) => st.threads.find((t) => t.id === id && st.staff.some((x) => x.user_id === me?.id && x.school_id === t.school_id));
       if (fn === 'send_enquiry') {
         if (!me || !st.users[me.email].verified) return { data: null, error: { code: '42501', message: 'confirm your email address first' } };
         if (st.threads.some((t) => t.parent_id === me.id && t.school_id === args.p_school && t.status !== 'closed')) {
@@ -380,29 +387,59 @@ class Query {
       if (fn === 'log_outbound_click') { st.clicks.push({ school: args.p_school, kind: args.p_kind, user: me?.id }); return { data: null, error: null }; }
       if (fn === 'mark_notifications_read') { st.notifications.filter((n) => n.user_id === me?.id).forEach((n) => { n.read_at = tick(st); }); return { data: null, error: null }; }
       if (fn === 'mark_ticket_read') {
-        const t = own(args.p_ticket);
+        const t = own(args.p_ticket) ?? asStaff(args.p_ticket);
         if (!t) return { data: null, error: { code: '42501', message: 'this enquiry is not yours' } };
-        t.parent_read_at = tick(st);
+        if (own(args.p_ticket)) t.parent_read_at = tick(st); else t.staff_read_at = tick(st);
         return { data: null, error: null };
       }
       if (fn === 'set_ticket_status') {
-        const t = own(args.p_ticket);
+        const t = own(args.p_ticket) ?? asStaff(args.p_ticket);
         if (!t) return { data: null, error: { code: '42501', message: 'this enquiry is not yours' } };
         t.status = args.p_status;
         return { data: null, error: null };
       }
+      // the school moving an application along, with the same refusals the database has
+      if (fn === 'set_admission_status') {
+        const a = st.applications.find((x) => x.id === args.p_app);
+        if (!a || !st.staff.some((x) => x.user_id === me?.id && x.school_id === a.school_id)) {
+          return { data: null, error: { code: '42501', message: 'You can only update applications to your own school' } };
+        }
+        if (!['in_review', 'visit_scheduled', 'offered', 'waitlisted', 'accepted', 'declined'].includes(args.p_status)) {
+          return { data: null, error: { code: '22023', message: 'Unknown stage' } };
+        }
+        if (a.status === 'withdrawn') return { data: null, error: { code: '22023', message: 'The family withdrew this application' } };
+        if (String(args.p_note ?? '').length > 500) return { data: null, error: { code: '22023', message: 'Keep the note to the family under 500 characters' } };
+        a.status = args.p_status;
+        a.status_note = args.p_note ?? null;
+        a.updated_at = tick(st);
+        st.appEvents.push({ id: st.appEvents.length + 1, application_id: a.id, status: args.p_status, note: args.p_note ?? null, by_role: 'school', at: tick(st) });
+        return { data: null, error: null };
+      }
       return { data: null, error: { code: 'PGRST202', message: `Could not find the function public.${fn} in the schema cache` } };
     }
-    if (this.table === 'enquiry_threads') return this.finish(all(threadRows(st).filter((t) => t.parent_id === me?.id)));
+    if (this.table === 'school_staff') {
+      return this.finish(all(st.staff.filter((x) => x.user_id === me?.id)
+        .map((x) => ({ ...x, schools: { name: st.schools.find((sc) => sc.id === x.school_id)?.name ?? null } }))));
+    }
+    if (this.table === 'enquiry_threads') {
+      const mineOrMySchool = (t) => t.parent_id === me?.id || st.staff.some((x) => x.user_id === me?.id && x.school_id === t.school_id);
+      return this.finish(all(threadRows(st).filter(mineOrMySchool)));
+    }
     if (this.table === 'ticket_messages') {
-      const mineThread = (id) => st.threads.find((t) => t.id === id && t.parent_id === me?.id);
+      const mineThread = (id) => st.threads.find((t) => t.id === id
+        && (t.parent_id === me?.id || st.staff.some((x) => x.user_id === me?.id && x.school_id === t.school_id)));
       if (this.op === 'insert') {
         if (!me || !st.users[me.email].verified) return { error: { code: '42501', message: 'confirm your email address first' } };
         if (!mineThread(this.payload.ticket_id)) return { error: { code: '42501', message: 'this enquiry is not yours' } };
         const now = tick(st);
-        st.tmsgs.push({ id: 'tm' + st.nextT++, ticket_id: this.payload.ticket_id, sender_id: me.id, message: this.payload.message, created_at: now });
         const t = st.threads.find((x) => x.id === this.payload.ticket_id);
-        t.last_message_at = now; t.status = 'open'; t.parent_read_at = now;   // writing counts as reading, as the trigger does
+        // the trigger decides who a message is from: the family, or the school it was sent to
+        const fromSchool = t.parent_id !== me.id;
+        st.tmsgs.push({ id: 'tm' + st.nextT++, ticket_id: this.payload.ticket_id, sender_id: me.id, sender_role: fromSchool ? 'school' : 'parent', message: this.payload.message, created_at: now });
+        t.last_message_at = now;
+        t.status = fromSchool ? 'replied' : 'open';
+        // writing counts as reading, as the trigger does
+        if (fromSchool) t.staff_read_at = now; else t.parent_read_at = now;
         return { error: null };
       }
       return this.finish(all(st.tmsgs.filter((m) => mineThread(m.ticket_id))));
@@ -1936,6 +1973,124 @@ await fillApplication(ui);
 await ui.click('apply-send');
 check('a family that would rather not send a photograph sends a complete form without one',
   await waitFor(() => st.applications.length === 1) && !st.applications[0].child_photo_path && st.files.length === 0, JSON.stringify(st.applications[0] ?? {}));
+await ui.unmount();
+// =============================================================================================================
+console.log('\n=== the school signs in ===');
+globalThis.__bio = { hasHardwareAsync: () => false, isEnrolledAsync: () => false, supportedAuthenticationTypesAsync: () => [] };
+
+// a world where Ann works at one school, a family has written to it, and another family has applied
+function withStaff(extra = {}) {
+  const state = seed();
+  state.staff = [{ school_id: 'n2', user_id: 'u1' }];
+  state.profiles = { u2: { first_name: 'Priya', last_name: 'Nair' } };
+  state.threads = [{
+    id: 't-staff', school_id: 'n2', parent_id: 'u2', subject: 'Admission for 2027-28', grade_of_interest: 'grade.jrkg',
+    start_year: 2027, status: 'open', created_at: '2026-09-01T10:00:00Z', last_message_at: '2026-09-02T10:00:00Z',
+    parent_read_at: '2026-09-02T10:00:00Z', staff_read_at: null,
+  }];
+  state.tmsgs = [{ id: 'm1', ticket_id: 't-staff', sender_id: 'u2', sender_role: 'parent', message: 'Do you have places in junior KG?', created_at: '2026-09-02T10:00:00Z' }];
+  state.applications = [{
+    id: 'app-staff', school_id: 'n2', parent_id: 'u2', status: 'submitted', status_note: null,
+    child_first_name: 'Mira', child_last_name: 'Nair', child_dob: '2021-06-30', child_gender: 'girl',
+    class_applying: 'jr_kg', academic_year: '2027-28', current_school: null, parent_name: 'Priya Nair',
+    parent_relation: 'mother', parent_phone: '9820011111', parent_email: 'priya@x.in', address: '12 Hill Road',
+    pincode: '400050', notes: null, child_photo_path: null, consent_at: '2026-09-01T10:00:00Z',
+    created_at: '2026-09-01T10:00:00Z', updated_at: '2026-09-01T10:00:00Z',
+  }];
+  return Object.assign(state, extra);
+}
+
+st = seed(); ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+await waitFor(() => ui.cards() === 20);
+check('a parent who works at no school is shown nothing of the school side', !ui.id('staff'));
+
+st = withStaff(); ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+check('somebody who works at a school gets a way in, at the top, counting the families waiting',
+  await waitFor(() => !!ui.id('staff')) && await waitFor(() => /1/.test(ui.id('staff').textContent)), ui.id('staff')?.textContent);
+check('...and the rest of the app is still theirs: they can look for a school like anyone else', ui.cards() === 20 && !!ui.id('search'));
+await ui.click('staff');
+check('the school screen opens on the school they work at', await waitFor(() => !!ui.id('staff-screen')) && /270/.test(ui.text()) === /270/.test(ui.text()));
+check('...with no school to pick between, because there is only one', !ui.id('staff-schools'));
+check('...showing the families asking first', !!ui.id('staff-enquiries') && !!ui.id('staff-thread-t-staff'));
+check('the family is named, marked unread, and their question is there to read',
+  /Priya Nair/.test(ui.id('staff-thread-t-staff').textContent) && /●/.test(ui.id('staff-thread-t-staff').textContent)
+  && /junior KG/.test(ui.id('staff-thread-t-staff').textContent), ui.id('staff-thread-t-staff')?.textContent);
+await ui.click('staff-thread-t-staff');
+check('opening it shows the conversation and marks it read for the school, not for the family',
+  await waitFor(() => !!ui.id('staff-conversation-t-staff'))
+  && await waitFor(() => !!st.threads[0].staff_read_at) && st.threads[0].parent_read_at === '2026-09-02T10:00:00Z', JSON.stringify(st.threads[0]));
+check('...and the family\'s words are named as theirs, not as "you"', /Priya Nair/.test(ui.id('staff-message-m1').textContent), ui.id('staff-message-m1')?.textContent);
+await ui.click('staff-send');
+check('an empty reply is refused before anything is sent', await waitFor(() => !!ui.id('staff-conversation-error')) && st.tmsgs.length === 1);
+await ui.type('staff-reply', 'Yes, we have four places left. Come and see us.');
+await ui.click('staff-send');
+check('a reply reaches the family, recorded as coming from the school', await waitFor(() => st.tmsgs.length === 2)
+  && st.tmsgs[1].sender_role === 'school' && st.tmsgs[1].message === 'Yes, we have four places left. Come and see us.', JSON.stringify(st.tmsgs[1] ?? {}));
+check('...and the school is told it went', await waitFor(() => !!ui.id('staff-conversation-done')));
+await ui.click('staff-close');
+check('marking it answered closes it for both sides', await waitFor(() => st.threads[0].status === 'closed'), st.threads[0].status);
+await ui.click('staff-conversation-back');
+check('going back returns to the list of families', await waitFor(() => !!ui.id('staff-enquiries')));
+
+// the applications side
+await ui.click('staff-tab-applications');
+check('the applications to this school are there', await waitFor(() => !!ui.id('staff-application-app-staff'))
+  && /Mira Nair/.test(ui.id('staff-application-app-staff').textContent), ui.id('staff-application-app-staff')?.textContent);
+await ui.click('staff-application-app-staff');
+check('opening one shows the child and the family, so the school can act on it',
+  await waitFor(() => !!ui.id('staff-application-open-app-staff'))
+  && /Mira Nair/.test(ui.text()) && ui.id('staff-parent-phone').textContent === '9820011111' && ui.id('staff-parent-email').textContent === 'priya@x.in');
+check('...and the six stages to move it to', ['in_review', 'visit_scheduled', 'offered', 'waitlisted', 'accepted', 'declined'].every((k) => !!ui.id(`staff-stage-${k}`)));
+await ui.click('staff-stage-offered');
+await ui.type('staff-note', 'A place is yours if you would like it. Please tell us by the 10th.');
+await ui.click('staff-stage-save');
+check('moving it along saves the stage and the line the family will read', await waitFor(() => st.applications[0].status === 'offered')
+  && st.applications[0].status_note === 'A place is yours if you would like it. Please tell us by the 10th.', JSON.stringify(st.applications[0]).slice(0, 160));
+check('...and it goes on the family\'s timeline as the school having done it', st.appEvents.some((e) => e.status === 'offered' && e.by_role === 'school'), JSON.stringify(st.appEvents));
+check('...with the school told it was saved', await waitFor(() => !!ui.id('staff-application-done')));
+await ui.unmount();
+
+// a family that changed its mind
+st = withStaff();
+st.applications[0].status = 'withdrawn';
+ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+await waitFor(() => !!ui.id('staff'));
+await ui.click('staff');
+await ui.click('staff-tab-applications');
+await waitFor(() => !!ui.id('staff-application-app-staff'));
+await ui.click('staff-application-app-staff');
+check('a family that withdrew is not one to chase: the school is told, and offered nothing to press',
+  await waitFor(() => !!ui.id('staff-withdrawn')) && !ui.id('staff-stage-offered') && !ui.id('staff-stage-save'));
+await ui.unmount();
+
+// two schools, and somebody else's school
+st = withStaff();
+st.staff = [{ school_id: 'n2', user_id: 'u1' }, { school_id: 's1', user_id: 'u1' }];
+st.threads.push({
+  id: 't-other', school_id: 's3', parent_id: 'u2', subject: 'Somewhere else', grade_of_interest: null, start_year: null,
+  status: 'open', created_at: '2026-09-01T10:00:00Z', last_message_at: '2026-09-03T10:00:00Z', parent_read_at: null, staff_read_at: null,
+});
+ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+await waitFor(() => !!ui.id('staff'));
+await ui.click('staff');
+check('somebody who works at two schools picks between them', await waitFor(() => !!ui.id('staff-schools')) && !!ui.id('staff-school-n2') && !!ui.id('staff-school-s1'));
+check("...and never sees an enquiry sent to a school they do not work at", await waitFor(() => !!ui.id('staff-enquiries')) && !ui.id('staff-thread-t-other') && !/Somewhere else/.test(ui.text()));
+await ui.click('staff-school-s1');
+check('switching school switches the list with it', await waitFor(() => !ui.id('staff-thread-t-staff')) && !!ui.id('staff-enquiries-empty'));
+await ui.unmount();
+
+// and the family's own side is untouched by any of this
+st = withStaff();
+ui = await mount(st);
+await signIn(ui, 'bob@x.in', 'password2');
+await waitFor(() => ui.cards() === 20);
+check('the family sees their own enquiry, and no way into anybody\'s school', !ui.id('staff'));
+await ui.click('enquiries');
+check('...and reads it as their own conversation, as before', await waitFor(() => !!ui.id('thread-t-staff')) && !ui.id('staff-thread-t-staff'));
 await ui.unmount();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -1003,6 +1003,66 @@ const APPLICATION_COLUMNS = 'id,school_id,status,status_note,child_first_name,ch
   + 'class_applying,academic_year,current_school,parent_name,parent_relation,parent_phone,parent_email,address,pincode,'
   + 'notes,consent_at,created_at,updated_at,schools(name)';
 
+// ---- the school's own side of the app ----
+// Some people who use Kidscover work at a school rather than looking for one. Until now the app had nothing for
+// them: they signed in and were shown a list of schools to choose between. Everything here reads and writes through
+// the same rules the portal uses - the database decides who is staff at which school, and it is asked every time.
+//
+// What a school can do here is deliberately the part that will not wait: answering a family, and moving an
+// application along. Everything slower - photos, fees, facilities, adding staff - stays in the portal, on a
+// computer, where there is room for it.
+const STAFF_COLUMNS = 'school_id,schools(name)';
+const SCHOOL_ENQUIRY_COLUMNS = 'id,school_id,school_name,parent_first_name,parent_last_name,subject,grade_of_interest,'
+  + 'start_year,status,created_at,last_message_at,message_count,last_message,unread_for_staff';
+const APPLY_STAGES = ['in_review', 'visit_scheduled', 'offered', 'waitlisted', 'accepted', 'declined'];
+const MAX_STAGE_NOTE = 500;
+
+// The person is not asked which schools they work at; the database already knows. An empty list simply means the
+// app has nothing extra to show them, which is the ordinary case.
+async function loadMySchools(db) {
+  const { data, error } = await db.from('school_staff').select(STAFF_COLUMNS).limit(20);
+  if (error) return { rows: [], error };
+  const rows = (data ?? [])
+    .map((row) => ({ id: row.school_id, name: (Array.isArray(row.schools) ? row.schools[0] : row.schools)?.name ?? '' }))
+    .filter((row) => !!row.id)
+    .sort((a, b) => (cleanName(a.name) < cleanName(b.name) ? -1 : 1));
+  return { rows, error: null };
+}
+
+async function loadSchoolEnquiries(db, schoolId) {
+  if (!schoolId) return { rows: [], error: null };
+  const { data, error } = await db.from('enquiry_threads').select(SCHOOL_ENQUIRY_COLUMNS)
+    .eq('school_id', schoolId).order('last_message_at', { ascending: false }).limit(100);
+  return { rows: data ?? [], error: error ?? null };
+}
+const staffUnreadCount = (rows) => (rows ?? []).filter((row) => row.unread_for_staff).length;
+// A family's name as the school should see it: what they gave, and nothing invented when they gave nothing.
+const familyName = (row) => [row?.parent_first_name, row?.parent_last_name].map((x) => String(x ?? '').trim()).filter(Boolean).join(' ');
+
+async function loadSchoolApplications(db, schoolId) {
+  if (!schoolId) return { rows: [], error: null };
+  const { data, error } = await db.from('admission_applications').select(APPLICATION_COLUMNS)
+    .eq('school_id', schoolId).order('created_at', { ascending: false }).limit(100);
+  return { rows: data ?? [], error: error ?? null };
+}
+
+// A note to the family travels with the stage, so "declined" is never the whole of what they are told.
+function validateStageNote(note) {
+  if (String(note ?? '').trim().length > MAX_STAGE_NOTE) return t('staff.noteTooLong', { max: MAX_STAGE_NOTE });
+  return null;
+}
+async function setApplicationStage(db, appId, stage, note) {
+  if (!APPLY_STAGES.includes(stage)) return { error: { message: t('staff.pickStage') } };
+  const problem = validateStageNote(note);
+  if (problem) return { error: { message: problem } };
+  const { error } = await db.rpc('set_admission_status', {
+    p_app: appId, p_status: stage, p_note: String(note ?? '').trim() || null,
+  });
+  return { error: error ?? null };
+}
+// A family that has withdrawn is not a family to chase: the database refuses it, and so does the app.
+const stageCanChange = (status) => status !== 'withdrawn';
+
 const classLabel = (key) => t(`class.${key}`);
 const stageText = (status) => t(`stage.${status}`);
 
@@ -1152,6 +1212,7 @@ function initialsOf(profile) {
 // Where the back button, and Android's own back gesture, should go from each screen. Every screen leads somewhere;
 // the list is the only place with nowhere further back, and there the phone's back button leaves the app as usual.
 const BACK_FROM = {
+  staff: 'discover',
   school: 'discover',
   compare: 'discover',
   apply: 'school',
@@ -2378,6 +2439,230 @@ function ChildPhoto({ path }) {
     style={{ width: 64, height: 64, borderRadius: 12, backgroundColor: C.blueSoft }} />;
 }
 
+// ---------------------------------------------------------------------------------------------- the school's side
+// One screen with two lists: families waiting for an answer, and applications waiting for a decision. A staff
+// member who works at more than one school picks between them at the top.
+function StaffScreen({ schools, onBack, onChanged }) {
+  const [schoolId, setSchoolId] = useState(schools[0]?.id ?? null);
+  const [tab, setTab] = useState('enquiries');
+  const school = schools.find((x) => x.id === schoolId) ?? schools[0] ?? null;
+
+  return (
+    <ScrollView testID="staff-screen" contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
+      <Btn testID="staff-back" kind="quiet" label={t('backToSchools')} onPress={onBack} />
+      <Text style={s.title}>{cleanName(school?.name ?? t('staff.title'))}</Text>
+      {schools.length > 1 && (<>
+        <Text style={s.label}>{t('staff.pickSchool')}</Text>
+        <View style={s.wrap} testID="staff-schools">
+          {schools.map((x) => (
+            <Chip key={x.id} testID={`staff-school-${x.id}`} label={cleanName(x.name)} selected={x.id === schoolId}
+              onPress={() => setSchoolId(x.id)} />
+          ))}
+        </View>
+      </>)}
+      <View style={s.wrap}>
+        <Chip testID="staff-tab-enquiries" label={t('staff.enquiries')} selected={tab === 'enquiries'} onPress={() => setTab('enquiries')} />
+        <Chip testID="staff-tab-applications" label={t('staff.applications')} selected={tab === 'applications'} onPress={() => setTab('applications')} />
+      </View>
+      {tab === 'enquiries'
+        ? <StaffEnquiries key={`e-${schoolId}`} schoolId={schoolId} onChanged={onChanged} />
+        : <StaffApplications key={`a-${schoolId}`} schoolId={schoolId} />}
+      <Text style={s.muted}>{t('staff.portal')}</Text>
+    </ScrollView>
+  );
+}
+
+function StaffEnquiries({ schoolId, onChanged }) {
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState('');
+  const [openId, setOpenId] = useState(null);
+
+  const load = useCallback(async () => {
+    const res = await loadSchoolEnquiries(supabase, schoolId);
+    if (res.error) setError(friendlyError(res.error, 'enquiry'));
+    else setError('');
+    setRows(res.rows);
+    onChanged?.();
+  }, [schoolId, onChanged]);
+  useEffect(() => { load(); }, [load]);
+
+  const open = (rows ?? []).find((x) => x.id === openId);
+  if (open) return <StaffConversation thread={open} onBack={() => { setOpenId(null); load(); }} onChanged={load} />;
+
+  return (
+    <View testID="staff-enquiries">
+      {!!error && <Notice text={error} testID="staff-enquiries-error" />}
+      {rows === null && <ActivityIndicator testID="staff-enquiries-loading" style={{ marginTop: 12 }} />}
+      {rows !== null && rows.length === 0 && !error && <Text testID="staff-enquiries-empty" style={s.empty}>{t('staff.noEnquiries')}</Text>}
+      {(rows ?? []).map((x) => (
+        <Pressable key={x.id} testID={`staff-thread-${x.id}`} accessibilityRole="button" onPress={() => setOpenId(x.id)} style={s.card}>
+          <Text style={s.schoolName}>{x.unread_for_staff ? '● ' : ''}{familyName(x) || t('staff.aFamily')}</Text>
+          <Text style={s.muted}>{`${enquiryStatusText(x.status)}${enquiryAbout(x) ? ` · ${enquiryAbout(x)}` : ''}`}</Text>
+          {!!x.last_message && <Text style={s.body} numberOfLines={2}>{x.last_message}</Text>}
+          <Text style={s.muted}>{dayText(x.last_message_at)}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+// The same conversation the family sees, from the other end: the school's own words are the ones on the right.
+function StaffConversation({ thread, onBack, onChanged }) {
+  const [messages, setMessages] = useState(null);
+  const [reply, setReply] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [done, setDone] = useState('');
+
+  const load = useCallback(async () => {
+    const res = await loadEnquiryMessages(supabase, thread.id);
+    if (res.error) setError(friendlyError(res.error, 'enquiry'));
+    setMessages(res.rows);
+    if (thread.unread_for_staff) { await markEnquiryRead(supabase, thread.id); onChanged?.(); }
+  }, [thread.id, thread.unread_for_staff, onChanged]);
+  useEffect(() => { load(); }, [load]);
+
+  async function send() {
+    const text = reply.trim();
+    if (text.length < 1) { setError(t('enquiry.writeFirst')); return; }
+    setBusy(true);
+    setError('');
+    const res = await replyToEnquiry(supabase, thread.id, text);
+    setBusy(false);
+    if (res.error) { setError(friendlyError(res.error, 'enquiry')); return; }
+    setReply('');
+    setDone(t('staff.replied'));
+    const again = await loadEnquiryMessages(supabase, thread.id);
+    if (!again.error) setMessages(again.rows);
+    onChanged?.();
+  }
+
+  async function close() {
+    const res = await closeEnquiry(supabase, thread.id);
+    if (res?.error) setError(friendlyError(res.error, 'enquiry'));
+    else { setDone(t('staff.closed')); onChanged?.(); }
+  }
+
+  return (
+    <View testID={`staff-conversation-${thread.id}`}>
+      <Btn testID="staff-conversation-back" kind="quiet" label={t('enquiry.backToList')} onPress={onBack} />
+      <Text style={s.h2}>{familyName(thread) || t('staff.aFamily')}</Text>
+      <Text style={s.muted}>{`${enquiryStatusText(thread.status)}${enquiryAbout(thread) ? ` · ${enquiryAbout(thread)}` : ''}`}</Text>
+      {!!error && <Notice text={error} testID="staff-conversation-error" />}
+      {!!done && <Notice tone="green" text={done} testID="staff-conversation-done" />}
+      {messages === null ? <ActivityIndicator style={{ marginTop: 12 }} /> : messages.map((m) => (
+        <View key={m.id} testID={`staff-message-${m.id}`} style={[s.card, m.sender_role === 'parent' ? { borderLeftWidth: 3, borderLeftColor: C.blue } : { borderLeftWidth: 3, borderLeftColor: C.mint }]}>
+          <Text style={s.muted}>{m.sender_role === 'parent' ? (familyName(thread) || t('staff.aFamily')) : t('staff.yourSchool')}</Text>
+          <Text style={s.body}>{m.message}</Text>
+          <Text style={s.muted}>{dayText(m.created_at)}</Text>
+        </View>
+      ))}
+      <Text style={s.label}>{t('staff.reply')}</Text>
+      <TextInput testID="staff-reply" style={[s.input, { minHeight: 90, textAlignVertical: 'top' }]} multiline
+        placeholder={t('staff.replyHint')} value={reply} onChangeText={(v) => { setReply(v); setDone(''); }} maxLength={MAX_ENQUIRY} />
+      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+        <Btn testID="staff-send" label={busy ? t('pleaseWait') : t('staff.send')} onPress={send} disabled={busy} />
+        {thread.status !== 'closed' && <Btn testID="staff-close" kind="outline" label={t('staff.close')} onPress={close} />}
+      </View>
+    </View>
+  );
+}
+
+function StaffApplications({ schoolId }) {
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState('');
+  const [openId, setOpenId] = useState(null);
+
+  const load = useCallback(async () => {
+    const res = await loadSchoolApplications(supabase, schoolId);
+    if (res.error) setError(isMissingApplications(res.error) ? t('apply.notOn') : friendlyError(res.error));
+    else setError('');
+    setRows(res.rows);
+  }, [schoolId]);
+  useEffect(() => { load(); }, [load]);
+
+  const open = (rows ?? []).find((x) => x.id === openId);
+  if (open) return <StaffApplication row={open} onBack={() => { setOpenId(null); load(); }} onChanged={load} />;
+
+  return (
+    <View testID="staff-applications">
+      {!!error && <Notice text={error} testID="staff-applications-error" />}
+      {rows === null && <ActivityIndicator testID="staff-applications-loading" style={{ marginTop: 12 }} />}
+      {rows !== null && rows.length === 0 && !error && <Text testID="staff-applications-empty" style={s.empty}>{t('staff.noApplications')}</Text>}
+      {(rows ?? []).map((x) => (
+        <Pressable key={x.id} testID={`staff-application-${x.id}`} accessibilityRole="button" onPress={() => setOpenId(x.id)} style={s.card}>
+          <Text style={s.schoolName}>{`${x.child_first_name} ${x.child_last_name}`}</Text>
+          <Text style={[s.badge, { alignSelf: 'flex-start' }]}>{stageText(x.status)}</Text>
+          <Text style={s.body}>{t('staff.forClass', { class: classLabel(x.class_applying), year: x.academic_year })}</Text>
+          <Text style={s.muted}>{dayText(x.created_at)}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+// One family's application, and the one thing the school does with it: say where it has got to, with a line the
+// family will read next to it.
+function StaffApplication({ row, onBack, onChanged }) {
+  const [stage, setStage] = useState(row.status === 'submitted' ? 'in_review' : row.status);
+  const [note, setNote] = useState(row.status_note ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [done, setDone] = useState('');
+  const canChange = stageCanChange(row.status);
+
+  async function save() {
+    setError(''); setDone('');
+    setBusy(true);
+    const res = await setApplicationStage(supabase, row.id, stage, note);
+    setBusy(false);
+    if (res.error) { setError(friendlyError(res.error)); return; }
+    setDone(t('staff.stageSaved'));
+    onChanged?.();
+  }
+
+  return (
+    <View testID={`staff-application-open-${row.id}`}>
+      <Btn testID="staff-application-back" kind="quiet" label={t('enquiry.backToList')} onPress={onBack} />
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        {!!row.child_photo_path && <ChildPhoto path={row.child_photo_path} />}
+        <View style={{ flex: 1 }}>
+          <Text style={s.h2}>{`${row.child_first_name} ${row.child_last_name}`}</Text>
+          <Text style={s.muted}>{t('staff.forClass', { class: classLabel(row.class_applying), year: row.academic_year })}</Text>
+        </View>
+      </View>
+
+      <Text style={s.label}>{t('staff.child')}</Text>
+      <Text style={s.body}>{t('staff.born', { date: dayText(row.child_dob) })}</Text>
+      {!!row.child_gender && <Text style={s.body}>{t(`gender.${row.child_gender}`)}</Text>}
+      {!!row.current_school && <Text style={s.body}>{row.current_school}</Text>}
+
+      <Text style={s.label}>{t('staff.parent')}</Text>
+      <Text style={s.body}>{`${row.parent_name} · ${t(`relation.${row.parent_relation}`)}`}</Text>
+      <Text style={s.body} testID="staff-parent-phone">{row.parent_phone}</Text>
+      <Text style={s.body} testID="staff-parent-email">{row.parent_email}</Text>
+      <Text style={s.body}>{`${row.address}, ${row.pincode}`}</Text>
+      {!!row.notes && <Text style={s.body}>{row.notes}</Text>}
+
+      <Text style={s.label}>{t('staff.stage')}</Text>
+      {canChange ? (<>
+        <View style={s.wrap}>
+          {APPLY_STAGES.map((key) => (
+            <Chip key={key} testID={`staff-stage-${key}`} label={stageText(key)} selected={stage === key} onPress={() => { setStage(key); setDone(''); }} />
+          ))}
+        </View>
+        <TextInput testID="staff-note" style={[s.input, { minHeight: 70, textAlignVertical: 'top' }]} multiline
+          placeholder={t('staff.note')} value={note} onChangeText={(v) => { setNote(v); setDone(''); }} maxLength={MAX_STAGE_NOTE} />
+        {!!error && <Notice text={error} testID="staff-application-error" />}
+        {!!done && <Notice tone="green" text={done} testID="staff-application-done" />}
+        <Btn testID="staff-stage-save" label={busy ? t('saving') : t('staff.saveStage')} onPress={save} disabled={busy} />
+      </>) : (
+        <Notice tone="amber" text={t('staff.withdrawn')} testID="staff-withdrawn" />
+      )}
+    </View>
+  );
+}
+
 // ---------------------------------------------------------------------------------------------- applying
 function ApplyScreen({ school, profile, onDone, onCancel, userId }) {
   const [form, setForm] = useState({
@@ -3058,6 +3343,9 @@ function AppBody() {
   const [themeChoice, setThemeChoice] = useState('system');
   const phoneTheme = useColorScheme();
   const [addresses, setAddresses] = useState([]);
+  // the schools this person works at, if any. Almost everyone has none, and sees nothing of this.
+  const [mySchools, setMySchools] = useState([]);
+  const [staffUnread, setStaffUnread] = useState(0);
   // the cards being shown and which one is in front, or nothing at all when the tour is not up
   const [tour, setTour] = useState(null);
   // the highest version of the tour this phone has been through, or "never"
@@ -3148,6 +3436,13 @@ function AppBody() {
   const neverTour = () => rememberTour(TOUR_NEVER);
   const showWholeTour = () => setTour({ steps: TOUR_STEPS, index: 0, whatsNew: false });
 
+  // how many families are waiting for an answer, for the button at the top
+  const refreshStaffUnread = useCallback(async () => {
+    const counts = await Promise.all(mySchools.map((school) => loadSchoolEnquiries(supabase, school.id)));
+    setStaffUnread(counts.reduce((total, res) => total + (res.error ? 0 : staffUnreadCount(res.rows)), 0));
+  }, [mySchools]);
+  useEffect(() => { if (mySchools.length) refreshStaffUnread(); }, [mySchools, refreshStaffUnread]);
+
   const refreshAddresses = useCallback(async () => {
     const res = await loadAddresses(supabase);
     if (res.error) {
@@ -3164,6 +3459,7 @@ function AppBody() {
     let alive = true;
     refreshUnread();
     refreshAddresses();
+    loadMySchools(supabase).then((res) => { if (alive && !res.error) setMySchools(res.rows); });
     loadApplications(supabase).then((res) => { if (alive && !res.error) setLiveApps(liveApplications(res.rows)); });
     loadSettings(supabase, session.user.id).then((res) => {
       if (!alive || !res.settings) return;
@@ -3308,6 +3604,9 @@ function AppBody() {
         <View style={s.topBarTabs}>
           <Btn testID="applications" kind="quiet" label={liveApps > 0 ? t('nav.applicationsCount', { count: liveApps }) : t('nav.applications')} onPress={() => setScreen('applications')} />
           <Btn testID="enquiries" kind="quiet" label={unread > 0 ? t('nav.enquiriesCount', { count: unread }) : t('nav.enquiries')} onPress={() => setScreen('enquiries')} />
+          {mySchools.length > 0 && (
+            <Btn testID="staff" kind="quiet" label={staffUnread > 0 ? t('nav.staffCount', { count: staffUnread }) : t('nav.staff')} onPress={() => setScreen('staff')} />
+          )}
         </View>
       </View>
       {!!compareNote && <Notice tone="amber" text={compareNote} testID="compare-note" />}
@@ -3342,6 +3641,9 @@ function AppBody() {
           onDeleted={() => { setScreen('discover'); supabase.auth.signOut(); }}
           onBack={() => setScreen('discover')}
         />
+      )}
+      {screen === 'staff' && mySchools.length > 0 && (
+        <StaffScreen schools={mySchools} onBack={() => setScreen('discover')} onChanged={refreshStaffUnread} />
       )}
       {screen === 'enquiries' && (
         <EnquiriesScreen myId={session?.user?.id} onBack={() => { setScreen('discover'); refreshUnread(); }} onChanged={refreshUnread} />

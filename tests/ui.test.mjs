@@ -2259,5 +2259,34 @@ await ui.click('compare-remove-n2');
 check('...and taking off the last one goes back to the schools rather than leaving an empty table',
   await waitFor(() => !!ui.id('search')) && !ui.id('compare-screen'));
 await ui.unmount();
+
+// =============================================================================================================
+console.log('\n=== the look holds together ===');
+// A colour named in one palette and forgotten in the other is an empty style rather than an error: the button
+// simply has no shadow in the dark, and nothing anywhere says so. This is the only way that gets caught.
+const paletteNames = (which) => {
+  const m = appSource.match(new RegExp(which + ': \\{([\\s\\S]*?)\\n  \\},'));
+  if (!m) throw new Error('no ' + which + ' palette found');
+  return [...m[1].matchAll(/(\w+):/g)].map((x) => x[1]).sort();
+};
+{
+  const light = paletteNames('light');
+  const dark = paletteNames('dark');
+  check('the light and the dark palette name exactly the same colours, so nothing quietly has none',
+    light.join() === dark.join(),
+    'only in light: ' + light.filter((x) => !dark.includes(x)).join() + ' | only in dark: ' + dark.filter((x) => !light.includes(x)).join());
+  check('...and both of them name the ones the new depth is drawn with', ['shadow', 'hairline', 'glow', 'glowStrength', 'blueDeep'].every((k) => light.includes(k)), light.join());
+}
+
+globalThis.__bio = { hasHardwareAsync: () => false, isEnrolledAsync: () => false, supportedAuthenticationTypesAsync: () => [] };
+st = seed(); ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+await waitFor(() => ui.cards() === 20);
+check('the standing-in shapes are gone once the schools themselves have arrived, rather than left under them',
+  !ui.id('school-skeletons') && ui.all('school-skeleton').length === 0);
+await ui.type('search', 'Sunrise');
+await waitFor(() => ui.cards() === 1, 3000);
+check('...and they do not come back for a search that has already found something', !ui.id('school-skeletons'));
+await ui.unmount();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

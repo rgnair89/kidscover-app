@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "810204283486",
+    "project_id": "kidscover-11df1",
+    "storage_bucket": "kidscover-11df1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:810204283486:android:5e4d9b78b7e26bba8daacf",
+        "android_client_info": {
+          "package_name": "in.kidscover.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYKf2GlnFoeycLcYjf1LehCYfXWKBuEyM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

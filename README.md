@@ -66,7 +66,7 @@ which is the mark you see beside the name inside the app.
 ```bash
 npm install
 npm start          # then press w for the browser, or scan the QR code with Expo Go
-npm test           # the app's own checks: 349 on the logic, 461 on the screens, plus the language packs
+npm test           # the app's own checks: 349 on the logic, 468 on the screens, plus the language packs
 ```
 
 In Expo Go the fingerprint unlock works, but **push notifications do not** (Android stopped allowing them in Expo Go).

@@ -250,6 +250,8 @@
   "compare.add": "+ ਤੁਲਨਾ",
   "compare.added": "ਤੁਲਨਾ ਵਿੱਚ",
   "compare.remove": "ਹਟਾਓ",
+
+  "compare.clear": "ਸੂਚੀ ਖਾਲੀ ਕਰੋ",
   "compare.chosen": "ਤੁਲਨਾ ਲਈ {max} ਵਿੱਚੋਂ {count} ਸਕੂਲ ਚੁਣੇ",
   "compare.open": "ਤੁਲਨਾ ਵੇਖੋ",
   "compare.full": "ਇੱਕ ਵਾਰ ਵਿੱਚ {max} ਸਕੂਲਾਂ ਤੱਕ ਤੁਲਨਾ ਹੋ ਸਕਦੀ ਹੈ।",

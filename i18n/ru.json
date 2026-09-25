@@ -250,6 +250,8 @@
   "compare.add": "+ Сравнить",
   "compare.added": "В сравнении",
   "compare.remove": "Убрать",
+
+  "compare.clear": "Очистить список",
   "compare.chosen": "Для сравнения выбрано {count} из {max} школ",
   "compare.open": "Открыть сравнение",
   "compare.full": "Можно сравнивать до {max} школ за раз.",

@@ -250,6 +250,8 @@
   "compare.add": "+ ତୁଳନା",
   "compare.added": "ତୁଳନାରେ ଅଛି",
   "compare.remove": "କାଢ଼ନ୍ତୁ",
+
+  "compare.clear": "ତାଲିକା ଖାଲି କରନ୍ତୁ",
   "compare.chosen": "ତୁଳନା ପାଇଁ {max} ରୁ {count} ବିଦ୍ୟାଳୟ ବଛାଗଲା",
   "compare.open": "ତୁଳନା ଦେଖନ୍ତୁ",
   "compare.full": "ଏକାଥରେ {max} ବିଦ୍ୟାଳୟ ପର୍ଯ୍ୟନ୍ତ ତୁଳନା କରାଯାଇପାରିବ।",

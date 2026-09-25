@@ -250,6 +250,8 @@
   "compare.add": "+ तुलना",
   "compare.added": "तुलनायाम् अस्ति",
   "compare.remove": "दूरीक्रियताम्",
+
+  "compare.clear": "सूचीं रिक्तां करोतु",
   "compare.chosen": "तुलनायै {max} मध्ये {count} विद्यालयाः चिताः",
   "compare.open": "तुलनां पश्यतु",
   "compare.full": "एकवारं {max} विद्यालयपर्यन्तं तुलना शक्यते।",

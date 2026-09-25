@@ -1449,7 +1449,7 @@ await ui.click('compare-remove-s1');
 check('one can be taken out again', await waitFor(() => !ui.id('compare-open-s1')));
 await ui.click('compare-back');
 await waitFor(() => !!ui.id('search'));
-const notSchools = ['compare-bar', 'compare-note', 'compare-open', 'compare-back', 'compare-screen', 'compare-toggle'];
+const notSchools = ['compare-bar', 'compare-note', 'compare-open', 'compare-back', 'compare-screen', 'compare-toggle', 'compare-clear'];
 const compareButtons = ui.all('compare-').filter((e) => !notSchools.includes(e.getAttribute('data-testid')));
 // only schools not already chosen, so a tap never takes one back out
 for (const el of compareButtons.filter((e) => /Compare/.test(e.textContent)).slice(0, 5)) { await ui.click(el); }
@@ -2211,5 +2211,53 @@ check('typing a password is proof enough: it does not then ask for a fingerprint
   await waitFor(() => ui.cards() === 20) && !ui.id('lock-screen') && fingerAsks.length === 0);
 await ui.unmount();
 globalThis.__bio = { hasHardwareAsync: () => false, isEnrolledAsync: () => false, supportedAuthenticationTypesAsync: () => [] };
+
+// =============================================================================================================
+// Two particular schools, found the way a person would: by searching for each one.
+async function pickTwo(ui) {
+  await ui.type('search', 'Sunrise');
+  await waitFor(() => !!ui.id('compare-s1'), 3000);
+  await ui.click('compare-s1');
+  await ui.type('search', '270 Degree');
+  await waitFor(() => !!ui.id('compare-n2'), 3000);
+  await ui.click('compare-n2');
+  await ui.type('search', '');
+  await waitFor(() => ui.cards() > 3, 3000);
+}
+
+console.log('\n=== putting the comparison down again ===');
+globalThis.__bio = { hasHardwareAsync: () => false, isEnrolledAsync: () => false, supportedAuthenticationTypesAsync: () => [] };
+st = seed(); ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+await waitFor(() => ui.cards() === 20);
+await pickTwo(ui);
+check('two schools chosen, and a way to put them all down again right where they were chosen',
+  await waitFor(() => !!ui.id('compare-bar')) && !!ui.id('clear-compare'));
+await ui.click('clear-compare');
+check('...which empties the list in one press, instead of hunting down each school to un-pick it',
+  await waitFor(() => !ui.id('compare-bar')) && ui.cards() === 20);
+
+// the same thing, from inside the comparison
+await pickTwo(ui);
+await waitFor(() => !!ui.id('open-compare'));
+await ui.click('open-compare');
+check('the comparison itself offers it too, so a person is not sent back to find it', await waitFor(() => !!ui.id('compare-clear')));
+check('...and every school on it says, on the school, how to take that one off',
+  !!ui.id('compare-remove-s1') && !!ui.id('compare-remove-n2') && /Remove/.test(ui.id('compare-remove-s1').textContent), ui.id('compare-remove-s1')?.textContent);
+await ui.click('compare-clear');
+check('clearing from there puts you back with the schools, not on a page comparing nothing',
+  await waitFor(() => !!ui.id('search')) && !ui.id('compare-screen') && !ui.id('compare-bar'));
+
+// taking them off one at a time ends the same way
+await pickTwo(ui);
+await waitFor(() => !!ui.id('open-compare'));
+await ui.click('open-compare');
+await waitFor(() => !!ui.id('compare-screen'));
+await ui.click('compare-remove-s1');
+check('taking one off leaves the other there to look at', await waitFor(() => !ui.id('compare-open-s1')) && !!ui.id('compare-open-n2'));
+await ui.click('compare-remove-n2');
+check('...and taking off the last one goes back to the schools rather than leaving an empty table',
+  await waitFor(() => !!ui.id('search')) && !ui.id('compare-screen'));
+await ui.unmount();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

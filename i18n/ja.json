@@ -250,6 +250,8 @@
   "compare.add": "＋比較",
   "compare.added": "比較中",
   "compare.remove": "外す",
+
+  "compare.clear": "リストを空にする",
   "compare.chosen": "比較する学校を {max} 校中 {count} 校選択中",
   "compare.open": "比較を見る",
   "compare.full": "一度に比較できるのは {max} 校までです。",

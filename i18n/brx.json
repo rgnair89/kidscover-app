@@ -250,6 +250,8 @@
   "compare.add": "+ बेसेन",
   "compare.added": "बेसेनआव दं",
   "compare.remove": "गैया खालाम",
+
+  "compare.clear": "लिस्ट खालि खालाम",
   "compare.chosen": "बेसेननो {max} निफ्राय {count} फरायसालि सायखबाय",
   "compare.open": "बेसेन नाय",
   "compare.full": "मोनसे बारावनो {max} फरायसालि सिम बेसेननो हागौ।",

@@ -1904,7 +1904,7 @@ function TourOverlay({ steps, index, whatsNew, onNext, onBack, onClose, onFinish
   );
 }
 
-function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare, addresses, onSavedAddress, userId }) {
+function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare, onClearCompare, addresses, onSavedAddress, userId }) {
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [typed, setTyped] = useState('');
   const [search, setSearch] = useState('');
@@ -2242,7 +2242,14 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare, addre
           after picking two schools there was no way to start the comparison without scrolling to the bottom. */}
       {compare.length > 0 && (
         <View style={s.compareBar} testID="compare-bar">
-          <Text style={s.body}>{t('compare.chosen', { count: compare.length, max: MAX_COMPARE })}</Text>
+          <View style={s.compareBarTop}>
+            <Text style={[s.body, { flex: 1 }]}>{t('compare.chosen', { count: compare.length, max: MAX_COMPARE })}</Text>
+            {/* Putting the whole list down again used to mean finding each school over again and un-picking it one
+                by one. It is one press, where the list is. */}
+            <Pressable testID="clear-compare" accessibilityRole="button" hitSlop={10} onPress={onClearCompare}>
+              <Text style={s.linkStrong}>{t('compare.clear')}</Text>
+            </Pressable>
+          </View>
           <Text style={s.muted}>{t('compare.full', { max: MAX_COMPARE })}</Text>
           <Btn testID="open-compare" label={t('compare.open')} onPress={onOpenCompare} disabled={compare.length < 2} />
         </View>
@@ -2252,11 +2259,14 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare, addre
 }
 
 // ---------------------------------------------------------------------------------------------- comparing
-function CompareScreen({ schools, level, onBack, onOpen, onRemove }) {
+function CompareScreen({ schools, level, onBack, onOpen, onRemove, onClear }) {
   const rows = compareRows(schools, level);
   return (
     <ScrollView testID="compare-screen" contentContainerStyle={{ padding: 16 }}>
-      <Btn testID="compare-back" kind="quiet" label={t('back')} onPress={onBack} />
+      <View style={s.compareBarTop}>
+        <Btn testID="compare-back" kind="quiet" label={t('back')} onPress={onBack} />
+        <Btn testID="compare-clear" kind="quiet" label={t('compare.clear')} onPress={onClear} />
+      </View>
       <Text style={s.title}>{t('compare.title')}</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={{ paddingBottom: 8 }}>
         <View>
@@ -2270,8 +2280,11 @@ function CompareScreen({ schools, level, onBack, onOpen, onRemove }) {
                   </View>
                   <Text style={s.compareName} numberOfLines={2}>{cleanName(school.name)}</Text>
                 </Pressable>
-                <Pressable testID={`compare-remove-${school.id}`} accessibilityRole="button" onPress={() => onRemove(school)}>
-                  <Text style={[s.muted, { color: C.blue }]}>{t('compare.remove')}</Text>
+                {/* A whole column of a school you have changed your mind about, with nothing on it that says so,
+                    is a column you have to go back and hunt down. This says it, on the column. */}
+                <Pressable testID={`compare-remove-${school.id}`} accessibilityRole="button" hitSlop={6}
+                  style={s.compareRemove} onPress={() => onRemove(school)}>
+                  <Text style={s.compareRemoveText}>{`\u2715  ${t('compare.remove')}`}</Text>
                 </Pressable>
               </View>
             ))}
@@ -3615,6 +3628,15 @@ function AppBody() {
     const res = toggleCompare(compare, item);
     setCompare(res.list);
     setCompareNote(res.full ? t('compare.full', { max: MAX_COMPARE }) : '');
+    // Taking the last school off a comparison leaves a page comparing nothing. Go back to the list, where there are
+    // schools to pick again.
+    if (res.list.length === 0) setScreen((now) => (now === 'compare' ? 'discover' : now));
+  }
+
+  function clearCompare() {
+    setCompare([]);
+    setCompareNote('');
+    setScreen((now) => (now === 'compare' ? 'discover' : now));
   }
 
   if (!KEY_IS_SET) {
@@ -3734,11 +3756,11 @@ function AppBody() {
       )}
       {screen === 'compare' && (
         <CompareScreen schools={compare} level={null} onBack={() => setScreen('discover')}
-          onOpen={(x) => { setSchool(x); setScreen('school'); }} onRemove={(x) => toggleCompareSchool(x)} />
+          onOpen={(x) => { setSchool(x); setScreen('school'); }} onRemove={(x) => toggleCompareSchool(x)} onClear={clearCompare} />
       )}
       <View style={{ flex: 1, display: screen === 'discover' ? 'flex' : 'none' }}>
         <DiscoverScreen onOpen={(x) => { setSchool(x); setScreen('school'); }} compare={compare}
-          onToggleCompare={toggleCompareSchool} onOpenCompare={() => setScreen('compare')}
+          onToggleCompare={toggleCompareSchool} onOpenCompare={() => setScreen('compare')} onClearCompare={clearCompare}
           addresses={addressBookOn ? addresses : null} onSavedAddress={refreshAddresses} userId={session?.user?.id ?? null} />
       </View>
       {/* last of all, so it lies over whatever is underneath */}
@@ -3819,6 +3841,10 @@ function makeStyles(C) {
   tileLabel: { fontSize: 11, color: C.grey, textAlign: 'center' },
   feeRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
   compareBar: { backgroundColor: C.card, borderTopWidth: 2, borderTopColor: C.blue, paddingHorizontal: 16, paddingVertical: 10, gap: 6, shadowColor: C.blue, shadowOpacity: 0.15, shadowRadius: 10, shadowOffset: { width: 0, height: -3 }, elevation: 8 },
+  compareBarTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  linkStrong: { fontSize: 15, fontWeight: '700', color: C.blue },
+  compareRemove: { marginTop: 6, alignSelf: 'flex-start', borderWidth: 1, borderColor: C.line, backgroundColor: C.card, borderRadius: 999, paddingVertical: 5, paddingHorizontal: 10 },
+  compareRemoveText: { fontSize: 12, fontWeight: '700', color: C.red },
   compareCell: { width: 150, padding: 8, borderWidth: 1, borderColor: C.line, backgroundColor: C.card },
   compareHead: { backgroundColor: C.blueSoft },
   compareName: { fontSize: 14, fontWeight: '700', color: C.ink },

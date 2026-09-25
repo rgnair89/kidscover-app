@@ -250,6 +250,8 @@
   "compare.add": "+ موازنہٕ",
   "compare.added": "موازنس منز چھُ",
   "compare.remove": "کڈیو",
+
+  "compare.clear": "فہرست صاف کریو",
   "compare.chosen": "موازنہٕ خٲطرٕ {max} منزٕ {count} سکول ژارنہٕ آیہٕ",
   "compare.open": "موازنہٕ وُچھِو",
   "compare.full": "اکہِ لٹہِ ہیٚکِوٕ {max} سکولن تام موازنہٕ کرِتھ۔",

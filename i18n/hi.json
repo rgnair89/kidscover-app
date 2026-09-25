@@ -250,6 +250,8 @@
   "compare.add": "+ तुलना करें",
   "compare.added": "तुलना में है",
   "compare.remove": "हटाएँ",
+
+  "compare.clear": "सूची खाली करें",
   "compare.chosen": "तुलना के लिए {max} में से {count} स्कूल चुने",
   "compare.open": "तुलना देखें",
   "compare.full": "एक बार में {max} स्कूलों तक तुलना कर सकते हैं।",

@@ -250,6 +250,8 @@
   "compare.add": "+ పోల్చు",
   "compare.added": "పోలికలో ఉంది",
   "compare.remove": "తీసివేయి",
+
+  "compare.clear": "జాబితాను ఖాళీ చేయండి",
   "compare.chosen": "పోల్చడానికి {max}లో {count} పాఠశాలలు ఎంచుకున్నారు",
   "compare.open": "పోల్చి చూడు",
   "compare.full": "ఒకేసారి {max} పాఠశాలల వరకు పోల్చవచ్చు.",

@@ -250,6 +250,8 @@
   "compare.add": "+ Compare",
   "compare.added": "In the comparison",
   "compare.remove": "Remove",
+
+  "compare.clear": "Clear the list",
   "compare.chosen": "{count} of {max} schools chosen to compare",
   "compare.open": "Compare them",
   "compare.full": "You can compare up to {max} schools at a time.",

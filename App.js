@@ -1164,8 +1164,27 @@ function compareRows(schools, level) {
 }
 
 // ---- notifications on the phone ---------------------------------------------------------------------------------------
+// Android files every notification under a channel, and anything with no channel of its own is filed under "Other"
+// and arrives silently. This is Kidscover's own, so a person can turn these down in the phone's settings without
+// turning down everything else, and so a school's reply actually shows up rather than waiting to be found.
+const PUSH_CHANNEL = 'default';
+async function ensurePushChannel(notifications, platform = 'android', name = 'Notifications') {
+  if (platform !== 'android' || !notifications?.setNotificationChannelAsync) return false;
+  try {
+    await notifications.setNotificationChannelAsync(PUSH_CHANNEL, {
+      name,
+      importance: notifications.AndroidImportance?.HIGH ?? 4,
+      lightColor: '#5B4BDB',
+      vibrationPattern: [0, 250, 250, 250],
+    });
+    return true;
+  } catch (_e) {
+    return false;   // an older phone, or a stand-in that does not do channels: the notification still arrives
+  }
+}
+
 // `notifications` is expo-notifications (or a stand-in in tests). Returns what happened, so the settings screen can say.
-async function registerForPush(notifications, db, platform = 'android', projectId = null) {
+async function registerForPush(notifications, db, platform = 'android', projectId = null, channelName = 'Notifications') {
   try {
     if (!notifications?.getPermissionsAsync) return { ok: false, reason: 'unavailable' };
     const current = await notifications.getPermissionsAsync();
@@ -1175,6 +1194,7 @@ async function registerForPush(notifications, db, platform = 'android', projectI
       granted = asked?.granted || asked?.status === 'granted';
     }
     if (!granted) return { ok: false, reason: 'denied' };
+    await ensurePushChannel(notifications, platform, channelName);   // before the token: Android wants somewhere to put them
     const token = await notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
     const value = token?.data ?? '';
     if (!/^Expo(nent)?PushToken\[/.test(value)) return { ok: false, reason: 'no_token' };
@@ -1341,6 +1361,12 @@ const nextTourIndex = (index, by, count) => Math.min(Math.max(Math.trunc(Number(
 const onLastTourStep = (index, count) => Math.trunc(Number(index) || 0) >= Math.trunc(Number(count) || 1) - 1;
 
 // ==== END pure logic ====
+
+// A notification that arrives while somebody is looking at the app should still be seen. Without this Android hands
+// it quietly to the app and shows the person nothing at all.
+Notifications.setNotificationHandler?.({
+  handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false }),
+});
 
 // ---------------------------------------------------------------------------------------------- small pieces
 // A friendly palette: violet for actions, coral, sunshine and mint for warmth, on a soft lavender page.
@@ -3490,7 +3516,7 @@ function AppBody() {
     let alive = true;
     if (settings.notify_push) {
       const projectId = Constants?.expoConfig?.extra?.eas?.projectId ?? null;
-      registerForPush(Notifications, supabase, Platform.OS, projectId).then(() => { /* nothing to show: it is quiet on purpose */ });
+      registerForPush(Notifications, supabase, Platform.OS, projectId, t('settings.notifications')).then(() => { /* nothing to show: it is quiet on purpose */ });
     }
     const sub = Notifications.addNotificationResponseReceivedListener?.((response) => {
       const kind = response?.notification?.request?.content?.data?.kind;
@@ -3532,7 +3558,7 @@ function AppBody() {
   async function setPushChoice(on) {
     setSettings((cur) => ({ ...cur, notify_push: on }));
     if (session?.user?.id) await savePushChoice(supabase, session.user.id, on);
-    if (on) await registerForPush(Notifications, supabase, Platform.OS, Constants?.expoConfig?.extra?.eas?.projectId ?? null);
+    if (on) await registerForPush(Notifications, supabase, Platform.OS, Constants?.expoConfig?.extra?.eas?.projectId ?? null, t('settings.notifications'));
     else await forgetPush(Notifications, supabase, Platform.OS, Constants?.expoConfig?.extra?.eas?.projectId ?? null);
   }
 

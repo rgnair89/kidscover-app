@@ -40,6 +40,10 @@
   "lock.usePassword": "Sign in with a password instead",
   "lock.prompt": "Unlock Kidscover",
   "lock.failed": "That did not work. Try again, or sign in with your password.",
+
+  "lock.otherWays": "Other ways to sign in",
+
+  "lock.signedInAs": "Signed in as {email}",
   "nav.enquiries": "Enquiries",
   "nav.enquiriesCount": "Enquiries ({count})",
   "nav.applications": "Applications",

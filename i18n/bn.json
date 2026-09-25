@@ -40,6 +40,10 @@
   "lock.usePassword": "বরং পাসওয়ার্ড দিয়ে সাইন ইন করুন",
   "lock.prompt": "Kidscover খুলুন",
   "lock.failed": "হলো না। আবার চেষ্টা করুন, বা পাসওয়ার্ড দিয়ে সাইন ইন করুন।",
+
+  "lock.otherWays": "সাইন ইন করার অন্য উপায়",
+
+  "lock.signedInAs": "{email} হিসেবে সাইন ইন করা আছে",
   "nav.enquiries": "জিজ্ঞাসা",
   "nav.enquiriesCount": "জিজ্ঞাসা ({count})",
   "nav.applications": "আবেদন",

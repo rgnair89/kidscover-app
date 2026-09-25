@@ -1279,7 +1279,7 @@ async function deleteAccount(db, email, password) {
 
 // ---- unlocking with a fingerprint ---------------------------------------------------------------------------------------
 // `auth` is expo-local-authentication (or a stand-in in tests).
-async function biometricKind(auth) {
+async function biometricKind(auth, platform = 'android') {
   try {
     if (!auth?.hasHardwareAsync) return 'none';
     const [hardware, enrolled, types] = await Promise.all([
@@ -1287,8 +1287,15 @@ async function biometricKind(auth) {
     ]);
     if (!hardware || !enrolled) return 'none';
     const list = types ?? [];
-    if (list.includes(auth.AuthenticationType?.FACIAL_RECOGNITION)) return 'face';
-    if (list.includes(auth.AuthenticationType?.IRIS)) return 'iris';
+    const has = (name) => list.includes(auth.AuthenticationType?.[name]);
+    // An iPhone reports the one thing it has, so believe it.
+    if (platform === 'ios') return has('FACIAL_RECOGNITION') ? 'face' : has('IRIS') ? 'iris' : 'fingerprint';
+    // An Android phone reports what it *could* do, not what this person has actually set up. Almost every phone with
+    // a front camera says it can do faces, and the fingerprint is what people really enrol - so asking someone for
+    // their face when they have only ever registered a thumb is wrong far more often than it is right.
+    if (has('FINGERPRINT')) return 'fingerprint';
+    if (has('FACIAL_RECOGNITION')) return 'face';
+    if (has('IRIS')) return 'iris';
     return 'fingerprint';
   } catch {
     return 'none';
@@ -1313,6 +1320,13 @@ const LOCATION_SETTING = 'kidscover.useMyLocation';
 const LOCK_AFTER_MS = 2 * 60 * 1000;
 
 const shouldLock = (enabled, leftAt, now = Date.now(), after = LOCK_AFTER_MS) => !!enabled && !!leftAt && now - leftAt >= after;
+
+// Whether opening the app should ask for a fingerprint before showing anything.
+//
+// Only for a sign-in that was already there when the app started: somebody who has just typed their password has
+// proved who they are a moment ago, and asking again would be rude. And never when the phone has nothing to ask
+// with - a person who has removed their fingerprints from the phone itself must not be shut out of their own app.
+const shouldAskOnOpen = (enabled, restoredSession, kind = 'fingerprint') => !!enabled && !!restoredSession && kind !== 'none';
 
 // ---- light or dark ----
 // "system" is the answer for most people: the phone already knows whether it is night. The other two are for anyone
@@ -1673,18 +1687,29 @@ function AuthScreen({ language, onPickLanguage }) {
   );
 }
 
-// ---------------------------------------------------------------------------------------------- the lock screen
-function LockScreen({ kind, onUnlock, onSignOut, busy, error }) {
+// ---------------------------------------------------------------------------------------------- the way in
+// This is the first screen for anyone who has asked to be let in by fingerprint, so it does the asking itself rather
+// than waiting to be pressed: opening the app *is* the request. The button is there for a second go, and for anyone
+// who dismissed the phone's own panel by accident.
+function LockScreen({ kind, email, onUnlock, onOtherWays, busy, error }) {
+  const asked = useRef(false);
+  useEffect(() => {
+    if (asked.current) return undefined;
+    asked.current = true;
+    onUnlock();
+    return undefined;
+  }, [onUnlock]);
   return (
     <View style={[s.root, s.center]} testID="lock-screen">
       <LogoMark size={44} />
       <Text style={[s.title, { textAlign: 'center' }]}>{t('lock.title')}</Text>
+      {!!email && <Text testID="lock-email" style={[s.muted, { textAlign: 'center' }]}>{t('lock.signedInAs', { email })}</Text>}
       <Text style={[s.body, { textAlign: 'center', marginBottom: 12 }]}>
         {kind === 'face' ? t('lock.face') : kind === 'iris' ? t('lock.iris') : t('lock.fingerprint')}
       </Text>
       {!!error && <Notice text={error} testID="lock-error" />}
-      <Btn testID="lock-unlock" label={busy ? t('pleaseWait') : t('lock.unlock')} onPress={onUnlock} disabled={busy} />
-      <Btn testID="lock-signout" kind="quiet" label={t('lock.usePassword')} onPress={onSignOut} />
+      <Btn testID="lock-unlock" label={busy ? t('pleaseWait') : error ? t('tryAgain') : t('lock.unlock')} onPress={onUnlock} disabled={busy} />
+      <Btn testID="lock-signout" kind="quiet" label={t('lock.otherWays')} onPress={onOtherWays} />
     </View>
   );
 }
@@ -3429,9 +3454,35 @@ function AppBody() {
     if (!res.error) setUnread(unreadCount(res.rows));
   }, []);
 
+  // Opening the app happens once, and this settles it before a pixel is drawn: who is signed in, whether this phone
+  // was asked to want a fingerprint, and whether it still has one to give. Reading any of that later would show the
+  // app for a moment and then cover it up, which is not a lock at all.
+  //
+  // It runs on its own and only once. When it sat with the listeners below, which are rebuilt whenever the unlock
+  // setting changes, switching that setting on in Settings looked exactly like opening the app - and locked it then
+  // and there, in front of the person who had just asked for it.
   useEffect(() => {
     if (!KEY_IS_SET) return undefined;
-    supabase.auth.getSession().then(({ data }) => { setSession(data?.session ?? null); setReady(true); });
+    let alive = true;
+    Promise.all([
+      supabase.auth.getSession(),
+      AsyncStorage.getItem(BIOMETRIC_SETTING).catch(() => null),
+      biometricKind(LocalAuthentication, Platform.OS),
+    ]).then(([got, saved, kind]) => {
+      if (!alive) return;
+      const restored = got?.data?.session ?? null;
+      const on = saved === 'on';
+      setSession(restored);
+      setUnlockOn(on);
+      setBiometrics(kind);
+      if (shouldAskOnOpen(on, restored, kind)) setLocked(true);
+      setReady(true);
+    });
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!KEY_IS_SET) return undefined;
     const { data } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
       // Signing out hands the phone back. The next person starts fresh, including the choice to use a location:
@@ -3497,14 +3548,12 @@ function AppBody() {
         saveLanguage(supabase, session.user.id, language);
       }
     });
-    AsyncStorage.getItem(BIOMETRIC_SETTING).then((v) => { if (alive) setUnlockOn(v === 'on'); });
     AsyncStorage.getItem(TOUR_SETTING).then((saved) => {
       if (!alive) return;
       setTourSeen(saved);
       const steps = tourToShow(saved);
       if (steps.length) setTour({ steps, index: 0, whatsNew: steps.length < TOUR_STEPS.length });
     }).catch(() => {});
-    biometricKind(LocalAuthentication).then((kind) => { if (alive) setBiometrics(kind); });
     return () => { alive = false; };
     // language is left out on purpose: this runs when the person signs in, not every time they switch language
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3602,7 +3651,8 @@ function AppBody() {
   if (locked) {
     return (
       <View style={frame} testID="frame">
-        <LockScreen kind={biometrics} busy={lockBusy} error={lockError} onUnlock={unlock} onSignOut={() => { setLocked(false); supabase.auth.signOut(); }} />
+        <LockScreen kind={biometrics} email={session?.user?.email} busy={lockBusy} error={lockError} onUnlock={unlock}
+          onOtherWays={() => { setLocked(false); supabase.auth.signOut(); }} />
       </View>
     );
   }

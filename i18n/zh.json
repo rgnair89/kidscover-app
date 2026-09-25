@@ -40,6 +40,10 @@
   "lock.usePassword": "改用密码登录",
   "lock.prompt": "打开 Kidscover",
   "lock.failed": "没有成功。请重试，或改用密码。",
+
+  "lock.otherWays": "其他登录方式",
+
+  "lock.signedInAs": "已以 {email} 登录",
   "nav.enquiries": "咨询",
   "nav.enquiriesCount": "咨询（{count}）",
   "nav.applications": "申请",

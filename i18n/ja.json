@@ -40,6 +40,10 @@
   "lock.usePassword": "パスワードでサインインする",
   "lock.prompt": "Kidscover を開く",
   "lock.failed": "うまくいきませんでした。もう一度試すか、パスワードをお使いください。",
+
+  "lock.otherWays": "他のログイン方法",
+
+  "lock.signedInAs": "{email} でログイン中",
   "nav.enquiries": "問い合わせ",
   "nav.enquiriesCount": "問い合わせ（{count}）",
   "nav.applications": "出願",

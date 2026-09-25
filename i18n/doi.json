@@ -40,6 +40,10 @@
   "lock.usePassword": "इसदी थाहीं पासवर्ड कन्नै साइन इन करो",
   "lock.prompt": "Kidscover खोलो",
   "lock.failed": "एह् नेईं होया। फ्ही कोशश करो, जां पासवर्ड बरतो।",
+
+  "lock.otherWays": "दाखल होने दे होर तरीके",
+
+  "lock.signedInAs": "{email} दे तौर पर दाखल",
   "nav.enquiries": "पुच्छ-गिच्छ",
   "nav.enquiriesCount": "पुच्छ-गिच्छ ({count})",
   "nav.applications": "अर्जियां",

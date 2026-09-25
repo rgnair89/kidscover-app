@@ -40,6 +40,10 @@
   "lock.usePassword": "Stattdessen mit Passwort anmelden",
   "lock.prompt": "Kidscover öffnen",
   "lock.failed": "Das hat nicht geklappt. Versuchen Sie es erneut oder nutzen Sie Ihr Passwort.",
+
+  "lock.otherWays": "Andere Wege zur Anmeldung",
+
+  "lock.signedInAs": "Angemeldet als {email}",
   "nav.enquiries": "Anfragen",
   "nav.enquiriesCount": "Anfragen ({count})",
   "nav.applications": "Bewerbungen",

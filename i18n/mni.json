@@ -40,6 +40,10 @@
   "lock.usePassword": "মদুগী মহুৎতা পাসৱার্দনা সাইন ইন তৌরো",
   "lock.prompt": "Kidscover হাংদোকউ",
   "lock.failed": "মদু ওইখিদে। অমুক হন্না হোৎনবিয়ু, নত্ত্রগা পাসৱার্দ শীজিন্নৌ।",
+
+  "lock.otherWays": "ꯁꯥꯏꯟ ꯏꯟ ꯇꯧꯅꯕꯥ ꯑꯇꯣꯞꯄꯥ ꯂꯝꯕꯤ",
+
+  "lock.signedInAs": "{email} ꯑꯣꯏꯅ ꯁꯥꯏꯟ ꯏꯟ ꯇꯧꯔꯦ",
   "nav.enquiries": "হংবশিং",
   "nav.enquiriesCount": "হংবশিং ({count})",
   "nav.applications": "এপ্লিকেসন",

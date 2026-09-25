@@ -40,6 +40,10 @@
   "lock.usePassword": "बेनि सोलायै पासवर्डजों साइन इन खालाम",
   "lock.prompt": "Kidscover खेव",
   "lock.failed": "बेयो जायाखै। फिन नाजा, एबा पासवर्ड बाहाय।",
+
+  "lock.otherWays": "हाबनो गुबुन लामा",
+
+  "lock.signedInAs": "{email} बादि हाबबाय",
   "nav.enquiries": "सोंनाय",
   "nav.enquiriesCount": "सोंनाय ({count})",
   "nav.applications": "आबेदन",

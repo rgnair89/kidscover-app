@@ -40,6 +40,10 @@
   "lock.usePassword": "تٔتھ بدلہٕ پاس ورڈ سٟتؠ سائن اِن کریو",
   "lock.prompt": "Kidscover کھولیو",
   "lock.failed": "سہ نہٕ گۄو۔ دوبارٕ کوشش کریو، یا پاس ورڈ وَرتٲویو۔",
+
+  "lock.otherWays": "اندر یُن ہِنٛز بیٚیہ طریقہ",
+
+  "lock.signedInAs": "{email} پؠٹھ اَندر آمُت",
   "nav.enquiries": "پرژھن",
   "nav.enquiriesCount": "پرژھن ({count})",
   "nav.applications": "درخواست",

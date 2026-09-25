@@ -40,6 +40,10 @@
   "lock.usePassword": "Войти с паролем",
   "lock.prompt": "Открыть Kidscover",
   "lock.failed": "Не получилось. Попробуйте ещё раз или войдите с паролем.",
+
+  "lock.otherWays": "Другие способы входа",
+
+  "lock.signedInAs": "Вход выполнен как {email}",
   "nav.enquiries": "Обращения",
   "nav.enquiriesCount": "Обращения ({count})",
   "nav.applications": "Заявления",

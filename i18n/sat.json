@@ -40,6 +40,10 @@
   "lock.usePassword": "ᱚᱱᱟ ᱵᱚᱫᱚᱞ ᱛᱮ ᱯᱟᱥᱣᱟᱨᱰ ᱛᱮ ᱥᱟᱭᱤᱱ ᱤᱱ ᱢᱮ",
   "lock.prompt": "Kidscover ᱡᱷᱤᱡ ᱢᱮ",
   "lock.failed": "ᱚᱱᱟ ᱵᱟᱭ ᱦᱩᱭ ᱞᱮᱱᱟ᱾ ᱫᱩᱦᱲᱟᱹ ᱠᱩᱨᱩᱢᱩᱴᱩ ᱢᱮ, ᱟᱨᱵᱟᱝ ᱯᱟᱥᱣᱟᱨᱰ ᱵᱮᱵᱷᱟᱨ ᱢᱮ᱾",
+
+  "lock.otherWays": "ᱵᱚᱞᱚᱱ ᱮᱴᱟᱜ ᱦᱚᱨᱟ",
+
+  "lock.signedInAs": "{email} ᱞᱮᱠᱟᱛᱮ ᱵᱚᱞᱚᱱ",
   "nav.enquiries": "ᱠᱩᱠᱞᱤ",
   "nav.enquiriesCount": "ᱠᱩᱠᱞᱤ ({count})",
   "nav.applications": "ᱟᱨᱡᱤ",

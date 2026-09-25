@@ -40,6 +40,10 @@
   "lock.usePassword": "ان جي بدران پاسورڊ سان سائن اِن ڪريو",
   "lock.prompt": "Kidscover کوليو",
   "lock.failed": "اهو نه ٿيو. ٻيهر ڪوشش ڪريو، يا پاسورڊ استعمال ڪريو.",
+
+  "lock.otherWays": "سائن ان ڪرڻ جا ٻيا طريقا",
+
+  "lock.signedInAs": "{email} جي حيثيت ۾ سائن ان",
   "nav.enquiries": "پڇا ڳاڇا",
   "nav.enquiriesCount": "پڇا ڳاڇا ({count})",
   "nav.applications": "درخواستون",

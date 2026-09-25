@@ -40,6 +40,10 @@
   "lock.usePassword": "బదులుగా పాస్‌వర్డ్‌తో సైన్ ఇన్ చేయి",
   "lock.prompt": "Kidscover తెరువు",
   "lock.failed": "అది పని చేయలేదు. మళ్లీ ప్రయత్నించండి, లేదా పాస్‌వర్డ్ వాడండి.",
+
+  "lock.otherWays": "సైన్ ఇన్ చేయడానికి ఇతర మార్గాలు",
+
+  "lock.signedInAs": "{email} గా సైన్ ఇన్ అయ్యారు",
   "nav.enquiries": "విచారణలు",
   "nav.enquiriesCount": "విచారణలు ({count})",
   "nav.applications": "దరఖాస్తులు",

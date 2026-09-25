@@ -16,7 +16,7 @@ const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'lev
   'BOARD_CHOICES', 'boardSourceText', 'admissionText',
   'CATEGORY_CHOICES', 'categoryOf', 'categoryFilters', 'isSchoolPlace',
   'FACILITY_INFO', 'ACHIEVEMENT_INFO', 'SOURCE_TEXT', 'facilityText', 'sourcesText', 'photoCreditText', 'artColours', 'ART_COLOURS', 'loadFacilities', 'loadAchievements',
-  'setTranslator', 't', 'setMoneyLocale', 'setDateLocale', 'rupees', 'budgetLabel', 'BUDGET_CHOICES', 'FEE_PARTS', 'feeForLevel', 'feeSummaryText', 'loadFeeSchedules', 'loadTiles', 'leaveByText', 'clockText', 'dayText', 'noteOutboundClick', 'messageFrom', 'EN_GRADES', 'classLabel', 'stageText', 'academicYearChoices', 'APPLY_CLASSES', 'APPLY_RELATIONS', 'APPLY_GENDERS', 'EMPTY_APPLICATION', 'validateApplication', 'submitApplication', 'loadApplications', 'loadApplicationEvents', 'withdrawApplication', 'deleteApplication', 'isMissingApplications', 'liveApplications', 'MAX_COMPARE', 'toggleCompare', 'compareRows', 'registerForPush', 'forgetPush', 'ensurePushChannel', 'PUSH_CHANNEL', 'loadNotifications', 'markNotificationsRead', 'initialsOf', 'backTargetFor', 'BACK_FROM', 'STAFF_COLUMNS', 'SCHOOL_ENQUIRY_COLUMNS', 'APPLY_STAGES', 'MAX_STAGE_NOTE', 'loadMySchools', 'loadSchoolEnquiries', 'staffUnreadCount', 'familyName', 'loadSchoolApplications', 'validateStageNote', 'setApplicationStage', 'stageCanChange', 'PHOTO_BUCKET', 'PHOTO_MAX_BYTES', 'PHOTO_TYPES', 'PHOTO_URL_SECONDS', 'bytesFromBase64', 'photoTypeOf', 'photoPathFor', 'isOwnPhotoPath', 'validatePhoto', 'pickPhoto', 'photoProblemText', 'uploadPhoto', 'removePhoto', 'signedPhotoUrl', 'THEME_SETTING', 'THEME_CHOICES', 'themeFor', 'themeChoiceOf', 'TOUR_SETTING', 'TOUR_NEVER', 'TOUR_STEPS', 'TOUR_VERSION', 'tourToShow', 'tourAfterFinish', 'tourStepAt', 'nextTourIndex', 'onLastTourStep', 'ADDRESS_COLUMNS', 'MAX_ADDRESSES', 'MAX_ADDRESS_NAME', 'MAX_ADDRESS_TEXT', 'isMissingAddresses', 'addressPlace', 'validateAddress', 'loadAddresses', 'saveAddress', 'deleteAddress', 'describePlace', 'addressHere', 'PROFILE_GENDERS', 'PROFILE_AVATARS', 'AUTO_AVATAR', 'avatarFor', 'profileComplete', 'saveProfile', 'loadSettings', 'saveLanguage', 'savePushChoice', 'deleteAccount', 'biometricKind', 'unlockWithBiometrics', 'shouldLock', 'BIOMETRIC_SETTING', 'LANGUAGE_SETTING', 'LOCK_AFTER_MS', 'APPLICATION_COLUMNS'];
+  'setTranslator', 't', 'setMoneyLocale', 'setDateLocale', 'rupees', 'budgetLabel', 'BUDGET_CHOICES', 'FEE_PARTS', 'feeForLevel', 'feeSummaryText', 'loadFeeSchedules', 'loadTiles', 'leaveByText', 'clockText', 'dayText', 'noteOutboundClick', 'messageFrom', 'EN_GRADES', 'classLabel', 'stageText', 'academicYearChoices', 'APPLY_CLASSES', 'APPLY_RELATIONS', 'APPLY_GENDERS', 'EMPTY_APPLICATION', 'validateApplication', 'submitApplication', 'loadApplications', 'loadApplicationEvents', 'withdrawApplication', 'deleteApplication', 'isMissingApplications', 'liveApplications', 'MAX_COMPARE', 'toggleCompare', 'compareRows', 'registerForPush', 'forgetPush', 'ensurePushChannel', 'PUSH_CHANNEL', 'loadNotifications', 'markNotificationsRead', 'initialsOf', 'backTargetFor', 'BACK_FROM', 'STAFF_COLUMNS', 'SCHOOL_ENQUIRY_COLUMNS', 'APPLY_STAGES', 'MAX_STAGE_NOTE', 'loadMySchools', 'loadSchoolEnquiries', 'staffUnreadCount', 'familyName', 'loadSchoolApplications', 'validateStageNote', 'setApplicationStage', 'stageCanChange', 'PHOTO_BUCKET', 'PHOTO_MAX_BYTES', 'PHOTO_TYPES', 'PHOTO_URL_SECONDS', 'bytesFromBase64', 'photoTypeOf', 'photoPathFor', 'isOwnPhotoPath', 'validatePhoto', 'pickPhoto', 'photoProblemText', 'uploadPhoto', 'removePhoto', 'signedPhotoUrl', 'THEME_SETTING', 'THEME_CHOICES', 'themeFor', 'themeChoiceOf', 'TOUR_SETTING', 'TOUR_NEVER', 'TOUR_STEPS', 'TOUR_VERSION', 'tourToShow', 'tourAfterFinish', 'tourStepAt', 'nextTourIndex', 'onLastTourStep', 'ADDRESS_COLUMNS', 'MAX_ADDRESSES', 'MAX_ADDRESS_NAME', 'MAX_ADDRESS_TEXT', 'isMissingAddresses', 'addressPlace', 'validateAddress', 'loadAddresses', 'saveAddress', 'deleteAddress', 'describePlace', 'addressHere', 'PROFILE_GENDERS', 'PROFILE_AVATARS', 'AUTO_AVATAR', 'avatarFor', 'profileComplete', 'saveProfile', 'loadSettings', 'saveLanguage', 'savePushChoice', 'deleteAccount', 'biometricKind', 'unlockWithBiometrics', 'shouldLock', 'shouldAskOnOpen', 'BIOMETRIC_SETTING', 'LANGUAGE_SETTING', 'LOCK_AFTER_MS', 'APPLICATION_COLUMNS'];
 fs.writeFileSync(path.join(here, '.tmp', 'logic.mjs'), src.slice(a, b) + `\nexport { ${names.join(', ')} };\n`);
 const L = await import(pathToFileURL(path.join(here, '.tmp', 'logic.mjs')).href);
 // the words of the app come from the language packs; the tests read the English one
@@ -710,5 +710,26 @@ check('...and neither is a stand-in with no channels to set', (await L.ensurePus
   await L.forgetPush(fakePhone({ noFirebase: true }), db, 'android', 'proj-1');
   check('...and there is nothing to forget when the phone never had a token', db.recs.length === 0);
 }
+
+console.log('\n=== the fingerprint is the way in ===');
+const fakeReader = (types, o = {}) => ({
+  AuthenticationType: { FINGERPRINT: 1, FACIAL_RECOGNITION: 2, IRIS: 3 },
+  hasHardwareAsync: async () => o.hardware ?? true,
+  isEnrolledAsync: async () => o.enrolled ?? true,
+  supportedAuthenticationTypesAsync: async () => types,
+});
+check('an Android phone that claims both faces and fingerprints is asked for the fingerprint, because that is the one people really set up',
+  (await L.biometricKind(fakeReader([1, 2]), 'android')) === 'fingerprint');
+check('...while an iPhone is believed when it says it does faces', (await L.biometricKind(fakeReader([1, 2]), 'ios')) === 'face');
+check('a phone that only has a face camera is still asked for a face', (await L.biometricKind(fakeReader([2]), 'android')) === 'face');
+check('eyes are named as eyes, on either kind of phone', (await L.biometricKind(fakeReader([3]), 'android')) === 'iris' && (await L.biometricKind(fakeReader([3]), 'ios')) === 'iris');
+check('a phone with a reader but nobody enrolled on it offers nothing', (await L.biometricKind(fakeReader([1], { enrolled: false }))) === 'none');
+check('...and neither does one with no reader, or one that throws when asked', (await L.biometricKind(fakeReader([1], { hardware: false }))) === 'none' && (await L.biometricKind({})) === 'none');
+check('opening the app asks for the fingerprint when this phone was told to and somebody was already signed in',
+  L.shouldAskOnOpen(true, { user: {} }, 'fingerprint') === true);
+check('...but never straight after typing a password, when there was no sign-in to pick up', L.shouldAskOnOpen(true, null, 'fingerprint') === false);
+check('...nor when nobody asked for it', L.shouldAskOnOpen(false, { user: {} }, 'fingerprint') === false);
+check('...and not when the phone has no fingerprint left to give, which would shut a person out of their own app',
+  L.shouldAskOnOpen(true, { user: {} }, 'none') === false);
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

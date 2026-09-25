@@ -40,6 +40,10 @@
   "lock.usePassword": "പകരം പാസ്‌വേഡ് ഉപയോഗിച്ച് സൈൻ ഇൻ ചെയ്യുക",
   "lock.prompt": "Kidscover തുറക്കുക",
   "lock.failed": "അത് ശരിയായില്ല. വീണ്ടും ശ്രമിക്കൂ, അല്ലെങ്കിൽ പാസ്‌വേഡ് ഉപയോഗിക്കൂ.",
+
+  "lock.otherWays": "സൈൻ ഇൻ ചെയ്യാനുള്ള മറ്റ് വഴികൾ",
+
+  "lock.signedInAs": "{email} ആയി സൈൻ ഇൻ ചെയ്തു",
   "nav.enquiries": "അന്വേഷണങ്ങൾ",
   "nav.enquiriesCount": "അന്വേഷണങ്ങൾ ({count})",
   "nav.applications": "അപേക്ഷകൾ",

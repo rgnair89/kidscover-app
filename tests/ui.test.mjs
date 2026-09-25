@@ -2148,5 +2148,68 @@ check('a person who refuses the phone\'s own permission is not pestered, and the
   st.pushTokens.length === 0 && globalThis.__tokenAsks.length === 0 && !!ui.id('search'));
 await ui.unmount();
 globalThis.__push = undefined;
+
+// =============================================================================================================
+console.log('\n=== opening the app with a fingerprint ===');
+// a phone that has a fingerprint reader and somebody enrolled on it, and remembers the answer it gives
+let fingerAsks = [];
+const fingerSays = (success) => {
+  fingerAsks = [];
+  globalThis.__bio = {
+    hasHardwareAsync: () => true,
+    isEnrolledAsync: () => true,
+    supportedAuthenticationTypesAsync: () => [1, 2],   // the phone claims both; the fingerprint is what is set up
+    authenticateAsync: async (opts) => { fingerAsks.push(opts); return { success }; },
+  };
+};
+const alreadySignedIn = () => { const st2 = seed(); st2.session = { user: { id: 'u1', email: 'ann@x.in' } }; return st2; };
+const ASKED_FOR = { 'kidscover.unlockWithBiometrics': 'on' };
+
+fingerSays(false);
+st = alreadySignedIn(); ui = await mount(st, undefined, ASKED_FOR);
+check('somebody who asked to be let in by fingerprint is met by that, not by a password box',
+  await waitFor(() => !!ui.id('lock-screen')) && !ui.id('email') && !ui.id('auth-submit'));
+check('...and the app asks for it by itself: opening it is the asking', await waitFor(() => fingerAsks.length === 1), String(fingerAsks.length));
+check('...and it says whose app this is, so a shared phone is not a guessing game',
+  /ann@x\.in/.test(ui.id('lock-email')?.textContent ?? ''), ui.id('lock-email')?.textContent);
+check('...and it says fingerprint, not face, on a phone that claims both',
+  /fingerprint/i.test(ui.text()) && !/face/i.test(ui.id('lock-screen').textContent), ui.id('lock-screen')?.textContent?.slice(0, 160));
+check('a fingerprint it does not know is said so plainly, with a way to try again', await waitFor(() => !!ui.id('lock-error')) && !!ui.id('lock-unlock'));
+globalThis.__bio.authenticateAsync = async (opts) => { fingerAsks.push(opts); return { success: true }; };
+await ui.click('lock-unlock');
+check('...and the right one opens the app', await waitFor(() => ui.cards() === 20) && !ui.id('lock-screen'));
+await ui.unmount();
+
+// the way out, for a finger that will not be recognised
+fingerSays(false);
+st = alreadySignedIn(); ui = await mount(st, undefined, ASKED_FOR);
+await waitFor(() => !!ui.id('lock-screen'));
+await ui.click('lock-signout');
+check('"other ways to sign in" leads to the password, rather than leaving somebody stuck at their own front door',
+  await waitFor(() => !!ui.id('auth-submit')) && !!ui.id('email') && !!ui.id('password'));
+await ui.unmount();
+
+// nobody asked for this
+fingerSays(true);
+st = alreadySignedIn(); ui = await mount(st);
+check('a phone that was never asked to want a fingerprint opens straight into the app',
+  await waitFor(() => ui.cards() === 20) && !ui.id('lock-screen') && fingerAsks.length === 0);
+await ui.unmount();
+
+// the phone has forgotten the finger since
+globalThis.__bio = { hasHardwareAsync: () => true, isEnrolledAsync: () => false, supportedAuthenticationTypesAsync: () => [1], authenticateAsync: async () => ({ success: false }) };
+st = alreadySignedIn(); ui = await mount(st, undefined, ASKED_FOR);
+check('somebody who has since removed their fingerprints from the phone is let in, not shut out of their own app',
+  await waitFor(() => ui.cards() === 20) && !ui.id('lock-screen'));
+await ui.unmount();
+
+// and signing in with a password is proof enough on its own
+fingerSays(true);
+st = seed(); ui = await mount(st, undefined, ASKED_FOR);
+await signIn(ui, 'ann@x.in', 'password1');
+check('typing a password is proof enough: it does not then ask for a fingerprint as well',
+  await waitFor(() => ui.cards() === 20) && !ui.id('lock-screen') && fingerAsks.length === 0);
+await ui.unmount();
+globalThis.__bio = { hasHardwareAsync: () => false, isEnrolledAsync: () => false, supportedAuthenticationTypesAsync: () => [] };
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

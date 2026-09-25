@@ -40,6 +40,10 @@
   "lock.usePassword": "तत्स्थाने गुप्तशब्देन प्रवेशः क्रियताम्",
   "lock.prompt": "Kidscover उद्घाट्यताम्",
   "lock.failed": "तत् न अभवत्। पुनः प्रयत्नः क्रियताम्, अथवा गुप्तशब्दः उपयुज्यताम्।",
+
+  "lock.otherWays": "प्रवेशस्य अन्ये उपायाः",
+
+  "lock.signedInAs": "{email} इति रूपेण प्रविष्टः",
   "nav.enquiries": "प्रश्नाः",
   "nav.enquiriesCount": "प्रश्नाः ({count})",
   "nav.applications": "आवेदनानि",

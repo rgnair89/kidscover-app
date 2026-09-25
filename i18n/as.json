@@ -40,6 +40,10 @@
   "lock.usePassword": "ইয়াৰ সলনি পাছৱৰ্ডেৰে ছাইন ইন কৰক",
   "lock.prompt": "Kidscover খোলক",
   "lock.failed": "সেয়া নহ'ল। পুনৰ চেষ্টা কৰক, নাইবা পাছৱৰ্ড ব্যৱহাৰ কৰক।",
+
+  "lock.otherWays": "প্ৰৱেশ কৰাৰ আন উপায়",
+
+  "lock.signedInAs": "{email} হিচাপে প্ৰৱেশ কৰা হৈছে",
   "nav.enquiries": "সোধা-পোছা",
   "nav.enquiriesCount": "সোধা-পোছা ({count})",
   "nav.applications": "আবেদন",

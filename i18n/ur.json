@@ -40,6 +40,10 @@
   "lock.usePassword": "اس کے بجائے پاس ورڈ سے سائن اِن کریں",
   "lock.prompt": "Kidscover کھولیں",
   "lock.failed": "یہ نہیں ہو سکا۔ دوبارہ کوشش کریں، یا پاس ورڈ استعمال کریں۔",
+
+  "lock.otherWays": "سائن ان کرنے کے دوسرے طریقے",
+
+  "lock.signedInAs": "{email} کے طور پر سائن ان",
   "nav.enquiries": "استفسارات",
   "nav.enquiriesCount": "استفسارات ({count})",
   "nav.applications": "درخواستیں",

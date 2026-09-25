@@ -40,6 +40,10 @@
   "lock.usePassword": "Se connecter avec le mot de passe",
   "lock.prompt": "Ouvrir Kidscover",
   "lock.failed": "Cela n'a pas fonctionné. Réessayez ou utilisez votre mot de passe.",
+
+  "lock.otherWays": "Autres façons de se connecter",
+
+  "lock.signedInAs": "Connecté en tant que {email}",
   "nav.enquiries": "Demandes",
   "nav.enquiriesCount": "Demandes ({count})",
   "nav.applications": "Candidatures",

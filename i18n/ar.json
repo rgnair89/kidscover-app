@@ -40,6 +40,10 @@
   "lock.usePassword": "سجّل الدخول بكلمة المرور بدلًا من ذلك",
   "lock.prompt": "افتح Kidscover",
   "lock.failed": "لم ينجح ذلك. حاول مرة أخرى أو استخدم كلمة المرور.",
+
+  "lock.otherWays": "طرق أخرى لتسجيل الدخول",
+
+  "lock.signedInAs": "تم تسجيل الدخول باسم {email}",
   "nav.enquiries": "الاستفسارات",
   "nav.enquiriesCount": "الاستفسارات ({count})",
   "nav.applications": "الطلبات",

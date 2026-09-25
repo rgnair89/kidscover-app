@@ -40,6 +40,10 @@
   "lock.usePassword": "அதற்குப் பதிலாக கடவுச்சொல்லால் உள்நுழை",
   "lock.prompt": "Kidscover-ஐத் திற",
   "lock.failed": "அது வேலை செய்யவில்லை. மீண்டும் முயற்சிக்கவும், அல்லது கடவுச்சொல்லைப் பயன்படுத்தவும்.",
+
+  "lock.otherWays": "உள்நுழைய வேறு வழிகள்",
+
+  "lock.signedInAs": "{email} என உள்நுழைந்துள்ளீர்கள்",
   "nav.enquiries": "விசாரணைகள்",
   "nav.enquiriesCount": "விசாரணைகள் ({count})",
   "nav.applications": "விண்ணப்பங்கள்",

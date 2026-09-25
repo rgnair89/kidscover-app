@@ -40,6 +40,10 @@
   "lock.usePassword": "Iniciar sesión con contraseña",
   "lock.prompt": "Abrir Kidscover",
   "lock.failed": "No funcionó. Inténtalo otra vez o usa tu contraseña.",
+
+  "lock.otherWays": "Otras formas de iniciar sesión",
+
+  "lock.signedInAs": "Sesión iniciada como {email}",
   "nav.enquiries": "Consultas",
   "nav.enquiriesCount": "Consultas ({count})",
   "nav.applications": "Solicitudes",

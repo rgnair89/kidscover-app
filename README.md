@@ -66,7 +66,7 @@ which is the mark you see beside the name inside the app.
 ```bash
 npm install
 npm start          # then press w for the browser, or scan the QR code with Expo Go
-npm test           # the app's own checks: 349 on the logic, 468 on the screens, plus the language packs
+npm test           # the app's own checks: 349 on the logic, 472 on the screens, plus the language packs
 ```
 
 In Expo Go the fingerprint unlock works, but **push notifications do not** (Android stopped allowing them in Expo Go).
@@ -182,6 +182,7 @@ locked screen that a stranger should not read.
 | `index.js` | where the app starts on a phone |
 | `app.json`, `eas.json` | the Expo and build settings (Android package `in.kidscover.app`) |
 | `app.config.js` | adds the Firebase file to the Android build, but only once there is one |
+| `.claude/launch.json` | lets the app be opened in a browser while you work on how it looks |
 | `tests/logic.test.mjs` | the logic on its own, against a stand-in database |
 | `tests/ui.test.mjs` | the real screens in a simulated browser, against a stand-in database and a stand-in phone |
 | `tests/mutate.mjs` | breaks the app on purpose, to prove the tests notice |

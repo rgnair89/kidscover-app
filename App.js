@@ -1388,16 +1388,20 @@ Notifications.setNotificationHandler?.({
 // dark page. "onBlue" is whatever has to sit on top of a violet button.
 const PALETTES = {
   light: {
-    blue: '#5B4BDB', blueSoft: '#ECE9FF', ink: '#1F1B3A', grey: '#6B6880', line: '#E7E4F2', bg: '#F7F5FF', card: '#FFFFFF',
+    blue: '#5B4BDB', blueSoft: '#ECE9FF', ink: '#15122B', grey: '#6A6685', line: '#ECE9F6', bg: '#F7F5FF', card: '#FFFFFF',
     red: '#B91C1C', redSoft: '#FEE2E2', green: '#0F8A6A', greenSoft: '#D7F5EC', amber: '#B45309', amberSoft: '#FEF3C7',
     coral: '#FF7A59', coralSoft: '#FFE9E2', sun: '#FFC857', sunSoft: '#FFF4D6', mint: '#2EC4B6', mintSoft: '#DDF6F3',
-    onBlue: '#FFFFFF', veil: 'rgba(31,27,58,0.55)',
+    onBlue: '#FFFFFF', veil: 'rgba(21,18,43,0.58)',
+    // the violet a pressed button sinks to, the colour a card's shadow is cast in, and a border you feel more than see
+    blueDeep: '#4536C7', shadow: '#2A1F6B', hairline: 'rgba(21,18,43,0.07)', glow: '#5B4BDB', glowStrength: 0.3,
   },
   dark: {
-    blue: '#A99BFF', blueSoft: '#2B2551', ink: '#F2F0FA', grey: '#A8A3C2', line: '#302C4A', bg: '#12111F', card: '#1D1B2E',
+    blue: '#A99BFF', blueSoft: '#2B2551', ink: '#F3F1FB', grey: '#A9A4C4', line: '#2C2842', bg: '#12111F', card: '#1A1828',
     red: '#FCA5A5', redSoft: '#3B1D1D', green: '#6EE7C0', greenSoft: '#11362C', amber: '#FCD34D', amberSoft: '#3A2D0E',
     coral: '#FF9E82', coralSoft: '#3D2419', sun: '#FFD57A', sunSoft: '#3A2F14', mint: '#5FD9CD', mintSoft: '#123330',
-    onBlue: '#17132E', veil: 'rgba(5,4,12,0.72)',
+    onBlue: '#17132E', veil: 'rgba(5,4,12,0.74)',
+    // in the dark a shadow is black, and a border is a little light rather than a little dark
+    blueDeep: '#C2B6FF', shadow: '#000000', hairline: 'rgba(255,255,255,0.08)', glow: '#000000', glowStrength: 0.5,
   },
 };
 // The colours and the stylesheet in use. Both are swapped when the theme changes and every screen is drawn again,
@@ -1562,10 +1566,19 @@ function SchoolPicture({ school, height, compact = false, testID }) {
   return <SchoolArt seed={school.id} height={height} compact={compact} testID={testID ? `${testID}-art` : undefined} />;
 }
 
+// A button that does not answer when it is pressed feels broken even when it is working. This one sinks slightly
+// and darkens, for as long as the finger is down - the difference between a picture of a button and a button.
 function Btn({ label, onPress, kind = 'solid', disabled, testID }) {
   return (
     <Pressable testID={testID} accessibilityRole="button" onPress={onPress} disabled={disabled}
-      style={[s.btn, kind === 'outline' && s.btnOutline, kind === 'quiet' && s.btnQuiet, disabled && { opacity: 0.5 }]}>
+      style={({ pressed }) => [
+        s.btn,
+        kind === 'solid' && s.btnSolid,
+        kind === 'outline' && s.btnOutline,
+        kind === 'quiet' && s.btnQuiet,
+        pressed && !disabled && (kind === 'solid' ? s.btnSolidDown : s.btnQuietDown),
+        disabled && s.btnOff,
+      ]}>
       <Text style={[s.btnText, kind !== 'solid' && { color: C.blue }]}>{label}</Text>
     </Pressable>
   );
@@ -1573,17 +1586,22 @@ function Btn({ label, onPress, kind = 'solid', disabled, testID }) {
 
 function Chip({ label, selected, onPress, testID }) {
   return (
-    <Pressable testID={testID} accessibilityRole="button" accessibilityState={{ selected: !!selected }} onPress={onPress} style={[s.chip, selected && s.chipOn]}>
+    <Pressable testID={testID} accessibilityRole="button" accessibilityState={{ selected: !!selected }} onPress={onPress}
+      style={({ pressed }) => [s.chip, selected && s.chipOn, pressed && s.chipDown]}>
       <Text style={[s.chipText, selected && s.chipTextOn]}>{label}</Text>
     </Pressable>
   );
 }
 
-const Notice = ({ tone = 'red', text, testID }) => (
-  <View testID={testID} style={[s.notice, { backgroundColor: tone === 'red' ? C.redSoft : tone === 'green' ? C.greenSoft : C.amberSoft }]}>
-    <Text style={{ color: tone === 'red' ? C.red : tone === 'green' ? C.green : C.amber }}>{text}</Text>
-  </View>
-);
+const Notice = ({ tone = 'red', text, testID }) => {
+  const ink = tone === 'red' ? C.red : tone === 'green' ? C.green : C.amber;
+  const wash = tone === 'red' ? C.redSoft : tone === 'green' ? C.greenSoft : C.amberSoft;
+  return (
+    <View testID={testID} style={[s.notice, { backgroundColor: wash, borderLeftColor: ink }]}>
+      <Text style={[s.noticeText, { color: ink }]}>{text}</Text>
+    </View>
+  );
+};
 
 const Field = ({ label, hint, children }) => (
   <View style={{ marginBottom: 6 }}>
@@ -1656,9 +1674,10 @@ function AuthScreen({ language, onPickLanguage }) {
         <Text style={s.logo}>Kidscover</Text>
       </View>
       <Text style={s.tagline}>{t('auth.tagline')}</Text>
-      <View style={{ alignItems: 'center' }}>
-        <Btn testID="auth-language" kind="quiet" label={`\ud83c\udf10 ${languageName(language)}`} onPress={onPickLanguage} />
-      </View>
+      <Pressable testID="auth-language" accessibilityRole="button" onPress={onPickLanguage}
+        style={({ pressed }) => [s.authLanguage, pressed && s.chipDown]}>
+        <Text style={s.authLanguageText}>{`\ud83c\udf10  ${languageName(language)}`}</Text>
+      </Pressable>
       <View style={[s.card, s.authCard]}>
         <Text style={s.h2}>{mode === 'signin' ? t('auth.signIn') : t('auth.createAccount')}</Text>
         {mode === 'signup' && (
@@ -1710,6 +1729,26 @@ function LockScreen({ kind, email, onUnlock, onOtherWays, busy, error }) {
       {!!error && <Notice text={error} testID="lock-error" />}
       <Btn testID="lock-unlock" label={busy ? t('pleaseWait') : error ? t('tryAgain') : t('lock.unlock')} onPress={onUnlock} disabled={busy} />
       <Btn testID="lock-signout" kind="quiet" label={t('lock.otherWays')} onPress={onOtherWays} />
+    </View>
+  );
+}
+
+// The outline of a school card, with nothing in it yet. Three of them where the first three schools will be.
+function SchoolSkeleton() {
+  return (
+    <View style={[s.card, s.skeletonCard]} testID="school-skeleton">
+      <View style={s.cardRow}>
+        <View style={[s.thumb, s.skeletonBlock]} />
+        <View style={{ flex: 1, gap: 8, paddingTop: 4 }}>
+          <View style={[s.skeletonBlock, s.skeletonLine, { width: '78%' }]} />
+          <View style={[s.skeletonBlock, s.skeletonLine, { width: '45%' }]} />
+          <View style={[s.skeletonBlock, s.skeletonLine, { width: '62%' }]} />
+          <View style={{ flexDirection: 'row', gap: 6, marginTop: 2 }}>
+            <View style={[s.skeletonBlock, s.skeletonPill]} />
+            <View style={[s.skeletonBlock, s.skeletonPill, { width: 44 }]} />
+          </View>
+        </View>
+      </View>
     </View>
   );
 }
@@ -2233,6 +2272,7 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare, onCle
           </Text>
         )}
         <View style={{ paddingVertical: 12 }}>
+          {loading && rows.length === 0 && <View testID="school-skeletons">{[0, 1, 2].map((i) => <SchoolSkeleton key={i} />)}</View>}
           {loading && <ActivityIndicator testID="loading" />}
           {!loading && !!error && <Btn testID="retry" label={t('tryAgain')} onPress={() => run(0, false)} />}
           {!loading && hasMore && <Btn testID="more" kind="outline" label={t('showMore', { what: t(cat.noun) })} onPress={() => run(pageRef.current + 1, true)} />}
@@ -3810,23 +3850,27 @@ function makeStyles(C) {
   return StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
   center: { alignItems: 'center', justifyContent: 'center', padding: 24 },
-  topBar: { paddingHorizontal: 12, paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: C.line, backgroundColor: C.card },
+  topBar: { paddingHorizontal: 12, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: C.hairline, backgroundColor: C.card, shadowColor: C.shadow, shadowOpacity: 0.05, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 3, zIndex: 2 },
   topBarRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   topBarTabs: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
-  topTitle: { fontSize: 20, fontWeight: '900', color: C.blue, letterSpacing: 0.3, flexShrink: 1 },
+  topTitle: { fontSize: 20, fontWeight: '900', color: C.blue, letterSpacing: -0.3, flexShrink: 1 },
   profileButton: { width: 38, height: 38, borderRadius: 19, backgroundColor: C.blueSoft, borderWidth: 1, borderColor: C.blue, alignItems: 'center', justifyContent: 'center', overflow: 'visible' },
   profileNudge: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.amberSoft, paddingHorizontal: 16, paddingVertical: 10, gap: 8 },
   profileDot: { position: 'absolute', top: -1, right: -1, width: 12, height: 12, borderRadius: 6, backgroundColor: C.coral, borderWidth: 2, borderColor: C.card },
   profileInitials: { color: C.blue, fontWeight: '900', fontSize: 14 },
   brandRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, flexShrink: 1 },
   authWrap: { padding: 20, paddingTop: 28 },
-  authArt: { borderRadius: 24, overflow: 'hidden', marginBottom: 18, backgroundColor: C.blueSoft },
-  authCard: { borderRadius: 20, padding: 18, shadowColor: C.blue, shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 2 },
-  logo: { fontSize: 34, fontWeight: '900', color: C.blue, textAlign: 'center' },
-  tagline: { color: C.grey, textAlign: 'center', marginTop: 6, marginBottom: 8, fontSize: 15 },
-  card: { backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.line, padding: 14, marginBottom: 10, gap: 6 },
+  authArt: { borderRadius: 22, overflow: 'hidden', marginBottom: 18, backgroundColor: C.blueSoft },
+  authCard: { borderRadius: 22, padding: 20, shadowColor: C.shadow, shadowOpacity: 0.09, shadowRadius: 22, shadowOffset: { width: 0, height: 8 }, elevation: 3 },
+  logo: { fontSize: 34, fontWeight: '900', color: C.blue, textAlign: 'center', letterSpacing: -1 },
+  tagline: { color: C.grey, textAlign: 'center', marginTop: 6, marginBottom: 10, fontSize: 15, lineHeight: 22, maxWidth: 300, alignSelf: 'center' },
+  authLanguage: { flexDirection: 'row', alignItems: 'center', alignSelf: 'center', gap: 6, borderWidth: 1, borderColor: C.line, backgroundColor: C.card, borderRadius: 999, paddingVertical: 8, paddingHorizontal: 16, marginBottom: 6 },
+  authLanguageText: { color: C.blue, fontWeight: '700', fontSize: 14 },
+  // A card sits on the page rather than being drawn on it: a hairline you feel more than see, and a shadow cast in
+  // the brand's own violet rather than in grey, which is what stops a pale page looking like a spreadsheet.
+  card: { backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.hairline, padding: 15, marginBottom: 11, gap: 6, shadowColor: C.shadow, shadowOpacity: 0.07, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 2 },
   cardRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  thumb: { width: 78, height: 78, borderRadius: 14, overflow: 'hidden', backgroundColor: C.blueSoft },
+  thumb: { width: 78, height: 78, borderRadius: 16, overflow: 'hidden', backgroundColor: C.blueSoft },
   hero: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.sunSoft, borderRadius: 20, padding: 14, marginBottom: 12 },
   heroTitle: { fontSize: 19, fontWeight: '900', color: C.ink },
   heroText: { fontSize: 13, color: C.grey },
@@ -3836,9 +3880,9 @@ function makeStyles(C) {
   facility: { backgroundColor: C.mintSoft, color: C.ink, fontSize: 13, fontWeight: '600', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 12, overflow: 'hidden' },
   achievementCard: { marginTop: 8, backgroundColor: '#FFFDF7', borderColor: C.sunSoft },
   tileRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
-  tile: { flex: 1, borderRadius: 16, padding: 10, alignItems: 'center' },
-  tileNumber: { fontSize: 22, fontWeight: '900' },
-  tileLabel: { fontSize: 11, color: C.grey, textAlign: 'center' },
+  tile: { flex: 1, borderRadius: 18, paddingVertical: 13, paddingHorizontal: 10, alignItems: 'center', gap: 1 },
+  tileNumber: { fontSize: 24, fontWeight: '900', letterSpacing: -0.8 },
+  tileLabel: { fontSize: 11, color: C.grey, textAlign: 'center', letterSpacing: 0.2 },
   feeRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
   compareBar: { backgroundColor: C.card, borderTopWidth: 2, borderTopColor: C.blue, paddingHorizontal: 16, paddingVertical: 10, gap: 6, shadowColor: C.blue, shadowOpacity: 0.15, shadowRadius: 10, shadowOffset: { width: 0, height: -3 }, elevation: 8 },
   compareBarTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
@@ -3849,33 +3893,41 @@ function makeStyles(C) {
   compareHead: { backgroundColor: C.blueSoft },
   compareName: { fontSize: 14, fontWeight: '700', color: C.ink },
   compareTag: { backgroundColor: C.blueSoft, color: C.blue, fontSize: 12, fontWeight: '700', paddingVertical: 4, paddingHorizontal: 10, borderRadius: 999, overflow: 'hidden' },
-  h2: { fontSize: 18, fontWeight: '700', color: C.ink },
-  title: { fontSize: 24, fontWeight: '800', color: C.ink, marginTop: 4 },
-  schoolName: { fontSize: 16, fontWeight: '700', color: C.ink },
-  body: { fontSize: 15, color: C.ink },
-  muted: { fontSize: 13, color: C.grey },
-  label: { fontSize: 12, fontWeight: '700', color: C.grey, textTransform: 'uppercase', marginTop: 6 },
+  // Big text is set tight and small text is set loose - the two habits that separate a designed page from a typed
+  // one. The uppercase label is tracked out, because capitals set at normal spacing always look cramped.
+  h2: { fontSize: 19, fontWeight: '800', color: C.ink, letterSpacing: -0.2, lineHeight: 25 },
+  title: { fontSize: 27, fontWeight: '800', color: C.ink, marginTop: 4, letterSpacing: -0.6, lineHeight: 33 },
+  schoolName: { fontSize: 17, fontWeight: '800', color: C.ink, letterSpacing: -0.2, lineHeight: 22 },
+  body: { fontSize: 15, color: C.ink, lineHeight: 22 },
+  muted: { fontSize: 13, color: C.grey, lineHeight: 19 },
+  label: { fontSize: 11, fontWeight: '800', color: C.grey, textTransform: 'uppercase', letterSpacing: 0.9, marginTop: 8, marginBottom: 2 },
   rating: { fontSize: 14, fontWeight: '600', color: C.ink },
   stars: { fontSize: 18, color: '#F59E0B' },
-  empty: { textAlign: 'center', color: C.grey, marginTop: 24 },
+  empty: { textAlign: 'center', color: C.grey, marginTop: 30, marginBottom: 14, paddingHorizontal: 28, fontSize: 15, lineHeight: 23 },
   avatarChoice: { borderRadius: 24, borderWidth: 2, borderColor: 'transparent', padding: 2 },
   avatarChosen: { borderColor: C.blue, backgroundColor: C.blueSoft },
-  input: { borderWidth: 1, borderColor: C.line, borderRadius: 12, padding: 12, fontSize: 15, backgroundColor: C.card, color: C.ink, marginVertical: 4 },
-  search: { borderWidth: 1, borderColor: C.line, borderRadius: 16, padding: 13, fontSize: 16, backgroundColor: C.card, color: C.ink, marginBottom: 10 },
-  btn: { backgroundColor: C.blue, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center', marginVertical: 4 },
-  btnOutline: { backgroundColor: C.card, borderWidth: 1, borderColor: C.blue },
+  input: { borderWidth: 1, borderColor: C.line, borderRadius: 14, paddingVertical: 13, paddingHorizontal: 14, fontSize: 15, backgroundColor: C.card, color: C.ink, marginVertical: 4 },
+  search: { borderWidth: 1, borderColor: C.line, borderRadius: 18, paddingVertical: 14, paddingHorizontal: 16, fontSize: 16, backgroundColor: C.card, color: C.ink, marginBottom: 10, shadowColor: C.shadow, shadowOpacity: 0.05, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 1 },
+  btn: { borderRadius: 14, paddingVertical: 13, paddingHorizontal: 18, alignItems: 'center', marginVertical: 4 },
+  // The solid one carries a little of its own colour underneath it, so it lifts off the page instead of lying on it.
+  btnSolid: { backgroundColor: C.blue, shadowColor: C.glow, shadowOpacity: C.glowStrength, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 3 },
+  btnSolidDown: { backgroundColor: C.blueDeep, transform: [{ scale: 0.975 }], shadowOpacity: 0.16, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  btnQuietDown: { backgroundColor: C.blueSoft, transform: [{ scale: 0.985 }] },
+  btnOutline: { backgroundColor: C.card, borderWidth: 1.5, borderColor: C.blue },
   btnQuiet: { backgroundColor: 'transparent' },
-  btnText: { color: C.onBlue, fontWeight: '700', fontSize: 15 },
-  chip: { borderWidth: 1, borderColor: C.line, borderRadius: 999, paddingVertical: 7, paddingHorizontal: 12, backgroundColor: C.card },
-  chipOn: { backgroundColor: C.blue, borderColor: C.blue },
-  chipText: { color: C.ink, fontSize: 14 },
-  chipTextOn: { color: C.onBlue, fontWeight: '700' },
+  btnOff: { opacity: 0.45, shadowOpacity: 0, elevation: 0 },
+  btnText: { color: C.onBlue, fontWeight: '800', fontSize: 15, letterSpacing: 0.1 },
+  chip: { borderWidth: 1, borderColor: C.line, borderRadius: 999, paddingVertical: 8, paddingHorizontal: 14, backgroundColor: C.card },
+  chipOn: { backgroundColor: C.blue, borderColor: C.blue, shadowColor: C.glow, shadowOpacity: C.glowStrength * 0.9, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
+  chipDown: { transform: [{ scale: 0.96 }] },
+  chipText: { color: C.ink, fontSize: 14, fontWeight: '600' },
+  chipTextOn: { color: C.onBlue, fontWeight: '800' },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 4 },
   badgeRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: 6, marginVertical: 4 },
   distance: { fontSize: 13, fontWeight: '700', color: C.blue },
   mine: { backgroundColor: C.blueSoft, borderColor: C.blueSoft, marginLeft: 24 },
   theirs: { marginRight: 24 },
-  badge: { backgroundColor: C.blueSoft, color: C.blue, fontSize: 12, fontWeight: '700', paddingVertical: 3, paddingHorizontal: 8, borderRadius: 999, overflow: 'hidden' },
+  badge: { backgroundColor: C.blueSoft, color: C.blue, fontSize: 12, fontWeight: '700', letterSpacing: 0.1, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 999, overflow: 'hidden' },
   tourVeil: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: C.veil, alignItems: 'center', justifyContent: 'center', padding: 20 },
   tourCard: { backgroundColor: C.card, borderRadius: 20, padding: 20, width: '100%', maxWidth: 420, gap: 8 },
   tourHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 24 },
@@ -3888,6 +3940,12 @@ function makeStyles(C) {
   tourButtons: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, paddingTop: 4 },
   addressRow: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: C.line, paddingVertical: 6 },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginVertical: 6 },
-  notice: { borderRadius: 10, padding: 10, marginVertical: 6 },
+  notice: { borderRadius: 12, borderLeftWidth: 4, paddingVertical: 11, paddingHorizontal: 13, marginVertical: 6 },
+  noticeText: { fontSize: 14, fontWeight: '600', lineHeight: 20 },
+  // The shape of a school, before the school itself has arrived.
+  skeletonCard: { shadowOpacity: 0, elevation: 0, borderColor: C.line },
+  skeletonBlock: { backgroundColor: C.line, opacity: 0.75 },
+  skeletonLine: { height: 11, borderRadius: 6 },
+  skeletonPill: { height: 17, width: 62, borderRadius: 999 },
   });
 }

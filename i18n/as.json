@@ -250,6 +250,8 @@
   "compare.add": "+ তুলনা",
   "compare.added": "তুলনাত আছে",
   "compare.remove": "আঁতৰাওক",
+
+  "compare.clear": "তালিকাখন খালী কৰক",
   "compare.chosen": "তুলনাৰ বাবে {max} ৰ ভিতৰত {count} খন বিদ্যালয় বাছনি কৰা হ'ল",
   "compare.open": "তুলনা চাওক",
   "compare.full": "একেলগে {max} খন বিদ্যালয়লৈকে তুলনা কৰিব পাৰি।",

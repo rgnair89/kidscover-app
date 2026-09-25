@@ -250,6 +250,8 @@
   "compare.add": "+ સરખાવો",
   "compare.added": "સરખામણીમાં છે",
   "compare.remove": "કાઢો",
+
+  "compare.clear": "યાદી ખાલી કરો",
   "compare.chosen": "સરખાવવા {max} માંથી {count} શાળાઓ પસંદ",
   "compare.open": "સરખામણી જુઓ",
   "compare.full": "એક સાથે {max} શાળાઓ સુધી સરખાવી શકાય.",

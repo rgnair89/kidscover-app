@@ -250,6 +250,8 @@
   "compare.add": "+ ಹೋಲಿಸಿ",
   "compare.added": "ಹೋಲಿಕೆಯಲ್ಲಿದೆ",
   "compare.remove": "ತೆಗೆಯಿರಿ",
+
+  "compare.clear": "ಪಟ್ಟಿಯನ್ನು ಖಾಲಿ ಮಾಡಿ",
   "compare.chosen": "ಹೋಲಿಸಲು {max} ರಲ್ಲಿ {count} ಶಾಲೆಗಳ ಆಯ್ಕೆ",
   "compare.open": "ಹೋಲಿಸಿ ನೋಡಿ",
   "compare.full": "ಒಮ್ಮೆಗೆ {max} ಶಾಲೆಗಳವರೆಗೆ ಹೋಲಿಸಬಹುದು.",

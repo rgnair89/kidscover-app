@@ -250,6 +250,8 @@
   "compare.add": "+ तुलना",
   "compare.added": "तुलना च ऐ",
   "compare.remove": "हटाओ",
+
+  "compare.clear": "सूची साफ करो",
   "compare.chosen": "तुलना आस्तै {max} चा {count} स्कूल चुने गे",
   "compare.open": "तुलना दिक्खो",
   "compare.full": "इक बारी च {max} स्कूलें तकर तुलना होई सकदी ऐ।",

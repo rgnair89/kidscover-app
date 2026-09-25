@@ -250,6 +250,8 @@
   "compare.add": "+ ڀيٽ",
   "compare.added": "ڀيٽ ۾ آهي",
   "compare.remove": "هٽايو",
+
+  "compare.clear": "فهرست خالي ڪريو",
   "compare.chosen": "ڀيٽ لاءِ {max} مان {count} اسڪول چونڊيا ويا",
   "compare.open": "ڀيٽ ڏسو",
   "compare.full": "هڪ ڀيري ۾ {max} اسڪولن تائين ڀيٽ ٿي سگهي ٿي.",

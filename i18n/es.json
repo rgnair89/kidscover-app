@@ -250,6 +250,8 @@
   "compare.add": "+ Comparar",
   "compare.added": "En la comparación",
   "compare.remove": "Quitar",
+
+  "compare.clear": "Vaciar la lista",
   "compare.chosen": "{count} de {max} colegios elegidos para comparar",
   "compare.open": "Ver comparación",
   "compare.full": "Puedes comparar hasta {max} colegios a la vez.",

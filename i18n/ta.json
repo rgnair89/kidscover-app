@@ -250,6 +250,8 @@
   "compare.add": "+ ஒப்பிடு",
   "compare.added": "ஒப்பீட்டில் உள்ளது",
   "compare.remove": "நீக்கு",
+
+  "compare.clear": "பட்டியலை காலி செய்",
   "compare.chosen": "ஒப்பிட {max}-இல் {count} பள்ளிகள் தேர்வு",
   "compare.open": "ஒப்பிட்டுப் பார்",
   "compare.full": "ஒரே நேரத்தில் {max} பள்ளிகள் வரை ஒப்பிடலாம்.",

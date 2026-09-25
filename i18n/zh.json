@@ -250,6 +250,8 @@
   "compare.add": "+ 对比",
   "compare.added": "已加入对比",
   "compare.remove": "移除",
+
+  "compare.clear": "清空列表",
   "compare.chosen": "已选 {count} / {max} 所学校用于对比",
   "compare.open": "查看对比",
   "compare.full": "一次最多对比 {max} 所学校。",

@@ -250,6 +250,8 @@
   "compare.add": "+ तुळा",
   "compare.added": "तुळेंत आसा",
   "compare.remove": "काडात",
+
+  "compare.clear": "वळेरी रिकामी करात",
   "compare.chosen": "तुळे खातीर {max} भितर {count} शाळा वेंचल्यो",
   "compare.open": "तुळा पळयात",
   "compare.full": "एका फावटीं {max} शाळां मेरेन तुळा करूं येता.",

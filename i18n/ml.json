@@ -250,6 +250,8 @@
   "compare.add": "+ താരതമ്യം",
   "compare.added": "താരതമ്യത്തിൽ ഉണ്ട്",
   "compare.remove": "നീക്കുക",
+
+  "compare.clear": "പട്ടിക ഒഴിവാക്കുക",
   "compare.chosen": "താരതമ്യത്തിന് {max}-ൽ {count} സ്കൂളുകൾ തിരഞ്ഞെടുത്തു",
   "compare.open": "താരതമ്യം കാണുക",
   "compare.full": "ഒരേ സമയം {max} സ്കൂളുകൾ വരെ താരതമ്യം ചെയ്യാം.",

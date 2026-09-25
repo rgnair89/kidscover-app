@@ -250,6 +250,8 @@
   "compare.add": "+ موازنہ",
   "compare.added": "موازنے میں ہے",
   "compare.remove": "ہٹائیں",
+
+  "compare.clear": "فہرست خالی کریں",
   "compare.chosen": "موازنے کے لیے {max} میں سے {count} اسکول چنے گئے",
   "compare.open": "موازنہ دیکھیں",
   "compare.full": "ایک وقت میں {max} اسکولوں تک موازنہ ہو سکتا ہے۔",

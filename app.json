@@ -2,7 +2,7 @@
   "expo": {
     "name": "Kidscover",
     "slug": "kidscover",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "scheme": "kidscover",
     "userInterfaceStyle": "automatic",
@@ -11,7 +11,7 @@
     "backgroundColor": "#F7F5FF",
     "android": {
       "package": "in.kidscover.app",
-      "versionCode": 2,
+      "versionCode": 3,
       "edgeToEdgeEnabled": true,
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",

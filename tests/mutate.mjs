@@ -172,10 +172,10 @@ const mutations = [
   ["the photo credit is not shown", "      {!!photoCreditText(school) && (", "      {false && ("],
   ["the photo's source cannot be opened", "{!!safeUrl(school.photo_page_url) && <Text testID=\"photo-source\"", "{false && <Text testID=\"photo-source\""],
   ["an achievement's link cannot be opened", "{!!safeUrl(a.source_url) && <Text testID={`achievement-link-${a.id}`}", "{false && <Text testID={`achievement-link-${a.id}`}"],
-  ["where an achievement came from is not said", "{` (${SOURCE_TEXT[a.source] ?? 'source not given'})`}", "{''}"],
+  ["where an achievement came from is not said", "{` (${t(SOURCE_TEXT[a.source] ?? 'source.unknown')})`}", "{''}"],
   ["facilities that cannot be read break the page with an error", "    setFacilities(fa.rows);", "    if (fa.error) setError(friendlyError(fa.error));\n    setFacilities(fa.rows);"],
   ["the sign-in screen has no drawing", "      <View style={s.authArt}><WelcomeArt height={200} /></View>\n", ""],
-  ["the welcome banner does not change with the list", "{cat.key === 'school' ? 'Find the right school' : cat.key === 'after_school' ? 'Classes after school' : 'Colleges'}", "{'Find the right school'}"],
+  ["the search box says the same thing whatever list you are on", "placeholder={cat.key === 'school' ? t('search.schools') : t('search.other', { what: t(cat.noun) })}", "placeholder={t('search.schools')}"],
 ];
 
 const run = (file) => { try { return execSync(`node tests/${file}`, { cwd: root, encoding: 'utf8', env: { ...process.env, APP_FILE: out }, stdio: ['ignore', 'pipe', 'pipe'], timeout: 200000 }); } catch (e) { return (e.stdout || '') + (e.stderr || ''); } };

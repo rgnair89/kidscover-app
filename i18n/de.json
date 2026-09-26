@@ -40,9 +40,7 @@
   "lock.usePassword": "Stattdessen mit Passwort anmelden",
   "lock.prompt": "Kidscover öffnen",
   "lock.failed": "Das hat nicht geklappt. Versuchen Sie es erneut oder nutzen Sie Ihr Passwort.",
-
   "lock.otherWays": "Andere Wege zur Anmeldung",
-
   "lock.signedInAs": "Angemeldet als {email}",
   "nav.enquiries": "Anfragen",
   "nav.enquiriesCount": "Anfragen ({count})",
@@ -111,12 +109,14 @@
   "distance.away": "{km} km entfernt",
   "distance.under100m": "weniger als 100 Meter entfernt",
   "location.use": "Meinen Standort verwenden",
+  "city.showing": "Schulen in {city}",
+  "city.look": "Oder eine Stadt ansehen",
   "location.finding": "Standort wird gesucht...",
   "location.on": "Entfernungen werden von Ihrem Standort aus gemessen",
   "location.turnOff": "Ausschalten",
   "location.straightLine": "Luftlinie, nicht über die Straße.",
   "location.why": "Sehen Sie, wie weit jede Schule von Ihnen entfernt ist. Ihr Standort dient nur der Entfernungsmessung und wird nicht gespeichert.",
-  "location.outsideArea": "Sie scheinen außerhalb von Mumbai und Thane zu sein, wo die Schulen von Kidscover derzeit liegen. Die Entfernungen werden trotzdem von Ihrem Standort aus gemessen.",
+  "location.outsideArea": "Sie scheinen außerhalb der Städte zu sein, die Kidscover bisher abdeckt. Entfernungen werden von Ihrem Standort aus gemessen.",
   "location.blocked": "Der Standort ist für diese App ausgeschaltet. Schalten Sie ihn in den Telefoneinstellungen ein und versuchen Sie es erneut. Sie können auch nach Name oder Stadtteil suchen.",
   "location.denied": "Die Erlaubnis zur Standortnutzung wurde nicht erteilt. Suchen Sie nach Name oder Stadtteil oder versuchen Sie es erneut.",
   "location.timeout": "Die Standortsuche hat zu lange gedauert. Prüfen Sie, ob der Standort am Telefon eingeschaltet ist, und versuchen Sie es erneut.",
@@ -250,7 +250,6 @@
   "compare.add": "+ Vergleichen",
   "compare.added": "Im Vergleich",
   "compare.remove": "Entfernen",
-
   "compare.clear": "Liste leeren",
   "compare.chosen": "{count} von {max} Schulen zum Vergleich ausgewählt",
   "compare.open": "Vergleich ansehen",

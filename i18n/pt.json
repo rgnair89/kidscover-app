@@ -40,9 +40,7 @@
   "lock.usePassword": "Entrar com a senha",
   "lock.prompt": "Abrir o Kidscover",
   "lock.failed": "Não funcionou. Tente de novo ou use sua senha.",
-
   "lock.otherWays": "Outras formas de entrar",
-
   "lock.signedInAs": "Sessão iniciada como {email}",
   "nav.enquiries": "Contatos",
   "nav.enquiriesCount": "Contatos ({count})",
@@ -111,12 +109,14 @@
   "distance.away": "a {km} km",
   "distance.under100m": "a menos de 100 metros",
   "location.use": "Usar minha localização",
+  "city.showing": "Escolas em {city}",
+  "city.look": "Ou veja uma cidade",
   "location.finding": "Procurando você...",
   "location.on": "As distâncias são medidas a partir da sua localização",
   "location.turnOff": "Desligar",
   "location.straightLine": "Em linha reta, não pelas ruas.",
   "location.why": "Veja a que distância fica cada escola. Sua localização serve só para medir distâncias; ela não é guardada.",
-  "location.outsideArea": "Parece que você está fora de Mumbai e Thane, onde ficam as escolas do Kidscover por enquanto. As distâncias continuam sendo medidas de onde você está.",
+  "location.outsideArea": "Parece que está fora das cidades que a Kidscover cobre até agora. As distâncias são medidas a partir de onde está.",
   "location.blocked": "A localização está desligada para este app. Ligue nos ajustes do celular e tente de novo. Você também pode buscar por nome ou bairro.",
   "location.denied": "Não recebemos permissão para usar sua localização. Busque por nome ou bairro, ou tente de novo.",
   "location.timeout": "Demorou demais para encontrar sua localização. Confira se a localização está ligada no celular e tente de novo.",
@@ -250,7 +250,6 @@
   "compare.add": "+ Comparar",
   "compare.added": "Na comparação",
   "compare.remove": "Remover",
-
   "compare.clear": "Limpar a lista",
   "compare.chosen": "{count} de {max} escolas escolhidas para comparar",
   "compare.open": "Ver comparação",

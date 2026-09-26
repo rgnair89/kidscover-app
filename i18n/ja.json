@@ -40,9 +40,7 @@
   "lock.usePassword": "パスワードでサインインする",
   "lock.prompt": "Kidscover を開く",
   "lock.failed": "うまくいきませんでした。もう一度試すか、パスワードをお使いください。",
-
   "lock.otherWays": "他のログイン方法",
-
   "lock.signedInAs": "{email} でログイン中",
   "nav.enquiries": "問い合わせ",
   "nav.enquiriesCount": "問い合わせ（{count}）",
@@ -111,12 +109,14 @@
   "distance.away": "{km}km",
   "distance.under100m": "100メートル未満",
   "location.use": "現在地を使う",
+  "city.showing": "{city} の学校",
+  "city.look": "または都市から探す",
   "location.finding": "現在地を取得しています…",
   "location.on": "距離は現在地から計測しています",
   "location.turnOff": "オフにする",
   "location.straightLine": "道路経由ではなく直線距離です。",
   "location.why": "各校までの距離がわかります。現在地は距離の計算だけに使い、保存はしません。",
-  "location.outsideArea": "現在、Kidscover の学校があるムンバイとターネーの外にいるようです。距離は今いる場所から計測します。",
+  "location.outsideArea": "Kidscover が現在対応している都市の外にいるようです。距離は現在地から測定されます。",
   "location.blocked": "このアプリの位置情報がオフになっています。端末の設定でオンにしてからお試しください。名前やエリアでも検索できます。",
   "location.denied": "位置情報の利用が許可されませんでした。名前やエリアで検索するか、もう一度お試しください。",
   "location.timeout": "現在地の取得に時間がかかりすぎました。端末の位置情報がオンか確認して、もう一度お試しください。",
@@ -250,7 +250,6 @@
   "compare.add": "＋比較",
   "compare.added": "比較中",
   "compare.remove": "外す",
-
   "compare.clear": "リストを空にする",
   "compare.chosen": "比較する学校を {max} 校中 {count} 校選択中",
   "compare.open": "比較を見る",

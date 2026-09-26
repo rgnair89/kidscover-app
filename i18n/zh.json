@@ -40,9 +40,7 @@
   "lock.usePassword": "改用密码登录",
   "lock.prompt": "打开 Kidscover",
   "lock.failed": "没有成功。请重试，或改用密码。",
-
   "lock.otherWays": "其他登录方式",
-
   "lock.signedInAs": "已以 {email} 登录",
   "nav.enquiries": "咨询",
   "nav.enquiriesCount": "咨询（{count}）",
@@ -111,12 +109,14 @@
   "distance.away": "{km} 公里",
   "distance.under100m": "不到 100 米",
   "location.use": "使用我的位置",
+  "city.showing": "{city} 的学校",
+  "city.look": "或查看某个城市",
   "location.finding": "正在定位…",
   "location.on": "距离按你的位置计算",
   "location.turnOff": "关闭",
   "location.straightLine": "直线距离，不按道路计算。",
   "location.why": "看看每所学校离你有多远。你的位置只用来算距离，不会被保存。",
-  "location.outsideArea": "看起来你不在孟买和塔那，Kidscover 目前的学校都在那里。距离仍会按你所在的位置计算。",
+  "location.outsideArea": "您似乎不在 Kidscover 目前覆盖的城市范围内。距离将从您所在的位置计算。",
   "location.blocked": "本应用的位置权限已关闭。请在手机设置中开启后重试。你也可以按名称或地区搜索。",
   "location.denied": "未获得使用位置的权限。请按名称或地区搜索，或者重试。",
   "location.timeout": "定位花的时间太久。请确认手机已开启定位后重试。",
@@ -250,7 +250,6 @@
   "compare.add": "+ 对比",
   "compare.added": "已加入对比",
   "compare.remove": "移除",
-
   "compare.clear": "清空列表",
   "compare.chosen": "已选 {count} / {max} 所学校用于对比",
   "compare.open": "查看对比",

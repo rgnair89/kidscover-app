@@ -40,6 +40,7 @@ Run these in the Supabase SQL editor, in order, from the `kidscover-admin` repos
 | `20260921000200_parent_addresses.sql` | the address book: the places a parent searches from |
 | `20260921000300_people_photos.sql` | photographs of parents and children, in a private bucket |
 | `20260925000100_send_push_schedule.sql` | asks send-push, once a minute, to empty the queue - read its notes first |
+| `20260926000300_service_areas.sql` | the cities Kidscover covers, so a parent can look at one they are not standing in |
 
 Edge functions (paste each into the Supabase dashboard): `commute-times`, `read-school-websites`, `send-push`,
 `crm-deliver`, `delete-account`. The last three need the secret `SB_SECRET_KEY` (a `sb_secret_…` key) set in
@@ -66,7 +67,7 @@ which is the mark you see beside the name inside the app.
 ```bash
 npm install
 npm start          # then press w for the browser, or scan the QR code with Expo Go
-npm test           # the app's own checks: 349 on the logic, 472 on the screens, plus the language packs
+npm test           # the app's own checks: 358 on the logic, 481 on the screens, plus the language packs
 ```
 
 In Expo Go the fingerprint unlock works, but **push notifications do not** (Android stopped allowing them in Expo Go).

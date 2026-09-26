@@ -8,7 +8,7 @@ const src = fs.readFileSync(process.env.APP_FILE ?? path.join(here, '..', 'App.j
 const a = src.indexOf('// ==== BEGIN pure logic'), b = src.indexOf('// ==== END pure logic');
 if (a < 0 || b < 0) throw new Error('markers not found in App.js');
 fs.mkdirSync(path.join(here, '.tmp'), { recursive: true });
-const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'levelBadges', 'googleRatingText', 'communityText', 'stars', 'safeUrl', 'validateAuth', 'validateReview', 'statusLine', 'cleanName', 'friendlyError', 'loadStats', 'loadSchools', 'loadReviews', 'loadMyReview', 'submitReview', 'updateReview', 'deleteReview', 'reportReview', 'DEFAULT_FILTERS', 'PAGE_SIZE', 'monthYear', 'SCHOOL_COLUMNS', 'NEARBY_COLUMNS', 'DISTANCE_CHOICES', 'SERVICE_AREA', 'validPlace', 'inServiceArea', 'defaultSort', 'normalizeFilters', 'distanceText', 'cleanAddress', 'isMissingNearby', 'locateMe', 'locationProblemText',
+const names = ['sanitizeSearch', 'applySchoolFilters', 'activeFilterCount', 'levelBadges', 'googleRatingText', 'communityText', 'stars', 'safeUrl', 'validateAuth', 'validateReview', 'statusLine', 'cleanName', 'friendlyError', 'loadStats', 'loadSchools', 'loadReviews', 'loadMyReview', 'submitReview', 'updateReview', 'deleteReview', 'reportReview', 'DEFAULT_FILTERS', 'PAGE_SIZE', 'monthYear', 'SCHOOL_COLUMNS', 'NEARBY_COLUMNS', 'DISTANCE_CHOICES', 'CITY_COLUMNS', 'loadCities', 'cityAt', 'validPlace', 'inServiceArea', 'defaultSort', 'normalizeFilters', 'distanceText', 'cleanAddress', 'isMissingNearby', 'locateMe', 'locationProblemText',
   'ENQUIRY_COLUMNS', 'MESSAGE_COLUMNS', 'MAX_ENQUIRY', 'MIN_ENQUIRY', 'GRADE_CHOICES', 'startYearChoices', 'validateEnquiry', 'enquirySubject',
   'enquiryStatusText', 'enquiryAbout', 'unreadCount', 'fromMe', 'isMissingEnquiries', 'sendEnquiry', 'loadEnquiries',
   'loadEnquiryForSchool', 'loadEnquiryMessages', 'replyToEnquiry', 'markEnquiryRead', 'closeEnquiry',
@@ -214,8 +214,42 @@ check('empty and missing addresses', ca('') === '' && ca(null) === '' && ca(unde
 
 console.log('\n=== near me: where the parent is ===');
 check('a place must be two real, in-range numbers', L.validPlace({ lat: 19.07, lng: 72.87 }) && L.validPlace({ lat: -90, lng: 180 }) && [null, undefined, {}, { lat: 19 }, { lat: NaN, lng: 1 }, { lat: 91, lng: 0 }, { lat: 0, lng: -181 }, { lat: '19', lng: '72' }, { lat: Infinity, lng: 0 }].every((p) => !L.validPlace(p)));
-check('inside the Mumbai area: Bandra, Thane, Navi Mumbai', L.inServiceArea({ lat: 19.06, lng: 72.83 }) && L.inServiceArea({ lat: 19.218, lng: 72.978 }) && L.inServiceArea({ lat: 19.033, lng: 73.03 }));
-check('outside: Delhi, Pune, Chennai, the middle of the sea, and nonsense', [{ lat: 28.61, lng: 77.2 }, { lat: 18.52, lng: 73.86 }, { lat: 13.08, lng: 80.27 }, { lat: 19.0, lng: 60 }, { lat: 200, lng: 72.8 }, null].every((p) => !L.inServiceArea(p)));
+// The cities are no longer a constant in the app: they come from the database, so the app can cover another one
+// without anybody installing anything. These are the two Kidscover has rectangles for.
+const CITIES = [
+  { key: 'mumbai', name: 'Mumbai', latMin: 18.5, latMax: 19.7, lngMin: 72.5, lngMax: 73.5, place: { lat: 19.076, lng: 72.8777 } },
+  { key: 'pune', name: 'Pune', latMin: 18.4, latMax: 18.7, lngMin: 73.7, lngMax: 74.05, place: { lat: 18.5204, lng: 73.8567 } },
+];
+check('inside the Mumbai area: Bandra, Thane, Navi Mumbai',
+  [{ lat: 19.06, lng: 72.83 }, { lat: 19.218, lng: 72.978 }, { lat: 19.033, lng: 73.03 }].every((p) => L.inServiceArea(p, CITIES)));
+check('a city Kidscover has switched on is inside it too, which is the whole point of the list',
+  L.inServiceArea({ lat: 18.52, lng: 73.86 }, CITIES) && L.cityAt({ lat: 18.52, lng: 73.86 }, CITIES)?.key === 'pune');
+check('outside: Delhi, Chennai, the middle of the sea, and nonsense',
+  [{ lat: 28.61, lng: 77.2 }, { lat: 13.08, lng: 80.27 }, { lat: 19.0, lng: 60 }, { lat: 200, lng: 72.8 }, null].every((p) => !L.inServiceArea(p, CITIES)));
+check('a point is told which city it is in, or none', L.cityAt({ lat: 19.06, lng: 72.83 }, CITIES)?.key === 'mumbai'
+  && L.cityAt({ lat: 28.61, lng: 77.2 }, CITIES) === null && L.cityAt(null, CITIES) === null);
+// An app that has not finished loading, or one pointed at a database without the cities migration, would otherwise
+// tell every parent in the country that they are somewhere Kidscover does not cover.
+check('before the cities are known, nowhere is outside', L.inServiceArea({ lat: 28.61, lng: 77.2 }, []) === true
+  && L.inServiceArea({ lat: 28.61, lng: 77.2 }) === true && L.inServiceArea(null, []) === false);
+{
+  const db = fakeDb(() => ({ data: [
+    { key: 'mumbai', name: 'Mumbai', lat_min: '18.5', lat_max: '19.7', lng_min: '72.5', lng_max: '73.5', centre_lat: '19.076', centre_lng: '72.8777', schools: '4975', sort_order: 10 },
+    { key: 'broken', name: 'Nowhere', lat_min: null, lat_max: null, lng_min: null, lng_max: null, centre_lat: null, centre_lng: null, schools: '0', sort_order: 20 },
+  ], error: null }));
+  const got = await L.loadCities(db);
+  check('the cities are asked for in the order they are meant to be shown',
+    ops(db.recs[0]).join(' ') === `select("${L.CITY_COLUMNS}") order("sort_order",{"ascending":true}) limit(50)`, ops(db.recs[0]).join(' '));
+  check('...and come back as numbers, because the database hands them over as text',
+    got.rows.length === 1 && got.rows[0].latMax === 19.7 && got.rows[0].place.lat === 19.076 && got.rows[0].schools === 4975,
+    JSON.stringify(got.rows[0]));
+  check('...with a half-written city left out rather than offered as somewhere a parent could look',
+    !got.rows.some((c) => c.key === 'broken'));
+}
+check('a database with no cities in it is not an error, it is a database with no cities in it',
+  (await L.loadCities(fakeDb(() => ({ data: [], error: null })))).rows.length === 0);
+check('...and one that refuses leaves the app as it was, rather than empty of everywhere',
+  (await L.loadCities(fakeDb(() => ({ data: null, error: { message: 'no such view' } })))).rows.length === 0);
 
 console.log('\n=== near me: asking the phone ===');
 const okPos = (lat, lng) => ({ coords: { latitude: lat, longitude: lng, accuracy: 20 } });
@@ -243,7 +277,10 @@ for (const [why, pos] of [['no coordinates', {}], ['a null latitude (must not be
   check(`a bad position (${why}) is "unavailable"`, got.ok === false && got.reason === 'unavailable', JSON.stringify(got));
 }
 check('each problem has its own plain-words message, and none blames the parent', ['denied', 'blocked', 'timeout', 'unavailable'].every((r) => L.locationProblemText(r).length > 30) && new Set(['denied', 'blocked', 'timeout', 'unavailable'].map(L.locationProblemText)).size === 4 && /settings/.test(L.locationProblemText('blocked')) && /search by school name/.test(L.locationProblemText('denied')));
-check('the outside-Mumbai notice names the area', /Mumbai/.test(EN['location.outsideArea']));
+// It used to name Mumbai and Thane. Naming the cities in the message meant the message had to be rewritten in
+// 31 languages every time a city was added, so it now says what is true of any number of them.
+check('the notice for somebody outside every city says so without naming any', /outside the cities/.test(EN['location.outsideArea']) && !/Mumbai|Thane/.test(EN['location.outsideArea']));
+check('...and still says the distances are measured from where they are, so the list is not a mystery', /from where you are/.test(EN['location.outsideArea']));
 
 console.log('\n=== asking a school about admissions ===');
 check('a question has to say something, but not an essay', L.validateEnquiry({ message: 'x'.repeat(10) }) === null && /at least 10 characters, 9 so far/.test(L.validateEnquiry({ message: 'x'.repeat(9) })) && L.validateEnquiry({ message: 'x'.repeat(2000) }) === null && /under 2000/.test(L.validateEnquiry({ message: 'x'.repeat(2001) })));

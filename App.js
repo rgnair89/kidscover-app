@@ -98,7 +98,10 @@ const SCHOOL_COLUMNS = 'id,name,address,website,board,levels,google_rating,googl
 const NEARBY_COLUMNS = `${SCHOOL_COLUMNS},distance_km`; // the database function schools_nearby adds the distance
 const LOCATION_TIMEOUT_MS = 15000;
 // The area the schools were collected for (the same box the importer is limited to). Outside it the app still works.
-const SERVICE_AREA = { latMin: 18.5, latMax: 19.7, lngMin: 72.5, lngMax: 73.5 };
+// The cities Kidscover covers. This used to be one rectangle written here as a constant, and the same rectangle
+// written again inside the commute-times function - two copies of one fact, in two repositories. It is now asked for
+// once, and a city is added by switching it on in the database rather than by changing an app anybody has installed.
+const CITY_COLUMNS = 'key,name,lat_min,lat_max,lng_min,lng_max,centre_lat,centre_lng,schools,sort_order';
 const MAX_COMPARE = 4;
 
 const LEVEL_CHOICES = [
@@ -285,9 +288,35 @@ function validPlace(p) {
     && Number.isFinite(p.lat) && Number.isFinite(p.lng) && Math.abs(p.lat) <= 90 && Math.abs(p.lng) <= 180;
 }
 
-function inServiceArea(p) {
-  return validPlace(p) && p.lat >= SERVICE_AREA.latMin && p.lat <= SERVICE_AREA.latMax && p.lng >= SERVICE_AREA.lngMin && p.lng <= SERVICE_AREA.lngMax;
+async function loadCities(db) {
+  const { data, error } = await db.from('cities').select(CITY_COLUMNS).order('sort_order', { ascending: true }).limit(50);
+  if (error) return { rows: [], error };
+  // Number(null) is nought, and nought is a real latitude - a spot in the Atlantic. A city with nothing
+  // written in for its position would otherwise be offered as somewhere a parent could go and look.
+  const num = (v) => (v === null || v === undefined || v === '' ? NaN : Number(v));
+  const rows = (data ?? []).map((r) => ({
+    key: r.key,
+    name: r.name,
+    schools: Number(r.schools ?? 0),
+    latMin: num(r.lat_min), latMax: num(r.lat_max), lngMin: num(r.lng_min), lngMax: num(r.lng_max),
+    place: { lat: num(r.centre_lat), lng: num(r.centre_lng) },
+  })).filter((c) => c.key && c.name && validPlace(c.place)
+    && [c.latMin, c.latMax, c.lngMin, c.lngMax].every((n) => Number.isFinite(n)));
+  return { rows, error: null };
 }
+
+// Which city a point is in, or nothing when it is in none of them.
+function cityAt(place, cities) {
+  if (!validPlace(place)) return null;
+  for (const c of cities ?? []) {
+    if (place.lat >= c.latMin && place.lat <= c.latMax && place.lng >= c.lngMin && place.lng <= c.lngMax) return c;
+  }
+  return null;
+}
+
+// Until the cities are known, nowhere is outside. An app that has not finished loading, or one pointed at a database
+// where the cities migration has not been run, must not tell somebody they are in the wrong part of the country.
+const inServiceArea = (p, cities) => (cities?.length ? !!cityAt(p, cities) : validPlace(p));
 
 const defaultSort = (hasPlace) => (hasPlace ? 'distance' : 'name');
 
@@ -1943,7 +1972,7 @@ function TourOverlay({ steps, index, whatsNew, onNext, onBack, onClose, onFinish
   );
 }
 
-function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare, onClearCompare, addresses, onSavedAddress, userId }) {
+function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare, onClearCompare, addresses, onSavedAddress, userId, cities }) {
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [typed, setTyped] = useState('');
   const [search, setSearch] = useState('');
@@ -1956,6 +1985,9 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare, onCle
   const [place, setPlace] = useState(null);
   // which saved place the list is searching from. Empty means the phone's own position.
   const [placeName, setPlaceName] = useState('');
+  // how the app came by that place: the phone, a saved address, or a city somebody chose to look at. It matters
+  // because a drive time from the middle of a city a parent is not standing in is not a drive time.
+  const [placeFrom, setPlaceFrom] = useState('');
   const [savingPlace, setSavingPlace] = useState(false);
   const [placeLabel, setPlaceLabel] = useState('');
   const [placeText, setPlaceText] = useState('');
@@ -1974,6 +2006,21 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare, onCle
     const timer = setTimeout(() => setSearch(typed), 350);
     return () => clearTimeout(timer);
   }, [typed]);
+
+  // The cities a parent may look at. Drawn the same way in both halves of the panel, so it is in one place.
+  const here = cityAt(place, cities);
+  const cityChips = cities?.length ? (
+    <>
+      <Text style={s.label}>{t('city.look')}</Text>
+      <View style={s.wrap} testID="city-chips">
+        {cities.map((c) => (
+          <Chip key={c.key} testID={`city-${c.key}`} label={c.name}
+            selected={placeFrom === 'city' ? placeName === c.name : here?.key === c.key}
+            onPress={() => lookAtCity(c)} />
+        ))}
+      </View>
+    </>
+  ) : null;
 
   const key = JSON.stringify({ ...filters, search, place });
   const run = useCallback(async (page, append) => {
@@ -2025,14 +2072,29 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare, onCle
     AsyncStorage.setItem(LOCATION_SETTING, '1').catch(() => {});
     setPlace(res.place);
     setPlaceName('');
+    setPlaceFrom('');
     set({ sort: 'distance' });
-    if (!inServiceArea(res.place)) setLocationNote({ tone: 'amber', text: t('location.outsideArea') });
+    if (!inServiceArea(res.place, cities)) setLocationNote({ tone: 'amber', text: t('location.outsideArea') });
     // the phone may be able to say what is at this position; if it can, it saves the parent typing it
     addressHere(Location, res.place).then((text) => { if (text) setPlaceText((old) => old || text); });
   }
 
   // Searching from a place saved earlier. No permission is needed and the phone is not asked anything: the
   // coordinates were saved once, at the place itself.
+  // Choosing a city is choosing a place: the middle of it. Everything downstream - the list, the distances, the
+  // "within 3 km" filter - already works from a place, so nothing else has to know that a city was involved.
+  function lookAtCity(city) {
+    if (!city || !validPlace(city.place)) return;
+    setLocationNote(null);
+    setDriveNote(null);
+    setDriveMode(null);   // a drive time from a city centre would be measured from nowhere anybody is
+    setPlace(city.place);
+    setPlaceName(city.name);
+    setPlaceFrom('city');
+    setFilters((cur) => ({ ...normalizeFilters(cur, true), sort: 'distance' }));
+    setShowNear(true);
+  }
+
   function searchFromAddress(row) {
     const where = addressPlace(row);
     if (!where) return;
@@ -2040,9 +2102,10 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare, onCle
     setDriveNote(null);
     setPlace(where);
     setPlaceName(row.label);
+    setPlaceFrom('address');
     setSavingPlace(false);
     set({ sort: 'distance' });
-    if (!inServiceArea(where)) setLocationNote({ tone: 'amber', text: t('location.outsideArea') });
+    if (!inServiceArea(where, cities)) setLocationNote({ tone: 'amber', text: t('location.outsideArea') });
   }
 
   async function saveThisPlace() {
@@ -2072,6 +2135,7 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare, onCle
     AsyncStorage.removeItem(LOCATION_SETTING).catch(() => {});
     setPlace(null);
     setPlaceName('');
+    setPlaceFrom('');
     setSavingPlace(false);
     setPlaceProblem('');
     setLocationNote(null);
@@ -2130,7 +2194,10 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare, onCle
             <Pressable testID="near-me-fold" accessibilityRole="button" accessibilityLabel={t('location.on')}
               onPress={() => setShowNear((v) => !v)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 }}>
               <Text style={s.body}>{showNear ? '▾' : '▸'}</Text>
-              <Text style={[s.body, { flexShrink: 1 }]} testID="near-me-title">{placeName ? t('address.from', { label: placeName }) : t('location.on')}</Text>
+              <Text style={[s.body, { flexShrink: 1 }]} testID="near-me-title">
+                {placeFrom === 'city' ? t('city.showing', { city: placeName })
+                  : placeName ? t('address.from', { label: placeName }) : t('location.on')}
+              </Text>
             </Pressable>
             <Btn testID="stop-location" kind="quiet" label={t('location.turnOff')} onPress={stopUsingLocation} />
           </View>
@@ -2159,14 +2226,19 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare, onCle
               {DISTANCE_CHOICES.map((d) => <Chip key={String(d.km)} testID={`near-${d.km ?? 'any'}`} label={t(d.label)} selected={filters.nearKm === d.km} onPress={() => set({ nearKm: d.km })} />)}
             </View>
             <Text style={s.muted}>{t('location.straightLine')}</Text>
-            <Text style={s.label}>{t('drive.title')}</Text>
-            <View style={s.wrap}>
-              {DRIVE_MODES.map((m) => (
-                <Chip key={m.key} testID={`drive-mode-${m.key}`} label={t(m.label)} selected={driveMode === m.key}
-                  onPress={() => { setDriveNote(null); setDriveMode(driveMode === m.key ? null : m.key); }} />
-              ))}
-            </View>
-            <Text style={s.muted}>{t('drive.note')}</Text>
+            {cityChips}
+            {/* A drive time is from where you are. From the middle of a city you are not in, it would be a number
+                about nobody, so it is not offered. */}
+            {placeFrom !== 'city' && (<>
+              <Text style={s.label}>{t('drive.title')}</Text>
+              <View style={s.wrap}>
+                {DRIVE_MODES.map((m) => (
+                  <Chip key={m.key} testID={`drive-mode-${m.key}`} label={t(m.label)} selected={driveMode === m.key}
+                    onPress={() => { setDriveNote(null); setDriveMode(driveMode === m.key ? null : m.key); }} />
+                ))}
+              </View>
+              <Text style={s.muted}>{t('drive.note')}</Text>
+            </>)}
           </>)}
           {!!driveNote && <Notice tone={driveNote.tone} text={driveNote.text} testID="drive-note" />}
         </View>
@@ -2174,6 +2246,9 @@ function DiscoverScreen({ onOpen, compare, onToggleCompare, onOpenCompare, onCle
         <View style={[s.card, { marginBottom: 8 }]} testID="near-me-off">
           <Btn testID="use-location" kind="outline" label={locating ? t('location.finding') : t('location.use')} onPress={() => useMyLocation()} disabled={locating} />
           <Text style={s.muted}>{t('location.why')}</Text>
+          {/* Somewhere else entirely. Without this a parent in one city cannot see schools in another without
+              inventing an address, which is what several of them did. */}
+          {cityChips}
           {/* A place saved earlier needs no permission and no waiting, so it is offered here as well. */}
           {!!addresses?.length && (<>
             <Text style={s.label}>{t('address.orFrom')}</Text>
@@ -3456,6 +3531,10 @@ function AppBody() {
   const [tourSeen, setTourSeen] = useState(null);
   // false only when the address-book migration has not been run: the app then hides the whole thing
   const [addressBookOn, setAddressBookOn] = useState(true);
+  // The cities Kidscover covers. Empty until the database says so, and empty for good on a database where the
+  // cities migration has not been run - in which case the app behaves exactly as it did before: it measures from
+  // wherever the parent is and never tells anybody they are outside anything.
+  const [cities, setCities] = useState([]);
   const [biometrics, setBiometrics] = useState('none');
   const [unlockOn, setUnlockOn] = useState(false);
   const [locked, setLocked] = useState(false);
@@ -3590,6 +3669,7 @@ function AppBody() {
     refreshUnread();
     refreshAddresses();
     loadMySchools(supabase).then((res) => { if (alive && !res.error) setMySchools(res.rows); });
+    loadCities(supabase).then((res) => { if (alive && !res.error) setCities(res.rows); });
     loadApplications(supabase).then((res) => { if (alive && !res.error) setLiveApps(liveApplications(res.rows)); });
     loadSettings(supabase, session.user.id).then((res) => {
       if (!alive || !res.settings) return;
@@ -3801,6 +3881,7 @@ function AppBody() {
       <View style={{ flex: 1, display: screen === 'discover' ? 'flex' : 'none' }}>
         <DiscoverScreen onOpen={(x) => { setSchool(x); setScreen('school'); }} compare={compare}
           onToggleCompare={toggleCompareSchool} onOpenCompare={() => setScreen('compare')} onClearCompare={clearCompare}
+          cities={cities}
           addresses={addressBookOn ? addresses : null} onSavedAddress={refreshAddresses} userId={session?.user?.id ?? null} />
       </View>
       {/* last of all, so it lies over whatever is underneath */}

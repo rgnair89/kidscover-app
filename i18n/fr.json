@@ -40,9 +40,7 @@
   "lock.usePassword": "Se connecter avec le mot de passe",
   "lock.prompt": "Ouvrir Kidscover",
   "lock.failed": "Cela n'a pas fonctionné. Réessayez ou utilisez votre mot de passe.",
-
   "lock.otherWays": "Autres façons de se connecter",
-
   "lock.signedInAs": "Connecté en tant que {email}",
   "nav.enquiries": "Demandes",
   "nav.enquiriesCount": "Demandes ({count})",
@@ -111,12 +109,14 @@
   "distance.away": "à {km} km",
   "distance.under100m": "à moins de 100 mètres",
   "location.use": "Utiliser ma position",
+  "city.showing": "Écoles à {city}",
+  "city.look": "Ou consulter une ville",
   "location.finding": "Recherche de votre position...",
   "location.on": "Les distances sont mesurées depuis votre position",
   "location.turnOff": "Désactiver",
   "location.straightLine": "À vol d'oiseau, pas par la route.",
   "location.why": "Voyez à quelle distance se trouve chaque école. Votre position sert uniquement à mesurer les distances ; elle n'est pas conservée.",
-  "location.outsideArea": "Vous semblez être hors de Mumbai et Thane, où se trouvent les écoles de Kidscover pour l'instant. Les distances seront quand même mesurées depuis l'endroit où vous êtes.",
+  "location.outsideArea": "Vous semblez être en dehors des villes que Kidscover couvre pour l'instant. Les distances sont mesurées depuis votre position.",
   "location.blocked": "La localisation est désactivée pour cette application. Activez-la dans les réglages du téléphone, puis réessayez. Vous pouvez aussi chercher par nom ou quartier.",
   "location.denied": "L'autorisation d'utiliser votre position n'a pas été accordée. Cherchez par nom ou quartier, ou réessayez.",
   "location.timeout": "La recherche de votre position a pris trop de temps. Vérifiez que la localisation est activée, puis réessayez.",
@@ -250,7 +250,6 @@
   "compare.add": "+ Comparer",
   "compare.added": "Dans la comparaison",
   "compare.remove": "Retirer",
-
   "compare.clear": "Vider la liste",
   "compare.chosen": "{count} école(s) sur {max} sélectionnée(s) pour comparer",
   "compare.open": "Voir la comparaison",

@@ -149,6 +149,13 @@ function seed() {
     applications: [], appEvents: [], notifications: [], pushTokens: [], clicks: [], profiles: {},
     addresses: [], nextAddress: 0, files: [],
     staff: [],   // who works at which school; nobody, unless a test says otherwise
+    // The cities Kidscover covers, as the database would hand them over: numbers as text, because that is what
+    // Postgres gives for a numeric column.
+    nearbyFrom: [],   // every point the list was measured from, in order
+    cities: [
+      { key: 'mumbai', name: 'Mumbai', lat_min: '18.5', lat_max: '19.7', lng_min: '72.5', lng_max: '73.5', centre_lat: '19.076', centre_lng: '72.8777', schools: '20', sort_order: 10 },
+      { key: 'pune', name: 'Pune', lat_min: '18.4', lat_max: '18.7', lng_min: '73.7', lng_max: '74.05', centre_lat: '18.5204', centre_lng: '73.8567', schools: '0', sort_order: 20 },
+    ],
     deleteAccountResult: { ok: true },
     threads: [], tmsgs: [], nextT: 1, rpcCalls: [], clock: Date.now(),
     fnCalls: [], fnMode: 'ok', lookupsLeft: undefined,
@@ -248,6 +255,7 @@ class Query {
       if (st.profilesMissing) return { data: null, error: { code: '42P01', message: `relation "public.${this.table}" does not exist` } };
       return this.finish(all(this.table === 'school_facilities' ? st.facilities : st.achievements));
     }
+    if (this.table === 'cities') return this.finish(all(st.cities));
     if (this.table === 'schools') return this.finish(all(st.schools));
     if (this.table === 'school_fee_schedules') {
       if (st.feesMissing) return { data: null, error: { code: '42P01', message: 'relation "public.school_fee_schedules" does not exist' } };
@@ -304,6 +312,7 @@ class Query {
       // the same rules as the database function: only schools with coordinates, distance in km rounded to 0.01, bad input -> nothing
       if (st.nearbyMissing) return { data: null, error: { code: 'PGRST202', message: 'Could not find the function public.schools_nearby(p_lat, p_lng) in the schema cache' } };
       const { p_lat, p_lng } = this.args;
+      st.nearbyFrom.push({ lat: p_lat, lng: p_lng });
       if (![p_lat, p_lng].every((x) => typeof x === 'number' && Number.isFinite(x)) || Math.abs(p_lat) > 90 || Math.abs(p_lng) > 180) return this.finish([]);
       return this.finish(all(st.schools.filter((x) => x.latitude != null && x.longitude != null).map((x) => ({ ...x, distance_km: Math.round(hav(p_lat, p_lng, x.latitude, x.longitude) * 100) / 100 }))));
     }
@@ -945,8 +954,14 @@ await ui.unmount();
 
 st = seed(); ui = await mount(st); await signIn(ui, 'ann@x.in', 'password1'); await waitFor(() => ui.cards() === 20);
 fakePhone({ pos: DELHI });
+// The app cannot say somebody is outside every city until it has been told which cities there are, and that
+// arrives a moment after signing in. Waiting for the chips is waiting for that.
+await waitFor(() => !!ui.id('city-chips'));
 await ui.click('use-location');
-check('a parent outside Mumbai still gets distances, with a note that we only list Mumbai and Thane', await waitFor(() => ui.id('near-me-on') && !!ui.id('location-note') && /outside Mumbai/.test(ui.id('location-note').textContent), 3000));
+await waitFor(() => !!ui.id('near-me-on'), 3000);
+check('a parent outside every city Kidscover covers still gets distances, and is told why the list looks empty',
+  await waitFor(() => ui.id('near-me-on') && !!ui.id('location-note') && /outside the cities/.test(ui.id('location-note').textContent), 3000),
+  ui.id('location-note')?.textContent);
 {
   const want = expectedNear(st, 28.614, 77.209);
   await waitFor(() => firstCard(ui) === 'school-' + want[0].id, 3000);
@@ -2287,6 +2302,43 @@ check('the standing-in shapes are gone once the schools themselves have arrived,
 await ui.type('search', 'Sunrise');
 await waitFor(() => ui.cards() === 1, 3000);
 check('...and they do not come back for a search that has already found something', !ui.id('school-skeletons'));
+await ui.unmount();
+
+// =============================================================================================================
+console.log('\n=== looking at another city ===');
+globalThis.__bio = { hasHardwareAsync: () => false, isEnrolledAsync: () => false, supportedAuthenticationTypesAsync: () => [] };
+st = seed(); ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+await waitFor(() => ui.cards() === 20);
+check('the cities Kidscover covers are offered without anybody having to share where they are',
+  await waitFor(() => !!ui.id('city-chips')) && !!ui.id('city-mumbai') && !!ui.id('city-pune'));
+check('...named as the database names them, so a new city needs no new app', /Mumbai/.test(ui.id('city-mumbai').textContent) && /Pune/.test(ui.id('city-pune').textContent));
+
+await ui.click('city-pune');
+check('choosing a city says so, plainly, at the top of the panel',
+  await waitFor(() => /Schools in Pune/.test(ui.id('near-me-title')?.textContent ?? '')), ui.id('near-me-title')?.textContent);
+check('...and the list is now measured from there, rather than from wherever the phone is',
+  await waitFor(() => st.nearbyFrom.some((w) => Math.abs(w.lat - 18.5204) < 0.01 && Math.abs(w.lng - 73.8567) < 0.01)),
+  JSON.stringify(st.nearbyFrom.slice(-2)));
+check('...a drive time is not offered, because from the middle of a city nobody is standing in it would be a number about nobody',
+  !ui.id('drive-mode-school_run') && !ui.id('drive-mode-now'));
+check('...but how far each school is still shows, which is the point of choosing a city', !!ui.id('near-3') || !!ui.id('near-any'));
+
+await ui.click('city-mumbai');
+check('changing to another city changes the list with it',
+  await waitFor(() => /Schools in Mumbai/.test(ui.id('near-me-title')?.textContent ?? ''))
+  && await waitFor(() => st.nearbyFrom.some((w) => Math.abs(w.lat - 19.076) < 0.01)), JSON.stringify(st.nearbyFrom.slice(-2)));
+await ui.click('stop-location');
+check('putting a city down goes back to the plain list, with the cities still there to choose from',
+  await waitFor(() => !!ui.id('near-me-off')) && !!ui.id('city-chips') && ui.cards() === 20);
+await ui.unmount();
+
+// a database that has never had the cities migration run against it
+st = seed(); st.cities = []; ui = await mount(st);
+await signIn(ui, 'ann@x.in', 'password1');
+await waitFor(() => ui.cards() === 20);
+check('an app talking to a database with no cities in it simply does not offer any, and works as it always did',
+  !ui.id('city-chips') && !!ui.id('use-location') && ui.cards() === 20);
 await ui.unmount();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
